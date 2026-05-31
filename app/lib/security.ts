@@ -43,8 +43,14 @@ export function ensureSameOrigin(request: Request) {
   if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") return;
   const origin = request.headers.get("origin");
   if (!origin) return;
-  const expected = new URL(request.url).origin;
-  if (origin !== expected) throw new UserFacingError("Request origin is not allowed.", 403);
+  const allowed = allowedOrigins(request);
+  let actual: string;
+  try {
+    actual = new URL(origin).origin;
+  } catch {
+    throw new UserFacingError("Request origin is not allowed.", 403);
+  }
+  if (!allowed.has(actual)) throw new UserFacingError("Request origin is not allowed.", 403);
 }
 
 export function requireSetupCode(input: string | undefined) {
@@ -78,6 +84,31 @@ function timingSafeTextEqual(a: string, b: string) {
   const left = crypto.createHash("sha256").update(a).digest();
   const right = crypto.createHash("sha256").update(b).digest();
   return crypto.timingSafeEqual(left, right);
+}
+
+function allowedOrigins(request: Request) {
+  const requestUrl = new URL(request.url);
+  const origins = new Set<string>([requestUrl.origin]);
+  const host = firstHeaderValue(request.headers.get("host"));
+  if (host) origins.add(`${requestUrl.protocol}//${host}`);
+
+  const forwardedHost = firstHeaderValue(request.headers.get("x-forwarded-host"));
+  const forwardedProto = firstHeaderValue(request.headers.get("x-forwarded-proto")) || requestUrl.protocol.replace(":", "");
+  if (forwardedHost) origins.add(`${forwardedProto}://${forwardedHost}`);
+
+  for (const value of [process.env.SVP_PUBLIC_ORIGIN, process.env.SVP_PUBLIC_BASE_URL]) {
+    if (!value) continue;
+    try {
+      origins.add(new URL(value).origin);
+    } catch {
+      // Ignore invalid optional config. The request host still protects normal installs.
+    }
+  }
+  return origins;
+}
+
+function firstHeaderValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || "";
 }
 
 function normalizeIp(value: string) {
