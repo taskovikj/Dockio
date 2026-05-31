@@ -92,7 +92,9 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now docker caddy supavibe-panel
+systemctl enable --now docker caddy
+systemctl enable supavibe-panel
+systemctl restart supavibe-panel
 
 if [ -n "$TRUSTED_CIDR" ]; then
   ufw allow OpenSSH || true
