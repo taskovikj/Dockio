@@ -6,18 +6,25 @@ import { ensureSameOrigin, rateLimit, requireSetupCode, requireTrustedNetwork, s
 import { publicState } from "../../lib/state";
 import {
   applyFirewallBaseline,
+  applyFirewallRule,
   checkAppHealth,
   configureDomain,
+  createExternalDatabase,
+  createManagedPostgres,
+  createProject,
   deleteApp,
   deployComposeApp,
   deployGitApp,
   deploySampleApp,
+  getDatabaseConnection,
   readAppLogs,
   redeployApp,
   restartApp,
   serverStatus,
   stopApp,
-  systemPrune
+  systemPrune,
+  testDatabase,
+  updateAppSettings
 } from "../../lib/system";
 import { redact, UserFacingError } from "../../lib/validate";
 
@@ -40,11 +47,15 @@ const loginSchema = z.object({
 
 const sampleSchema = z.object({
   name: z.string().min(1).max(80).regex(/^[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+$/, "App name contains invalid characters."),
-  strategy: z.enum(["docker", "systemd", "static"])
+  strategy: z.enum(["docker", "systemd", "static"]),
+  projectId: z.string().optional().default(""),
+  serviceRole: z.enum(["frontend", "backend", "worker", "fullstack"]).optional().default("fullstack")
 });
 
 const gitDeploySchema = z.object({
   name: z.string().min(1).max(80),
+  projectId: z.string().optional().default(""),
+  serviceRole: z.enum(["frontend", "backend", "worker", "fullstack"]).optional().default("fullstack"),
   repoUrl: z.string().url(),
   branch: z.string().optional().default("main"),
   mode: z.enum(["dockerfile", "node", "static"]),
@@ -52,11 +63,14 @@ const gitDeploySchema = z.object({
   startCommand: z.string().max(160).optional().default(""),
   containerPort: z.coerce.number().int().min(1).max(65535).optional().default(3000),
   healthPath: z.string().max(120).optional().default("/"),
-  envText: z.string().max(20_000).optional().default("")
+  envText: z.string().max(20_000).optional().default(""),
+  corsOrigins: z.array(z.string().max(220)).optional().default([]),
+  databaseId: z.string().optional().default("")
 });
 
 const composeDeploySchema = z.object({
   name: z.string().min(1).max(80),
+  projectId: z.string().optional().default(""),
   repoUrl: z.string().url(),
   branch: z.string().optional().default("main"),
   envText: z.string().max(20_000).optional().default("")
@@ -69,6 +83,39 @@ const domainSchema = z.object({
 const firewallSchema = z.object({
   panelPort: z.coerce.number().int(),
   trustedCidr: z.string().optional().default("")
+});
+
+const firewallRuleSchema = z.object({
+  action: z.enum(["allow", "deny"]),
+  port: z.coerce.number().int(),
+  protocol: z.enum(["tcp", "udp"]).optional().default("tcp"),
+  sourceCidr: z.string().optional().default("")
+});
+
+const projectSchema = z.object({
+  name: z.string().min(1).max(80),
+  description: z.string().max(280).optional().default("")
+});
+
+const appSettingsSchema = z.object({
+  projectId: z.string().optional().default(""),
+  serviceRole: z.enum(["frontend", "backend", "worker", "fullstack"]).optional().default("fullstack"),
+  corsOrigins: z.array(z.string().max(220)).optional().default([]),
+  databaseId: z.string().optional().default("")
+});
+
+const externalDatabaseSchema = z.object({
+  projectId: z.string().optional().default(""),
+  name: z.string().min(1).max(80),
+  url: z.string().min(1).max(1200),
+  provider: z.string().max(80).optional().default("External Postgres"),
+  envKey: z.string().max(80).optional().default("DATABASE_URL")
+});
+
+const managedDatabaseSchema = z.object({
+  projectId: z.string().optional().default(""),
+  name: z.string().min(1).max(80),
+  envKey: z.string().max(80).optional().default("DATABASE_URL")
 });
 
 export async function GET(request: Request, context: RouteContext) {
@@ -103,6 +150,10 @@ async function route(request: Request, context: RouteContext) {
       rateLimit(request, { key: "system-prune", limit: 3, windowMs: 60_000 });
       return ok({ result: await systemPrune() }, 200, requestId);
     }
+    if (segments[0] === "projects" && request.method === "POST") {
+      rateLimit(request, { key: "project-create", limit: 20, windowMs: 60_000 });
+      return ok({ project: await createProject(projectSchema.parse(await request.json())) }, 201, requestId);
+    }
     if (segments[0] === "firewall" && segments[1] === "plan" && request.method === "GET") {
       const panelPort = Number(process.env.SVP_PORT || process.env.PORT || 3099);
       return ok({
@@ -120,6 +171,10 @@ async function route(request: Request, context: RouteContext) {
       rateLimit(request, { key: "firewall", limit: 8, windowMs: 60_000 });
       return ok({ results: await applyFirewallBaseline(firewallSchema.parse(await request.json())) }, 200, requestId);
     }
+    if (segments[0] === "firewall" && segments[1] === "rule" && request.method === "POST") {
+      rateLimit(request, { key: "firewall-rule", limit: 20, windowMs: 60_000 });
+      return ok({ result: await applyFirewallRule(firewallRuleSchema.parse(await request.json())) }, 200, requestId);
+    }
     if (segments[0] === "apps" && segments[1] === "sample" && request.method === "POST") {
       rateLimit(request, { key: "deploy-sample", limit: 10, windowMs: 60_000 });
       return ok({ app: await deploySampleApp(sampleSchema.parse(await request.json())) }, 201, requestId);
@@ -135,6 +190,10 @@ async function route(request: Request, context: RouteContext) {
     if (segments[0] === "apps" && segments[1] && segments[2] === "domain" && request.method === "POST") {
       const body = domainSchema.parse(await request.json());
       return ok({ app: await configureDomain({ appId: segments[1], domain: body.domain }) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "settings" && request.method === "POST") {
+      const body = appSettingsSchema.parse(await request.json());
+      return ok({ app: await updateAppSettings({ appId: segments[1], ...body }) }, 200, requestId);
     }
     if (segments[0] === "apps" && segments[1] && segments[2] === "logs" && request.method === "GET") {
       return ok({ logs: await readAppLogs(segments[1]) }, 200, requestId);
@@ -153,6 +212,20 @@ async function route(request: Request, context: RouteContext) {
     }
     if (segments[0] === "apps" && segments[1] && segments[2] === "delete" && request.method === "POST") {
       return ok(await deleteApp(segments[1]), 200, requestId);
+    }
+    if (segments[0] === "databases" && segments[1] === "managed-postgres" && request.method === "POST") {
+      rateLimit(request, { key: "db-managed", limit: 8, windowMs: 60_000 });
+      return ok({ database: await createManagedPostgres(managedDatabaseSchema.parse(await request.json())) }, 201, requestId);
+    }
+    if (segments[0] === "databases" && segments[1] === "external-postgres" && request.method === "POST") {
+      rateLimit(request, { key: "db-external", limit: 12, windowMs: 60_000 });
+      return ok({ database: await createExternalDatabase(externalDatabaseSchema.parse(await request.json())) }, 201, requestId);
+    }
+    if (segments[0] === "databases" && segments[1] && segments[2] === "test" && request.method === "POST") {
+      return ok({ result: await testDatabase(segments[1]) }, 200, requestId);
+    }
+    if (segments[0] === "databases" && segments[1] && segments[2] === "connection" && request.method === "POST") {
+      return ok({ connection: await getDatabaseConnection(segments[1]) }, 200, requestId);
     }
 
     return fail("Not found", 404, requestId);

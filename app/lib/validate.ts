@@ -24,6 +24,13 @@ export function assertSafePort(value: number) {
   return value;
 }
 
+export function assertNetworkPort(value: number) {
+  if (!Number.isInteger(value) || value < 1 || value > 65535) {
+    throw new Error("Port must be between 1 and 65535.");
+  }
+  return value;
+}
+
 export function assertSafeDomain(value: string) {
   const domain = value.trim().toLowerCase();
   if (domain.length > 253 || domain.includes("..") || /[^a-z0-9.-]/.test(domain) || !domain.includes(".")) {
@@ -42,6 +49,22 @@ export function assertSafeDomain(value: string) {
   return domain;
 }
 
+export function assertSafeOrigin(value: string) {
+  const origin = value.trim();
+  if (!origin) return "";
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw new Error("CORS origin must be a valid URL, for example https://app.example.com.");
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("CORS origin must use http or https.");
+  parsed.pathname = "";
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString().replace(/\/$/, "");
+}
+
 export function assertSafeCidr(value: string) {
   const cidr = value.trim();
   if (!cidr) return "";
@@ -54,6 +77,12 @@ export function assertSafeCidr(value: string) {
     throw new Error("Trusted CIDR has an invalid IPv4 address.");
   }
   return cidr;
+}
+
+export function assertSafeEnvKey(value: string) {
+  const key = value.trim();
+  if (!/^[A-Z_][A-Z0-9_]*$/i.test(key) || key.length > 80) throw new Error(`Invalid environment key: ${key}`);
+  return key;
 }
 
 export function assertSafeAppName(value: string) {

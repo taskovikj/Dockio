@@ -5,17 +5,32 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { audit, deploymentEvent, getAppsDir, getDataDir, readState, updateState, type AppStrategy, type ManagedApp } from "./state";
+import {
+  audit,
+  deploymentEvent,
+  getAppsDir,
+  getDataDir,
+  getSecretsDir,
+  readState,
+  updateState,
+  type AppStrategy,
+  type DatabaseResource,
+  type ManagedApp,
+  type ServiceRole
+} from "./state";
 import {
   assertManagedPath,
   assertSafeAppName,
   assertSafeCidr,
   assertSafeDockerName,
   assertSafeDomain,
+  assertSafeEnvKey,
   assertSafeGitRepo,
   assertSafeId,
+  assertNetworkPort,
   assertSafePort,
   assertSafeBranch,
+  assertSafeOrigin,
   assertSafeSystemdService,
   parseEnvText,
   redact,
@@ -31,6 +46,23 @@ export interface CommandOutput {
   stdout: string;
   stderr: string;
   code?: number;
+}
+
+export async function createProject(input: { name: string; description?: string }) {
+  const name = assertSafeAppName(input.name);
+  const now = new Date().toISOString();
+  const project = {
+    id: slug(name) + "-" + crypto.randomBytes(3).toString("hex"),
+    name,
+    description: (input.description || "").trim().slice(0, 280),
+    createdAt: now,
+    updatedAt: now
+  };
+  updateState((state) => {
+    state.projects.unshift(project);
+  });
+  audit("project.create", "Created project " + name + ".", { projectId: project.id });
+  return project;
 }
 
 export async function serverStatus() {
@@ -61,8 +93,10 @@ export async function serverStatus() {
   };
 }
 
-export async function deploySampleApp(input: { name: string; strategy: AppStrategy }) {
+export async function deploySampleApp(input: { name: string; strategy: AppStrategy; projectId?: string; serviceRole?: ServiceRole }) {
   const name = assertSafeAppName(input.name || input.strategy + " sample");
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
+  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
   const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
   const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), id));
   fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
@@ -70,7 +104,9 @@ export async function deploySampleApp(input: { name: string; strategy: AppStrate
   const now = new Date().toISOString();
   const app: ManagedApp = {
     id,
+    projectId: projectId || undefined,
     name,
+    serviceRole: input.serviceRole || "fullstack",
     strategy: input.strategy,
     port: input.strategy === "static" ? 0 : await findOpenPort(),
     status: "created",
@@ -96,8 +132,40 @@ export async function deploySampleApp(input: { name: string; strategy: AppStrate
   return readState().apps.find((item) => item.id === app.id) || app;
 }
 
+export async function updateAppSettings(input: {
+  appId: string;
+  projectId?: string;
+  serviceRole?: ServiceRole;
+  corsOrigins?: string[];
+  databaseId?: string;
+}) {
+  const appId = assertSafeId(input.appId, "appId");
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
+  const databaseId = input.databaseId ? assertSafeId(input.databaseId, "databaseId") : "";
+  const role = input.serviceRole || "fullstack";
+  if (!["frontend", "backend", "worker", "fullstack"].includes(role)) throw new Error("Invalid service role.");
+  const corsOrigins = (input.corsOrigins || []).map(assertSafeOrigin).filter(Boolean).slice(0, 20);
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  if (databaseId && !state.databases.some((database) => database.id === databaseId)) throw new Error("Database not found.");
+  updateState((next) => {
+    const app = next.apps.find((item) => item.id === appId);
+    if (!app) throw new Error("App not found.");
+    app.projectId = projectId || undefined;
+    app.serviceRole = role;
+    app.corsOrigins = corsOrigins;
+    app.databaseId = databaseId || undefined;
+    app.updatedAt = new Date().toISOString();
+    app.lastMessage = "App settings updated.";
+  });
+  audit("app.settings", "Updated app settings.", { appId, projectId, role, corsOrigins, databaseId });
+  return readState().apps.find((item) => item.id === appId);
+}
+
 export async function deployGitApp(input: {
   name: string;
+  projectId?: string;
+  serviceRole?: ServiceRole;
   repoUrl: string;
   branch?: string;
   mode: "dockerfile" | "node" | "static";
@@ -106,8 +174,16 @@ export async function deployGitApp(input: {
   containerPort?: number;
   healthPath?: string;
   envText?: string;
+  corsOrigins?: string[];
+  databaseId?: string;
 }) {
   const name = assertSafeAppName(input.name);
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
+  const databaseId = input.databaseId ? assertSafeId(input.databaseId, "databaseId") : "";
+  const corsOrigins = (input.corsOrigins || []).map(assertSafeOrigin).filter(Boolean).slice(0, 20);
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  if (databaseId && !state.databases.some((database) => database.id === databaseId)) throw new Error("Database not found.");
   const repoUrl = assertSafeGitRepo(input.repoUrl);
   const branch = assertSafeBranch(input.branch || "main");
   const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
@@ -120,7 +196,9 @@ export async function deployGitApp(input: {
   const envFile = writeEnvFile(appDir, env.env);
   const app: ManagedApp = {
     id,
+    projectId: projectId || undefined,
     name,
+    serviceRole: input.serviceRole || "fullstack",
     strategy: "docker",
     source: "git",
     repoUrl,
@@ -131,6 +209,8 @@ export async function deployGitApp(input: {
     containerPort: input.mode === "static" ? 80 : assertContainerPort(input.containerPort || 3000),
     healthPath: cleanHealthPath(input.healthPath || "/"),
     envKeys: env.keys,
+    corsOrigins,
+    databaseId: databaseId || undefined,
     port,
     status: "created",
     rootDir: appDir,
@@ -165,8 +245,10 @@ export async function deployGitApp(input: {
   }
 }
 
-export async function deployComposeApp(input: { name: string; repoUrl: string; branch?: string; envText?: string }) {
+export async function deployComposeApp(input: { name: string; projectId?: string; repoUrl: string; branch?: string; envText?: string }) {
   const name = assertSafeAppName(input.name);
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
+  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
   const repoUrl = assertSafeGitRepo(input.repoUrl);
   const branch = assertSafeBranch(input.branch || "main");
   const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
@@ -177,7 +259,9 @@ export async function deployComposeApp(input: { name: string; repoUrl: string; b
   const now = new Date().toISOString();
   const app: ManagedApp = {
     id,
+    projectId: projectId || undefined,
     name,
+    serviceRole: "fullstack",
     strategy: "compose",
     source: "compose",
     repoUrl,
@@ -319,17 +403,22 @@ export async function redeployApp(appId: string) {
     await stopApp(app.id);
     return deployGitApp({
       name: app.name,
+      projectId: app.projectId,
+      serviceRole: app.serviceRole,
       repoUrl: app.repoUrl,
       branch: app.branch,
       mode: app.deployMode,
       buildCommand: app.buildCommand,
       startCommand: app.startCommand,
-      healthPath: app.healthPath
+      containerPort: app.containerPort,
+      healthPath: app.healthPath,
+      corsOrigins: app.corsOrigins,
+      databaseId: app.databaseId
     });
   }
   if (app.source === "compose" && app.repoUrl) {
     await stopApp(app.id);
-    return deployComposeApp({ name: app.name, repoUrl: app.repoUrl, branch: app.branch });
+    return deployComposeApp({ name: app.name, projectId: app.projectId, repoUrl: app.repoUrl, branch: app.branch });
   }
   throw new Error("Redeploy is available for Git and Compose apps only.");
 }
@@ -373,6 +462,149 @@ export async function systemPrune() {
   return result;
 }
 
+export async function createManagedPostgres(input: { projectId?: string; name: string; envKey?: string }) {
+  const name = assertSafeAppName(input.name || "Postgres");
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
+  const envKey = assertSafeEnvKey(input.envKey || "DATABASE_URL");
+  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
+  const localPort = await findOpenPort();
+  const username = "svp_" + crypto.randomBytes(3).toString("hex");
+  const database = "svp_" + crypto.randomBytes(3).toString("hex");
+  const password = crypto.randomBytes(24).toString("base64url");
+  const volume = "svp_pg_" + id;
+  const container = "svp_pg_" + id;
+  const postgresEnvFile = writeSecretFile(
+    id + "-postgres-env",
+    [`POSTGRES_USER=${username}`, `POSTGRES_PASSWORD=${password}`, `POSTGRES_DB=${database}`].join("\n") + "\n"
+  );
+  await safeRunOrThrow("docker", ["volume", "create", "--label", "supavibe=true", volume]);
+  await safeRun("docker", ["rm", "-f", container]);
+  try {
+    await safeRunOrThrow("docker", [
+      "run",
+      "-d",
+      "--name",
+      container,
+      "--restart",
+      "unless-stopped",
+      "--memory",
+      "768m",
+      "--cpus",
+      "1.0",
+      "--pids-limit",
+      "256",
+      "--label",
+      "supavibe=true",
+      "--label",
+      "svp.databaseId=" + id,
+      "--env-file",
+      postgresEnvFile,
+      "-v",
+      volume + ":/var/lib/postgresql/data",
+      "-p",
+      "127.0.0.1:" + localPort + ":5432",
+      "postgres:16-alpine"
+    ]);
+  } finally {
+    fs.rmSync(postgresEnvFile, { force: true });
+  }
+  const connectionUrl = `postgres://${encodeURIComponent(username)}:${encodeURIComponent(password)}@127.0.0.1:${localPort}/${encodeURIComponent(database)}`;
+  const secretPath = writeSecretFile(id, connectionUrl);
+  const now = new Date().toISOString();
+  const resource: DatabaseResource = {
+    id,
+    projectId: projectId || undefined,
+    name,
+    kind: "managed-postgres",
+    provider: "Docker Postgres 16",
+    envKey,
+    status: "running",
+    host: "127.0.0.1",
+    port: localPort,
+    database,
+    username,
+    maskedUrl: maskDatabaseUrl(connectionUrl),
+    secretPath,
+    dockerContainer: container,
+    dockerVolume: volume,
+    localPort,
+    createdAt: now,
+    updatedAt: now,
+    lastMessage: "Managed Postgres is running on localhost only."
+  };
+  updateState((state) => {
+    state.databases.unshift(resource);
+  });
+  audit("database.create_managed", "Created managed Postgres.", { databaseId: id, projectId, envKey });
+  return { ...resource, secretPath: undefined };
+}
+
+export async function createExternalDatabase(input: { projectId?: string; name: string; url: string; provider?: string; envKey?: string }) {
+  const name = assertSafeAppName(input.name || "External Postgres");
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
+  const envKey = assertSafeEnvKey(input.envKey || "DATABASE_URL");
+  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const parsed = parsePostgresUrl(input.url);
+  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
+  const secretPath = writeSecretFile(id, parsed.url);
+  const tcp = await testTcp(parsed.host, parsed.port);
+  const now = new Date().toISOString();
+  const resource: DatabaseResource = {
+    id,
+    projectId: projectId || undefined,
+    name,
+    kind: "external-postgres",
+    provider: (input.provider || "External Postgres").trim().slice(0, 80),
+    envKey,
+    status: tcp.ok ? "reachable" : "unreachable",
+    host: parsed.host,
+    port: parsed.port,
+    database: parsed.database,
+    username: parsed.username,
+    sslMode: parsed.sslMode,
+    maskedUrl: maskDatabaseUrl(parsed.url),
+    secretPath,
+    createdAt: now,
+    updatedAt: now,
+    lastMessage: tcp.ok ? "TCP connection succeeded." : tcp.message
+  };
+  updateState((state) => {
+    state.databases.unshift(resource);
+  });
+  audit("database.create_external", "Registered external Postgres.", { databaseId: id, projectId, provider: resource.provider, host: parsed.host, envKey });
+  return { ...resource, secretPath: undefined };
+}
+
+export async function testDatabase(databaseId: string) {
+  const id = assertSafeId(databaseId, "databaseId");
+  const database = readState().databases.find((item) => item.id === id);
+  if (!database) throw new Error("Database not found.");
+  const host = database.host || "127.0.0.1";
+  const port = assertNetworkPort(database.port || 5432);
+  const result = await testTcp(host, port);
+  updateState((state) => {
+    const current = state.databases.find((item) => item.id === id);
+    if (current) {
+      current.status = result.ok ? (current.kind === "managed-postgres" ? "running" : "reachable") : "unreachable";
+      current.lastMessage = result.message;
+      current.updatedAt = new Date().toISOString();
+    }
+  });
+  audit("database.test", "Tested database connection.", { databaseId: id, ok: result.ok });
+  return { ok: result.ok, message: result.message };
+}
+
+export async function getDatabaseConnection(databaseId: string) {
+  const id = assertSafeId(databaseId, "databaseId");
+  const database = readState().databases.find((item) => item.id === id);
+  if (!database || !database.secretPath) throw new Error("Database secret not found.");
+  const secretPath = assertManagedPath(getSecretsDir(), database.secretPath);
+  const connectionUrl = fs.readFileSync(secretPath, "utf8").trim();
+  audit("database.reveal", "Revealed database connection URL.", { databaseId: id });
+  return { envKey: database.envKey, value: connectionUrl };
+}
+
 export async function applyFirewallBaseline(input: { panelPort: number; trustedCidr?: string }) {
   const panelPort = assertSafePort(input.panelPort);
   const trustedCidr = assertSafeCidr(input.trustedCidr || "");
@@ -388,6 +620,18 @@ export async function applyFirewallBaseline(input: { panelPort: number; trustedC
   commands.push(await safeRun("sudo", ["ufw", "--force", "enable"]));
   audit("firewall.apply", "Applied firewall baseline.", { panelPort, trustedCidr: trustedCidr || "public" });
   return commands;
+}
+
+export async function applyFirewallRule(input: { action: "allow" | "deny"; port: number; protocol?: "tcp" | "udp"; sourceCidr?: string }) {
+  const port = assertNetworkPort(input.port);
+  const protocol = input.protocol || "tcp";
+  const sourceCidr = assertSafeCidr(input.sourceCidr || "");
+  const args = ["ufw", input.action];
+  if (sourceCidr) args.push("from", sourceCidr, "to", "any", "port", String(port), "proto", protocol);
+  else args.push(String(port) + "/" + protocol);
+  const result = await safeRun("sudo", args);
+  audit("firewall.rule", `${input.action} ${port}/${protocol}.`, { port, protocol, sourceCidr: sourceCidr || "any" });
+  return result;
 }
 
 async function deployDockerSample(app: ManagedApp) {
@@ -555,12 +799,12 @@ async function safeRun(command: string, args: string[], cwd?: string): Promise<C
       timeout: 15 * 60 * 1000,
       maxBuffer: 5 * 1024 * 1024
     });
-    return { ok: true, command: printable, stdout: redact(stdout), stderr: redact(stderr) };
+    return { ok: true, command: redact(printable), stdout: redact(stdout), stderr: redact(stderr) };
   } catch (error) {
     const err = error as Error & { stdout?: string; stderr?: string; code?: number };
     return {
       ok: false,
-      command: printable,
+      command: redact(printable),
       stdout: redact(err.stdout || ""),
       stderr: redact(err.stderr || err.message),
       code: typeof err.code === "number" ? err.code : undefined
@@ -702,6 +946,63 @@ function writeEnvFile(appDir: string, env: Record<string, string>) {
     .join("\n");
   fs.writeFileSync(file, content + "\n", { mode: 0o600 });
   return file;
+}
+
+function writeSecretFile(name: string, content: string) {
+  const secretsDir = getSecretsDir();
+  fs.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
+  const file = assertManagedPath(secretsDir, path.join(secretsDir, slug(name) + ".secret"));
+  fs.writeFileSync(file, content, { mode: 0o600 });
+  return file;
+}
+
+function parsePostgresUrl(value: string) {
+  const raw = value.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("Database URL must be a valid postgres:// or postgresql:// URL.");
+  }
+  if (!["postgres:", "postgresql:"].includes(parsed.protocol)) throw new Error("Only Postgres URLs are supported right now.");
+  if (!parsed.hostname) throw new Error("Database URL must include a host.");
+  const port = parsed.port ? assertNetworkPort(Number(parsed.port)) : 5432;
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//, "")) || "postgres";
+  return {
+    url: raw,
+    host: parsed.hostname,
+    port,
+    database,
+    username: decodeURIComponent(parsed.username || ""),
+    sslMode: parsed.searchParams.get("sslmode") || parsed.searchParams.get("ssl") || ""
+  };
+}
+
+function maskDatabaseUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.password) parsed.password = "****";
+    if (parsed.username) parsed.username = parsed.username.replace(/(.{2}).+/, "$1***");
+    return parsed.toString();
+  } catch {
+    return redact(value);
+  }
+}
+
+function testTcp(host: string, port: number) {
+  return new Promise<{ ok: boolean; message: string }>((resolve) => {
+    const socket = net.createConnection({ host, port, timeout: 5000 }, () => {
+      socket.destroy();
+      resolve({ ok: true, message: `TCP connection to ${host}:${port} succeeded.` });
+    });
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve({ ok: false, message: `Timed out connecting to ${host}:${port}.` });
+    });
+    socket.on("error", (error) => {
+      resolve({ ok: false, message: error.message });
+    });
+  });
 }
 
 function prepareDockerfile(sourceDir: string, appDir: string, mode: "dockerfile" | "node" | "static", app: ManagedApp) {

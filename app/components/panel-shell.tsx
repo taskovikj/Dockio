@@ -27,9 +27,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-type Tab = "general" | "environment" | "monitoring" | "logs" | "deployments" | "domains" | "advanced";
+type Tab = "general" | "environment" | "database" | "monitoring" | "logs" | "deployments" | "domains" | "advanced";
 type Strategy = "docker" | "systemd" | "static" | "compose";
 type GitMode = "dockerfile" | "node" | "static";
+type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
 
 interface AuthState {
   setupRequired: boolean;
@@ -40,7 +41,9 @@ interface AuthState {
 
 interface ManagedApp {
   id: string;
+  projectId?: string;
   name: string;
+  serviceRole?: ServiceRole;
   strategy: Strategy;
   port: number;
   containerPort?: number;
@@ -54,11 +57,43 @@ interface ManagedApp {
   startCommand?: string;
   healthPath?: string;
   envKeys?: string[];
+  corsOrigins?: string[];
+  databaseId?: string;
   domain?: string;
   serviceName?: string;
   containerName?: string;
   imageTag?: string;
   rootDir?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessage?: string;
+}
+
+interface ProjectRecord {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface DatabaseResource {
+  id: string;
+  projectId?: string;
+  name: string;
+  kind: "managed-postgres" | "external-postgres";
+  provider: string;
+  envKey: string;
+  status: string;
+  host?: string;
+  port?: number;
+  database?: string;
+  username?: string;
+  sslMode?: string;
+  maskedUrl?: string;
+  dockerContainer?: string;
+  dockerVolume?: string;
+  localPort?: number;
   createdAt: string;
   updatedAt: string;
   lastMessage?: string;
@@ -82,7 +117,9 @@ interface DeploymentEvent {
 
 interface StatePayload {
   setupRequired: boolean;
+  projects: ProjectRecord[];
   apps: ManagedApp[];
+  databases: DatabaseResource[];
   audit: AuditEvent[];
   deployments: DeploymentEvent[];
   dataDir: string;
@@ -98,6 +135,7 @@ interface CommandOutput {
 const tabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
   { id: "general", label: "General", icon: Layers3 },
   { id: "environment", label: "Environment", icon: KeyRound },
+  { id: "database", label: "Database", icon: Database },
   { id: "monitoring", label: "Monitoring", icon: HeartPulse },
   { id: "logs", label: "Logs", icon: Terminal },
   { id: "deployments", label: "Deployments", icon: Activity },
@@ -114,9 +152,12 @@ export function PanelShell() {
   const [busy, setBusy] = useState("");
   const [csrfToken, setCsrfToken] = useState("");
   const [authForm, setAuthForm] = useState({ email: "", name: "", password: "", setupCode: "" });
-  const [sampleForm, setSampleForm] = useState({ name: "Hello API", strategy: "docker" as Strategy });
+  const [projectForm, setProjectForm] = useState({ name: "New Project", description: "" });
+  const [sampleForm, setSampleForm] = useState({ name: "Hello API", strategy: "docker" as Strategy, projectId: "", serviceRole: "backend" as ServiceRole });
   const [gitForm, setGitForm] = useState({
     name: "Git App",
+    projectId: "",
+    serviceRole: "fullstack" as ServiceRole,
     repoUrl: "",
     branch: "main",
     mode: "node" as GitMode,
@@ -124,11 +165,18 @@ export function PanelShell() {
     startCommand: "",
     containerPort: "3000",
     healthPath: "/",
-    envText: ""
+    envText: "",
+    corsOrigins: [] as string[],
+    databaseId: ""
   });
-  const [composeForm, setComposeForm] = useState({ name: "Compose Stack", repoUrl: "", branch: "main", envText: "" });
+  const [composeForm, setComposeForm] = useState({ name: "Compose Stack", projectId: "", repoUrl: "", branch: "main", envText: "" });
   const [domainForm, setDomainForm] = useState({ appId: "", domain: "" });
   const [firewallForm, setFirewallForm] = useState({ panelPort: "3099", trustedCidr: "100.64.0.0/10" });
+  const [firewallRuleForm, setFirewallRuleForm] = useState({ action: "allow" as "allow" | "deny", port: "8080", protocol: "tcp" as "tcp" | "udp", sourceCidr: "" });
+  const [appSettingsForm, setAppSettingsForm] = useState({ appId: "", projectId: "", serviceRole: "fullstack" as ServiceRole, corsText: "", databaseId: "" });
+  const [externalDbForm, setExternalDbForm] = useState({ projectId: "", name: "External Postgres", provider: "External Postgres", url: "", envKey: "DATABASE_URL" });
+  const [managedDbForm, setManagedDbForm] = useState({ projectId: "", name: "Managed Postgres", envKey: "DATABASE_URL" });
+  const [corsPresetForm, setCorsPresetForm] = useState({ frontendOrigin: "", backendOrigin: "" });
   const [logs, setLogs] = useState("");
 
   const selectedDomainApp = useMemo(() => state?.apps.find((app) => app.id === domainForm.appId), [domainForm.appId, state]);
@@ -152,6 +200,12 @@ export function PanelShell() {
     setState(nextState);
     setStatus(nextStatus);
     setDomainForm((form) => ({ ...form, appId: form.appId || nextState.apps[0]?.id || "" }));
+    setAppSettingsForm((form) => ({ ...form, appId: form.appId || nextState.apps[0]?.id || "", projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    setGitForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    setSampleForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    setComposeForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    setExternalDbForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    setManagedDbForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
   }
 
   async function run(label: string, action: () => Promise<void>) {
@@ -226,6 +280,78 @@ export function PanelShell() {
     });
   }
 
+  async function createProject() {
+    await run("Creating project", async () => {
+      const result = await api<{ project: ProjectRecord }>("/api/projects", { method: "POST", csrfToken, body: projectForm });
+      setProjectForm({ name: "New Project", description: "" });
+      setNotice(`${result.project.name} created.`);
+      await refresh();
+    });
+  }
+
+  async function saveAppSettings() {
+    if (!appSettingsForm.appId) return;
+    await run("Saving app settings", async () => {
+      await api(`/api/apps/${appSettingsForm.appId}/settings`, {
+        method: "POST",
+        csrfToken,
+        body: {
+          projectId: appSettingsForm.projectId,
+          serviceRole: appSettingsForm.serviceRole,
+          corsOrigins: splitLines(appSettingsForm.corsText),
+          databaseId: appSettingsForm.databaseId
+        }
+      });
+      setNotice("App settings saved.");
+      await refresh();
+    });
+  }
+
+  function applyCorsPreset() {
+    const lines = [
+      corsPresetForm.frontendOrigin ? `CORS_ORIGIN=${corsPresetForm.frontendOrigin}` : "",
+      corsPresetForm.frontendOrigin ? `ALLOWED_ORIGINS=${corsPresetForm.frontendOrigin}` : "",
+      corsPresetForm.backendOrigin ? `NEXT_PUBLIC_API_URL=${corsPresetForm.backendOrigin}` : "",
+      corsPresetForm.backendOrigin ? `VITE_API_URL=${corsPresetForm.backendOrigin}` : ""
+    ].filter(Boolean);
+    setGitForm({ ...gitForm, envText: mergeEnvText(gitForm.envText, lines), corsOrigins: corsPresetForm.frontendOrigin ? [corsPresetForm.frontendOrigin] : [] });
+    setNotice("CORS/API environment preset added to the deploy form.");
+  }
+
+  async function createManagedDatabase() {
+    await run("Creating Postgres", async () => {
+      const result = await api<{ database: DatabaseResource }>("/api/databases/managed-postgres", { method: "POST", csrfToken, body: managedDbForm });
+      setGitForm((form) => ({ ...form, databaseId: result.database.id }));
+      setNotice(`${result.database.name} created on localhost:${result.database.localPort || result.database.port}.`);
+      await refresh();
+    });
+  }
+
+  async function createExternalDatabase() {
+    await run("Saving external database", async () => {
+      const result = await api<{ database: DatabaseResource }>("/api/databases/external-postgres", { method: "POST", csrfToken, body: externalDbForm });
+      setGitForm((form) => ({ ...form, databaseId: result.database.id }));
+      setExternalDbForm((form) => ({ ...form, url: "" }));
+      setNotice(`${result.database.name} saved. ${result.database.lastMessage || ""}`.trim());
+      await refresh();
+    });
+  }
+
+  async function databaseAction(databaseId: string, action: "test" | "connection") {
+    await run(action === "test" ? "Testing database" : "Revealing connection URL", async () => {
+      const result = await api<Record<string, { ok?: boolean; message?: string; envKey?: string; value?: string }>>(`/api/databases/${databaseId}/${action}`, { method: "POST", csrfToken });
+      const payload = result.result || result.connection;
+      if (action === "connection" && payload?.value) {
+        setLogs(`${payload.envKey || "DATABASE_URL"}=${payload.value}`);
+        setTab("logs");
+        setNotice("Connection URL loaded into Logs. Treat it like a password.");
+      } else {
+        setNotice(payload?.message || "Database action completed.");
+      }
+      await refresh();
+    });
+  }
+
   async function configureAppDomain() {
     if (!domainForm.appId || !domainForm.domain) return;
     await run("Configuring domain", async () => {
@@ -275,6 +401,19 @@ export function PanelShell() {
     });
   }
 
+  async function applyFirewallRule() {
+    await run("Applying firewall rule", async () => {
+      const result = await api<{ result: CommandOutput }>("/api/firewall/rule", {
+        method: "POST",
+        csrfToken,
+        body: { ...firewallRuleForm, port: Number(firewallRuleForm.port) }
+      });
+      setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
+      setNotice(`Firewall ${firewallRuleForm.action} rule applied.`);
+      await refresh();
+    });
+  }
+
   async function pruneSystem() {
     await run("Pruning Docker", async () => {
       const result = await api<{ result: CommandOutput }>("/api/system/prune", { method: "POST", csrfToken });
@@ -321,8 +460,11 @@ export function PanelShell() {
   }
 
   const apps = state?.apps ?? [];
+  const projects = state?.projects ?? [];
+  const databases = state?.databases ?? [];
   const deployments = state?.deployments ?? [];
   const activeApp = apps.find((app) => app.id === domainForm.appId) || apps[0];
+  const selectedSettingsApp = apps.find((app) => app.id === appSettingsForm.appId);
   const vpsIp = publicIp(status);
 
   return (
@@ -376,70 +518,181 @@ export function PanelShell() {
           ))}
         </nav>
 
-        <SecurityBanner status={status} />
         {(notice || busy) && <Notice busy={busy} notice={notice} />}
 
         {tab === "general" && (
           <div className="space-y-4">
             <Panel title="Deploy Settings" icon={Play}>
               <div className="flex flex-wrap items-center gap-2">
-                <button className="svp-button-primary" onClick={() => void (gitForm.repoUrl ? deployGit() : deploySample())} disabled={Boolean(busy)}>
+                <button className="svp-button-primary" onClick={() => setTab("deployments")} disabled={Boolean(busy)}>
                   <Play size={15} />
-                  Deploy
+                  New Deployment
                 </button>
                 <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
                   <RefreshCw size={15} />
                   Reload
                 </button>
-                <span className="svp-badge">Autodeploy off</span>
                 <button className="svp-button" onClick={() => activeApp && void appAction(activeApp.id, "redeploy")} disabled={Boolean(busy) || !activeApp?.source}>
                   <Wrench size={15} />
                   Rebuild
                 </button>
                 <button className="svp-button" onClick={() => activeApp && void appAction(activeApp.id, "restart")} disabled={Boolean(busy) || !activeApp}>
                   <RotateCcw size={15} />
-                  Start
+                  Restart
                 </button>
-                <button className="svp-button" onClick={() => setNotice("Terminal access is intentionally not exposed in the web panel yet. Use logs and safe lifecycle actions here, or SSH into the VPS for shell work.")}>
-                  <Terminal size={15} />
-                  Open Terminal
-                </button>
+                {activeApp && (
+                  <button className="svp-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
+                    <Terminal size={15} />
+                    Logs
+                  </button>
+                )}
               </div>
             </Panel>
 
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <Metric label="Projects" value={projects.length} detail="Frontend, backend, workers" icon={Layers3} />
               <Metric label="Apps" value={apps.length} detail="Managed by this panel" icon={Boxes} />
+              <Metric label="DBs" value={databases.length} detail="Managed or external Postgres" icon={Database} />
               <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={Database} />
               <Metric label="Caddy" value={isActive(status?.caddy) ? 1 : 0} detail={outputLabel(status?.caddy)} icon={Globe2} />
               <Metric label="Data" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
             </div>
 
+            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+              <Panel title="Create Project" icon={Layers3}>
+                <div className="grid gap-3">
+                  <Field label="Project name" value={projectForm.name} onChange={(name) => setProjectForm({ ...projectForm, name })} placeholder="My SaaS" />
+                  <TextArea label="Notes" value={projectForm.description} onChange={(description) => setProjectForm({ ...projectForm, description })} placeholder="Frontend, API, database, domains..." />
+                  <button className="svp-button-primary w-fit" onClick={() => void createProject()} disabled={Boolean(busy) || !projectForm.name.trim()}>
+                    <Layers3 size={16} />
+                    Create Project
+                  </button>
+                </div>
+              </Panel>
+              <Panel title="Projects" icon={Server}>
+                <ProjectGrid projects={projects} apps={apps} databases={databases} />
+              </Panel>
+            </div>
+
             <Panel title="Managed Apps" icon={Server}>
-              <AppGrid apps={apps} onLogs={loadLogs} onStop={stop} onAction={appAction} />
+              <AppGrid apps={apps} projects={projects} databases={databases} onLogs={loadLogs} onStop={stop} onAction={appAction} />
             </Panel>
           </div>
         )}
 
         {tab === "environment" && (
-          <div className="grid gap-4 xl:grid-cols-[440px_1fr]">
-            <Panel title="Environment" icon={KeyRound}>
-              <div className="grid gap-3">
-                <TextArea label="Deploy-time environment variables" value={gitForm.envText} onChange={(envText) => setGitForm({ ...gitForm, envText })} placeholder={"DATABASE_URL=...\nNODE_ENV=production"} />
-                <p className="rounded-md border border-line bg-panel p-3 text-xs text-zinc-400">
-                  Values are written into the app .env file during deployment. The dashboard state stores only variable names for safety.
-                </p>
-              </div>
-            </Panel>
+          <div className="space-y-4">
+            <div className="grid gap-4 xl:grid-cols-[440px_1fr]">
+              <Panel title="Environment Presets" icon={KeyRound}>
+                <div className="grid gap-3">
+                  <TextArea label="Deploy-time environment variables" value={gitForm.envText} onChange={(envText) => setGitForm({ ...gitForm, envText })} placeholder={"DATABASE_URL=...\nNODE_ENV=production"} />
+                  <div className="grid gap-3 border-t border-line pt-3 md:grid-cols-2">
+                    <Field label="Frontend origin" value={corsPresetForm.frontendOrigin} onChange={(frontendOrigin) => setCorsPresetForm({ ...corsPresetForm, frontendOrigin })} placeholder="https://app.example.com" />
+                    <Field label="Backend/API origin" value={corsPresetForm.backendOrigin} onChange={(backendOrigin) => setCorsPresetForm({ ...corsPresetForm, backendOrigin })} placeholder="https://api.example.com" />
+                  </div>
+                  <button className="svp-button w-fit" onClick={applyCorsPreset}>
+                    <Globe2 size={15} />
+                    Add CORS/API Env Preset
+                  </button>
+                  <p className="rounded-md border border-line bg-panel p-3 text-xs text-zinc-400">
+                    Use this before deploying a frontend/backend pair. It adds common CORS and public API URL keys to the deploy form.
+                  </p>
+                </div>
+              </Panel>
+
+              <Panel title="App Settings" icon={Wrench}>
+                <div className="grid gap-3">
+                  <label className="grid gap-1">
+                    <span className="svp-label">App</span>
+                    <select
+                      className="svp-input"
+                      value={appSettingsForm.appId}
+                      onChange={(event) => {
+                        const app = apps.find((item) => item.id === event.target.value);
+                        setAppSettingsForm({
+                          appId: event.target.value,
+                          projectId: app?.projectId || projects[0]?.id || "",
+                          serviceRole: app?.serviceRole || "fullstack",
+                          corsText: (app?.corsOrigins || []).join("\n"),
+                          databaseId: app?.databaseId || ""
+                        });
+                      }}
+                    >
+                      <option value="">Select app</option>
+                      {apps.map((app) => (
+                        <option key={app.id} value={app.id}>{app.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Select label="Project" value={appSettingsForm.projectId} onChange={(projectId) => setAppSettingsForm({ ...appSettingsForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
+                    <Select label="Service role" value={appSettingsForm.serviceRole} onChange={(serviceRole) => setAppSettingsForm({ ...appSettingsForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
+                  </div>
+                  <Select label="Database binding" value={appSettingsForm.databaseId} onChange={(databaseId) => setAppSettingsForm({ ...appSettingsForm, databaseId })} options={[{ value: "", label: "No database" }, ...databases.map((database) => ({ value: database.id, label: `${database.name} (${database.envKey})` }))]} />
+                  <TextArea label="Allowed CORS origins" value={appSettingsForm.corsText} onChange={(corsText) => setAppSettingsForm({ ...appSettingsForm, corsText })} placeholder={"https://app.example.com\nhttps://admin.example.com"} />
+                  <button className="svp-button-primary w-fit" onClick={() => void saveAppSettings()} disabled={Boolean(busy) || !appSettingsForm.appId}>
+                    <Wrench size={15} />
+                    Save Settings
+                  </button>
+                  {selectedSettingsApp && <Info title="Selected app" body={`${selectedSettingsApp.name} currently belongs to ${projectName(projects, selectedSettingsApp.projectId)} as ${selectedSettingsApp.serviceRole || "fullstack"}.`} />}
+                </div>
+              </Panel>
+            </div>
+
             <Panel title="Configured Keys" icon={Lock}>
               <div className="grid gap-2">
                 {apps.length === 0 && <p className="text-sm text-zinc-500">No app environment keys yet.</p>}
                 {apps.map((app) => (
                   <div key={app.id} className="rounded-md border border-line bg-panel p-3">
-                    <p className="font-bold text-ink">{app.name}</p>
-                    <p className="mt-1 text-xs text-zinc-500">{app.envKeys?.length ? app.envKeys.join(", ") : "No keys captured"}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-bold text-ink">{app.name}</p>
+                      <span className="svp-badge">{app.serviceRole || "fullstack"}</span>
+                      <span className="svp-badge">{projectName(projects, app.projectId)}</span>
+                    </div>
+                    <p className="mt-2 text-xs text-zinc-500">Env keys: {app.envKeys?.length ? app.envKeys.join(", ") : "No keys captured"}</p>
+                    <p className="mt-1 text-xs text-zinc-500">CORS: {app.corsOrigins?.length ? app.corsOrigins.join(", ") : "Not configured"}</p>
                   </div>
                 ))}
               </div>
+            </Panel>
+          </div>
+        )}
+
+        {tab === "database" && (
+          <div className="space-y-4">
+            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+              <Panel title="Managed Postgres" icon={Database}>
+                <div className="grid gap-3">
+                  <Select label="Project" value={managedDbForm.projectId} onChange={(projectId) => setManagedDbForm({ ...managedDbForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
+                  <Field label="Database name" value={managedDbForm.name} onChange={(name) => setManagedDbForm({ ...managedDbForm, name })} />
+                  <Field label="Env key" value={managedDbForm.envKey} onChange={(envKey) => setManagedDbForm({ ...managedDbForm, envKey })} placeholder="DATABASE_URL" />
+                  <button className="svp-button-primary w-fit" onClick={() => void createManagedDatabase()} disabled={Boolean(busy)}>
+                    <Database size={16} />
+                    Create Postgres
+                  </button>
+                  <Info title="Safe default" body="The container binds Postgres to 127.0.0.1 only. It is not exposed publicly through the firewall." />
+                </div>
+              </Panel>
+
+              <Panel title="External Postgres" icon={Globe2}>
+                <div className="grid gap-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Select label="Project" value={externalDbForm.projectId} onChange={(projectId) => setExternalDbForm({ ...externalDbForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
+                    <Field label="Provider" value={externalDbForm.provider} onChange={(provider) => setExternalDbForm({ ...externalDbForm, provider })} placeholder="Supabase, Neon, RDS..." />
+                  </div>
+                  <Field label="Name" value={externalDbForm.name} onChange={(name) => setExternalDbForm({ ...externalDbForm, name })} />
+                  <Field label="Env key" value={externalDbForm.envKey} onChange={(envKey) => setExternalDbForm({ ...externalDbForm, envKey })} placeholder="DATABASE_URL" />
+                  <TextArea label="Postgres URL" value={externalDbForm.url} onChange={(url) => setExternalDbForm({ ...externalDbForm, url })} placeholder="postgres://user:password@host:5432/db?sslmode=require" />
+                  <button className="svp-button-primary w-fit" onClick={() => void createExternalDatabase()} disabled={Boolean(busy) || !externalDbForm.url.trim()}>
+                    <KeyRound size={16} />
+                    Save & Test
+                  </button>
+                </div>
+              </Panel>
+            </div>
+
+            <Panel title="Database Resources" icon={Database}>
+              <DatabaseGrid databases={databases} projects={projects} onAction={databaseAction} />
             </Panel>
           </div>
         )}
@@ -483,13 +736,18 @@ export function PanelShell() {
               <Panel title="Provider" icon={GitBranch}>
                 <div className="grid gap-3">
                   <div className="flex flex-wrap gap-2">
-                    <span className="svp-tab svp-tab-active">Git</span>
-                    <span className="svp-tab">Docker</span>
-                    <span className="svp-tab">Compose</span>
+                    <button className={`svp-tab ${gitForm.mode === "node" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "node" })}>Node/Next/Vite</button>
+                    <button className={`svp-tab ${gitForm.mode === "dockerfile" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "dockerfile" })}>Dockerfile</button>
+                    <button className={`svp-tab ${gitForm.mode === "static" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "static" })}>Static</button>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Select label="Project" value={gitForm.projectId} onChange={(projectId) => setGitForm({ ...gitForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
+                    <Select label="Service role" value={gitForm.serviceRole} onChange={(serviceRole) => setGitForm({ ...gitForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
                   </div>
                   <Field label="App name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
                   <Field label="Repository URL" value={gitForm.repoUrl} onChange={(repoUrl) => setGitForm({ ...gitForm, repoUrl })} placeholder="https://github.com/user/repo.git" />
                   <Field label="Branch" value={gitForm.branch} onChange={(branch) => setGitForm({ ...gitForm, branch })} />
+                  <Select label="Database" value={gitForm.databaseId} onChange={(databaseId) => setGitForm({ ...gitForm, databaseId })} options={[{ value: "", label: "No database" }, ...databases.map((database) => ({ value: database.id, label: `${database.name} (${database.envKey})` }))]} />
                 </div>
               </Panel>
 
@@ -526,6 +784,10 @@ export function PanelShell() {
             <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
               <Panel title="Sample Deployment" icon={Play}>
                 <div className="grid gap-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Select label="Project" value={sampleForm.projectId} onChange={(projectId) => setSampleForm({ ...sampleForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
+                    <Select label="Service role" value={sampleForm.serviceRole} onChange={(serviceRole) => setSampleForm({ ...sampleForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
+                  </div>
                   <Field label="App name" value={sampleForm.name} onChange={(name) => setSampleForm({ ...sampleForm, name })} />
                   <label className="grid gap-1">
                     <span className="svp-label">Strategy</span>
@@ -544,6 +806,7 @@ export function PanelShell() {
 
               <Panel title="Docker Compose Stack" icon={Layers3}>
                 <div className="grid gap-3">
+                  <Select label="Project" value={composeForm.projectId} onChange={(projectId) => setComposeForm({ ...composeForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
                   <Field label="Stack name" value={composeForm.name} onChange={(name) => setComposeForm({ ...composeForm, name })} />
                   <Field label="Repository URL" value={composeForm.repoUrl} onChange={(repoUrl) => setComposeForm({ ...composeForm, repoUrl })} placeholder="https://github.com/user/compose-repo.git" />
                   <Field label="Branch" value={composeForm.branch} onChange={(branch) => setComposeForm({ ...composeForm, branch })} />
@@ -611,12 +874,38 @@ export function PanelShell() {
                   </button>
                 </div>
               </Panel>
+              <Panel title="Expose / Block Port" icon={Flame}>
+                <div className="grid gap-3">
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Select label="Action" value={firewallRuleForm.action} onChange={(action) => setFirewallRuleForm({ ...firewallRuleForm, action: action as "allow" | "deny" })} options={[{ value: "allow", label: "Allow" }, { value: "deny", label: "Deny" }]} />
+                    <Field label="Port" value={firewallRuleForm.port} onChange={(port) => setFirewallRuleForm({ ...firewallRuleForm, port })} placeholder="8080" />
+                    <Select label="Protocol" value={firewallRuleForm.protocol} onChange={(protocol) => setFirewallRuleForm({ ...firewallRuleForm, protocol: protocol as "tcp" | "udp" })} options={[{ value: "tcp", label: "TCP" }, { value: "udp", label: "UDP" }]} />
+                  </div>
+                  <Field label="Source CIDR optional" value={firewallRuleForm.sourceCidr} onChange={(sourceCidr) => setFirewallRuleForm({ ...firewallRuleForm, sourceCidr })} placeholder="100.64.0.0/10 or blank for public" />
+                  <button className={firewallRuleForm.action === "deny" ? "svp-button-danger w-fit" : "svp-button-primary w-fit"} onClick={() => void applyFirewallRule()} disabled={Boolean(busy)}>
+                    <Flame size={16} />
+                    Apply Rule
+                  </button>
+                </div>
+              </Panel>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-2">
+              <Panel title="Security Settings" icon={Shield}>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <Info title="Panel auth" body="Admin login, CSRF checks, rate limits, secure headers, and same-origin checks are enabled." />
+                  <Info title="Public panel" body="If this port is public, keep a strong password and restrict the panel port to your IP or Tailscale CIDR." />
+                  <Info title="App isolation" body="Docker apps run without privileged mode, without host networking, and with localhost-only port publishing." />
+                  <Info title="Secrets" body="Env values and database URLs are not returned in normal state responses. Revealing a DB URL is audited." />
+                </div>
+              </Panel>
+
               <Panel title="Management Surface" icon={Shield}>
                 <div className="grid gap-3 lg:grid-cols-2">
                   <Info title="Docker" body="Builds images, starts labelled containers, and binds app ports only to localhost." />
                   <Info title="No Docker" body="Creates systemd Node services for simple apps without exposing raw shell commands." />
                   <Info title="Static" body="Serves generated static assets through Caddy with rollback-friendly folders." />
-                  <Info title="Safety" body="No arbitrary terminal endpoint is exposed. Use SSH for shell work and this panel for structured actions." />
+                  <Info title="Shell access" body="No web terminal is exposed. Use SSH for shell work and this panel for structured actions." />
                 </div>
               </Panel>
             </div>
@@ -667,13 +956,41 @@ function SecurityBanner({ status }: { status: Record<string, unknown> | null }) 
   );
 }
 
+function ProjectGrid({ projects, apps, databases }: { projects: ProjectRecord[]; apps: ManagedApp[]; databases: DatabaseResource[] }) {
+  if (projects.length === 0) return <p className="text-sm text-zinc-500">No projects yet. Create one, then deploy frontend/backend services into it.</p>;
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {projects.map((project) => {
+        const projectApps = apps.filter((app) => app.projectId === project.id);
+        const projectDbs = databases.filter((database) => database.projectId === project.id);
+        return (
+          <article key={project.id} className="rounded-md border border-line bg-panel p-3">
+            <p className="font-bold text-ink">{project.name}</p>
+            {project.description && <p className="mt-1 text-xs text-zinc-500">{project.description}</p>}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="svp-badge">{projectApps.length} services</span>
+              <span className="svp-badge">{projectApps.filter((app) => app.serviceRole === "frontend").length} frontend</span>
+              <span className="svp-badge">{projectApps.filter((app) => app.serviceRole === "backend").length} backend</span>
+              <span className="svp-badge">{projectDbs.length} db</span>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 function AppGrid({
   apps,
+  projects,
+  databases,
   onLogs,
   onStop,
   onAction
 }: {
   apps: ManagedApp[];
+  projects: ProjectRecord[];
+  databases: DatabaseResource[];
   onLogs: (id: string) => Promise<void>;
   onStop: (id: string) => Promise<void>;
   onAction: (id: string, action: "restart" | "redeploy" | "health" | "delete") => Promise<void>;
@@ -687,12 +1004,13 @@ function AppGrid({
             <div className="min-w-0">
               <p className="truncate font-bold text-ink">{app.name}</p>
               <p className="text-xs text-zinc-500">
-                {app.deployMode || app.strategy} {app.source ? `- ${app.source}` : ""} {app.port ? `- 127.0.0.1:${app.port}` : ""}
+                {projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"} - {app.deployMode || app.strategy} {app.source ? `- ${app.source}` : ""} {app.port ? `- 127.0.0.1:${app.port}` : ""}
                 {app.containerPort ? ` -> :${app.containerPort}` : ""}
               </p>
               {app.repoUrl && <p className="mt-1 truncate text-xs text-zinc-600">{app.repoUrl} {app.branch ? `@ ${app.branch}` : ""}</p>}
               {app.commitSha && <p className="mt-1 text-xs text-zinc-600">commit {app.commitSha}</p>}
               {app.domain && <a className="mt-1 block break-all text-xs font-bold text-action" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>}
+              {app.databaseId && <p className="mt-1 text-xs text-zinc-600">db {databaseName(databases, app.databaseId)}</p>}
             </div>
             <StatusPill ok={app.status === "running"} label={app.status} />
           </div>
@@ -751,11 +1069,66 @@ function DeploymentList({ deployments, apps }: { deployments: DeploymentEvent[];
   );
 }
 
+function DatabaseGrid({
+  databases,
+  projects,
+  onAction
+}: {
+  databases: DatabaseResource[];
+  projects: ProjectRecord[];
+  onAction: (id: string, action: "test" | "connection") => Promise<void>;
+}) {
+  if (databases.length === 0) return <p className="text-sm text-zinc-500">No database resources yet. Create managed Postgres or connect an external provider.</p>;
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      {databases.map((database) => (
+        <article key={database.id} className="rounded-md border border-line bg-panel p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate font-bold text-ink">{database.name}</p>
+              <p className="text-xs text-zinc-500">{projectName(projects, database.projectId)} - {database.provider} - {database.envKey}</p>
+              <p className="mt-1 break-all text-xs text-zinc-600">{database.maskedUrl || `${database.host || "localhost"}:${database.port || 5432}/${database.database || ""}`}</p>
+              {database.lastMessage && <p className="mt-2 text-xs text-zinc-500">{database.lastMessage}</p>}
+            </div>
+            <StatusPill ok={["running", "reachable"].includes(database.status)} label={database.status} />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className="svp-button" onClick={() => void onAction(database.id, "test")}>
+              <HeartPulse size={14} />
+              Test
+            </button>
+            <button className="svp-button" onClick={() => void onAction(database.id, "connection")}>
+              <KeyRound size={14} />
+              Reveal URL
+            </button>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function Field({ label, value, onChange, placeholder, type = "text" }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string }) {
   return (
     <label className="grid gap-1">
       <span className="svp-label">{label}</span>
       <input className="svp-input" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type={type} />
+    </label>
+  );
+}
+
+function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }> }) {
+  return (
+    <label className="grid gap-1">
+      <span className="svp-label">{label}</span>
+      <select className="svp-input" value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.length === 0 && <option value="">Create a project first</option>}
+        {options.map((option) => (
+          <option key={option.value || option.label} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
@@ -882,4 +1255,32 @@ function publicIp(status: Record<string, unknown> | null) {
   const publicIpValue = status?.publicIp;
   if (!publicIpValue || typeof publicIpValue !== "object") return "";
   return String((publicIpValue as { ip?: string }).ip || "");
+}
+
+function roleOptions() {
+  return [
+    { value: "frontend", label: "Frontend" },
+    { value: "backend", label: "Backend/API" },
+    { value: "worker", label: "Worker" },
+    { value: "fullstack", label: "Full-stack" }
+  ];
+}
+
+function projectName(projects: ProjectRecord[], projectId?: string) {
+  return projects.find((project) => project.id === projectId)?.name || "Unassigned";
+}
+
+function databaseName(databases: DatabaseResource[], databaseId?: string) {
+  return databases.find((database) => database.id === databaseId)?.name || "Unknown database";
+}
+
+function splitLines(value: string) {
+  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function mergeEnvText(existing: string, additions: string[]) {
+  const current = existing.trim();
+  const next = additions.filter(Boolean).join("\n");
+  if (!current) return next;
+  return `${current}\n${next}`;
 }
