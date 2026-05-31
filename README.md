@@ -8,10 +8,18 @@ Supavibe Panel is a self-hosted single-server dashboard. It is installed directl
 - Server status: OS, disk, memory, Docker, Caddy, UFW, public IP.
 - Safe allowlisted actions only; no arbitrary shell endpoint.
 - Sample Docker deployment.
+- Public Git repository deployments with three modes:
+  - use an existing `Dockerfile`
+  - generated Node/Next/Vite-style Dockerfile
+  - static build served by nginx behind Caddy
+- Docker Compose stack deployment from a Git repo.
 - Sample no-Docker systemd deployment.
 - Sample static deployment served through Caddy after domain setup.
 - Caddy domain configuration.
 - Firewall baseline helper.
+- App lifecycle actions: logs, health check, restart, stop, redeploy, delete.
+- Deployment event history.
+- Docker system prune from the dashboard.
 - Logs for Docker/systemd apps.
 - Audit events.
 
@@ -110,12 +118,14 @@ Open `http://localhost:3000`.
 - Domains, CIDRs, app IDs, service names, Docker names, ports, and managed paths are validated before use.
 - Command output and API errors redact common tokens, passwords, database URLs, Authorization headers, private keys, and credentialed clone URLs.
 - The installer adds narrowed sudoers entries for UFW, Caddy validation/reload, `svp-*` systemd services, and generated Caddy/systemd files.
+- Git/Compose deploys should only be used with repositories you trust. Build scripts and compose files run on your VPS.
 
 ## Known Prototype Limits
 
 - JSON file state instead of SQLite.
 - No multi-user/RBAC yet.
 - Sudoers rules are narrowed for the prototype, but should be reviewed per distribution before real production.
-- Deployments are samples, not arbitrary repo deploys yet.
+- Git deploys support public HTTPS Git repos first. Private Git provider auth is not implemented yet.
+- Compose files can expose ports if the compose file says so; review compose repos before deploying.
 - Static apps require a domain to be public through Caddy.
 - No backup/restore for app data yet.

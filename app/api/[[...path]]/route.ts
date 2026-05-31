@@ -4,7 +4,21 @@ import { ZodError } from "zod";
 import { authState, createAdmin, login, logout, requireAuth, requireCsrf } from "../../lib/auth";
 import { ensureSameOrigin, rateLimit, requireSetupCode, requireTrustedNetwork, securityHeaders } from "../../lib/security";
 import { publicState } from "../../lib/state";
-import { applyFirewallBaseline, configureDomain, deploySampleApp, readAppLogs, serverStatus, stopApp } from "../../lib/system";
+import {
+  applyFirewallBaseline,
+  checkAppHealth,
+  configureDomain,
+  deleteApp,
+  deployComposeApp,
+  deployGitApp,
+  deploySampleApp,
+  readAppLogs,
+  redeployApp,
+  restartApp,
+  serverStatus,
+  stopApp,
+  systemPrune
+} from "../../lib/system";
 import { redact, UserFacingError } from "../../lib/validate";
 
 export const runtime = "nodejs";
@@ -27,6 +41,25 @@ const loginSchema = z.object({
 const sampleSchema = z.object({
   name: z.string().min(1).max(80).regex(/^[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+$/, "App name contains invalid characters."),
   strategy: z.enum(["docker", "systemd", "static"])
+});
+
+const gitDeploySchema = z.object({
+  name: z.string().min(1).max(80),
+  repoUrl: z.string().url(),
+  branch: z.string().optional().default("main"),
+  mode: z.enum(["dockerfile", "node", "static"]),
+  buildCommand: z.string().max(160).optional().default(""),
+  startCommand: z.string().max(160).optional().default(""),
+  containerPort: z.coerce.number().int().min(1).max(65535).optional().default(3000),
+  healthPath: z.string().max(120).optional().default("/"),
+  envText: z.string().max(20_000).optional().default("")
+});
+
+const composeDeploySchema = z.object({
+  name: z.string().min(1).max(80),
+  repoUrl: z.string().url(),
+  branch: z.string().optional().default("main"),
+  envText: z.string().max(20_000).optional().default("")
 });
 
 const domainSchema = z.object({
@@ -66,6 +99,10 @@ async function route(request: Request, context: RouteContext) {
     if (segments[0] === "system" && segments[1] === "status" && request.method === "GET") {
       return ok(await serverStatus(), 200, requestId);
     }
+    if (segments[0] === "system" && segments[1] === "prune" && request.method === "POST") {
+      rateLimit(request, { key: "system-prune", limit: 3, windowMs: 60_000 });
+      return ok({ result: await systemPrune() }, 200, requestId);
+    }
     if (segments[0] === "firewall" && segments[1] === "plan" && request.method === "GET") {
       const panelPort = Number(process.env.SVP_PORT || process.env.PORT || 3099);
       return ok({
@@ -87,6 +124,14 @@ async function route(request: Request, context: RouteContext) {
       rateLimit(request, { key: "deploy-sample", limit: 10, windowMs: 60_000 });
       return ok({ app: await deploySampleApp(sampleSchema.parse(await request.json())) }, 201, requestId);
     }
+    if (segments[0] === "apps" && segments[1] === "git" && request.method === "POST") {
+      rateLimit(request, { key: "deploy-git", limit: 8, windowMs: 60_000 });
+      return ok({ app: await deployGitApp(gitDeploySchema.parse(await request.json())) }, 201, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] === "compose" && request.method === "POST") {
+      rateLimit(request, { key: "deploy-compose", limit: 5, windowMs: 60_000 });
+      return ok({ app: await deployComposeApp(composeDeploySchema.parse(await request.json())) }, 201, requestId);
+    }
     if (segments[0] === "apps" && segments[1] && segments[2] === "domain" && request.method === "POST") {
       const body = domainSchema.parse(await request.json());
       return ok({ app: await configureDomain({ appId: segments[1], domain: body.domain }) }, 200, requestId);
@@ -96,6 +141,18 @@ async function route(request: Request, context: RouteContext) {
     }
     if (segments[0] === "apps" && segments[1] && segments[2] === "stop" && request.method === "POST") {
       return ok({ app: await stopApp(segments[1]) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "restart" && request.method === "POST") {
+      return ok({ app: await restartApp(segments[1]) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "redeploy" && request.method === "POST") {
+      return ok({ app: await redeployApp(segments[1]) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "health" && request.method === "POST") {
+      return ok({ health: await checkAppHealth(segments[1]) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "delete" && request.method === "POST") {
+      return ok(await deleteApp(segments[1]), 200, requestId);
     }
 
     return fail("Not found", 404, requestId);

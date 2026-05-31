@@ -63,6 +63,51 @@ export function assertSafeAppName(value: string) {
   return name;
 }
 
+export function assertSafeGitRepo(value: string) {
+  const repo = value.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(repo);
+  } catch {
+    throw new Error("Repository URL must be a valid HTTPS Git URL.");
+  }
+  if (parsed.protocol !== "https:") throw new Error("Only HTTPS Git URLs are supported.");
+  if (!["github.com", "gitlab.com", "bitbucket.org"].includes(parsed.hostname.toLowerCase())) {
+    throw new Error("Repository host must be GitHub, GitLab, or Bitbucket for this prototype.");
+  }
+  parsed.username = "";
+  parsed.password = "";
+  parsed.hash = "";
+  parsed.search = "";
+  if (!parsed.pathname.endsWith(".git")) parsed.pathname = parsed.pathname.replace(/\/$/, "") + ".git";
+  return parsed.toString();
+}
+
+export function assertSafeBranch(value: string) {
+  const branch = (value.trim() || "main").slice(0, 120);
+  if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes("..") || branch.startsWith("/") || branch.endsWith("/")) {
+    throw new Error("Branch name contains unsupported characters.");
+  }
+  return branch;
+}
+
+export function parseEnvText(value: string) {
+  const env: Record<string, string> = {};
+  const keys: string[] = [];
+  for (const rawLine of value.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const index = line.indexOf("=");
+    if (index <= 0) throw new Error("Environment variables must use KEY=value lines.");
+    const key = line.slice(0, index).trim();
+    const val = line.slice(index + 1);
+    if (!/^[A-Z_][A-Z0-9_]*$/i.test(key) || key.length > 80) throw new Error(`Invalid environment key: ${key}`);
+    env[key] = val;
+    keys.push(key);
+  }
+  return { env, keys };
+}
+
 export function assertManagedPath(baseDir: string, candidate: string) {
   const base = path.resolve(baseDir);
   const resolved = path.resolve(candidate);

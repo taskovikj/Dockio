@@ -15,7 +15,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 apt-get update
-apt-get install -y git curl ca-certificates openssh-client rsync ufw docker.io caddy build-essential python3 make g++
+apt-get install -y git curl ca-certificates openssh-client rsync ufw docker.io docker-compose-v2 caddy build-essential python3 make g++
 
 if ! command -v node >/dev/null 2>&1; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -57,9 +57,10 @@ chmod 640 "$ENV_DIR/panel.env"
 
 cat > /etc/sudoers.d/supavibe-panel <<EOF
 $RUN_USER ALL=(root) NOPASSWD: /usr/sbin/ufw status, /usr/sbin/ufw allow *, /usr/sbin/ufw --force enable
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload, /bin/systemctl daemon-reload, /usr/bin/systemctl reload caddy, /bin/systemctl reload caddy, /usr/bin/systemctl enable --now svp-*.service, /bin/systemctl enable --now svp-*.service, /usr/bin/systemctl disable --now svp-*.service, /bin/systemctl disable --now svp-*.service
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload, /bin/systemctl daemon-reload, /usr/bin/systemctl reload caddy, /bin/systemctl reload caddy, /usr/bin/systemctl enable --now svp-*.service, /bin/systemctl enable --now svp-*.service, /usr/bin/systemctl restart svp-*.service, /bin/systemctl restart svp-*.service, /usr/bin/systemctl disable --now svp-*.service, /bin/systemctl disable --now svp-*.service
 $RUN_USER ALL=(root) NOPASSWD: /usr/bin/install -m 0644 -o root -g root * /etc/caddy/conf.d/svp_*.caddy, /usr/bin/install -m 0644 -o root -g root * /etc/systemd/system/svp-*.service
 $RUN_USER ALL=(root) NOPASSWD: /usr/bin/mkdir -p /etc/caddy/conf.d, /bin/mkdir -p /etc/caddy/conf.d
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/rm -f /etc/caddy/conf.d/svp_*.caddy, /bin/rm -f /etc/caddy/conf.d/svp_*.caddy
 $RUN_USER ALL=(root) NOPASSWD: /usr/bin/caddy validate --config /etc/caddy/Caddyfile, /usr/sbin/caddy validate --config /etc/caddy/Caddyfile
 EOF
 chmod 440 /etc/sudoers.d/supavibe-panel

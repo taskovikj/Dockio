@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { redactValue } from "./validate";
 
-export type AppStrategy = "docker" | "systemd" | "static";
+export type AppStrategy = "docker" | "systemd" | "static" | "compose";
 export type AppStatus = "created" | "running" | "failed" | "stopped";
 
 export interface AdminAccount {
@@ -28,15 +28,35 @@ export interface ManagedApp {
   name: string;
   strategy: AppStrategy;
   port: number;
+  containerPort?: number;
   status: AppStatus;
+  source?: "sample" | "git" | "compose";
+  repoUrl?: string;
+  branch?: string;
+  commitSha?: string;
+  deployMode?: "dockerfile" | "node" | "static" | "compose";
+  buildCommand?: string;
+  startCommand?: string;
+  healthPath?: string;
+  envKeys?: string[];
   domain?: string;
   serviceName?: string;
   containerName?: string;
+  composeProject?: string;
   imageTag?: string;
   rootDir?: string;
   createdAt: string;
   updatedAt: string;
   lastMessage?: string;
+}
+
+export interface DeploymentEvent {
+  id: string;
+  appId: string;
+  action: string;
+  status: "succeeded" | "failed";
+  message: string;
+  createdAt: string;
 }
 
 export interface AuditEvent {
@@ -53,6 +73,7 @@ export interface PanelState {
   sessions: SessionRecord[];
   apps: ManagedApp[];
   audit: AuditEvent[];
+  deployments: DeploymentEvent[];
 }
 
 const initialState: PanelState = {
@@ -60,7 +81,8 @@ const initialState: PanelState = {
   admin: null,
   sessions: [],
   apps: [],
-  audit: []
+  audit: [],
+  deployments: []
 };
 
 export function getDataDir() {
@@ -93,7 +115,8 @@ export function readState(): PanelState {
       ...parsed,
       sessions: (parsed.sessions || []).filter((session) => new Date(session.expiresAt).getTime() > Date.now()),
       apps: parsed.apps || [],
-      audit: parsed.audit || []
+      audit: parsed.audit || [],
+      deployments: parsed.deployments || []
     };
   } catch (error) {
     const brokenPath = `${getStatePath()}.broken-${Date.now()}`;
@@ -142,6 +165,21 @@ export function publicState() {
     setupRequired: !state.admin,
     apps: state.apps.map(({ rootDir: _rootDir, ...app }) => app),
     audit: state.audit.slice(0, 80),
+    deployments: state.deployments.slice(0, 120),
     dataDir: getDataDir()
   };
+}
+
+export function deploymentEvent(appId: string, action: string, status: "succeeded" | "failed", message: string) {
+  updateState((state) => {
+    state.deployments.unshift({
+      id: crypto.randomUUID(),
+      appId,
+      action,
+      status,
+      message,
+      createdAt: new Date().toISOString()
+    });
+    state.deployments = state.deployments.slice(0, 300);
+  });
 }
