@@ -25,7 +25,7 @@ import {
   Wrench,
   type LucideIcon
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 type Tab = "general" | "environment" | "database" | "monitoring" | "logs" | "deployments" | "domains" | "advanced";
 type Strategy = "docker" | "systemd" | "static" | "compose";
@@ -133,14 +133,14 @@ interface CommandOutput {
 }
 
 const tabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
-  { id: "general", label: "General", icon: Layers3 },
-  { id: "environment", label: "Environment", icon: KeyRound },
-  { id: "database", label: "Database", icon: Database },
-  { id: "monitoring", label: "Monitoring", icon: HeartPulse },
-  { id: "logs", label: "Logs", icon: Terminal },
+  { id: "general", label: "Overview", icon: Layers3 },
   { id: "deployments", label: "Deployments", icon: Activity },
+  { id: "logs", label: "Logs", icon: Terminal },
+  { id: "monitoring", label: "Observability", icon: HeartPulse },
+  { id: "environment", label: "Environment Variables", icon: KeyRound },
   { id: "domains", label: "Domains", icon: Globe2 },
-  { id: "advanced", label: "Advanced", icon: Wrench }
+  { id: "database", label: "Storage", icon: Database },
+  { id: "advanced", label: "Settings", icon: Wrench }
 ];
 
 export function PanelShell() {
@@ -148,6 +148,8 @@ export function PanelShell() {
   const [state, setState] = useState<StatePayload | null>(null);
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
   const [tab, setTab] = useState<Tab>("general");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projectSearch, setProjectSearch] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [csrfToken, setCsrfToken] = useState("");
@@ -179,8 +181,6 @@ export function PanelShell() {
   const [corsPresetForm, setCorsPresetForm] = useState({ frontendOrigin: "", backendOrigin: "" });
   const [logs, setLogs] = useState("");
 
-  const selectedDomainApp = useMemo(() => state?.apps.find((app) => app.id === domainForm.appId), [domainForm.appId, state]);
-
   useEffect(() => {
     void boot();
   }, []);
@@ -199,13 +199,22 @@ export function PanelShell() {
     ]);
     setState(nextState);
     setStatus(nextStatus);
-    setDomainForm((form) => ({ ...form, appId: form.appId || nextState.apps[0]?.id || "" }));
-    setAppSettingsForm((form) => ({ ...form, appId: form.appId || nextState.apps[0]?.id || "", projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    const defaultApp = selectedProjectId ? nextState.apps.find((app) => app.projectId === selectedProjectId) : nextState.apps[0];
+    setDomainForm((form) => ({
+      ...form,
+      appId: form.appId && nextState.apps.some((app) => app.id === form.appId && (!selectedProjectId || app.projectId === selectedProjectId)) ? form.appId : defaultApp?.id || ""
+    }));
+    setAppSettingsForm((form) => ({
+      ...form,
+      appId: form.appId && nextState.apps.some((app) => app.id === form.appId && (!selectedProjectId || app.projectId === selectedProjectId)) ? form.appId : defaultApp?.id || "",
+      projectId: form.projectId || nextState.projects[0]?.id || ""
+    }));
     setGitForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setSampleForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setComposeForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setExternalDbForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setManagedDbForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    setSelectedProjectId((projectId) => (projectId && !nextState.projects.some((project) => project.id === projectId) ? "" : projectId));
   }
 
   async function run(label: string, action: () => Promise<void>) {
@@ -247,7 +256,7 @@ export function PanelShell() {
       const result = await api<{ app: ManagedApp }>("/api/apps/sample", {
         method: "POST",
         csrfToken,
-        body: sampleForm
+        body: { ...sampleForm, projectId: selectedProjectId || sampleForm.projectId }
       });
       setDomainForm((form) => ({ ...form, appId: result.app.id }));
       setNotice(`${result.app.name} deployed with ${result.app.strategy}.`);
@@ -260,7 +269,7 @@ export function PanelShell() {
       const result = await api<{ app: ManagedApp }>("/api/apps/git", {
         method: "POST",
         csrfToken,
-        body: gitForm
+        body: { ...gitForm, projectId: selectedProjectId || gitForm.projectId }
       });
       setDomainForm((form) => ({ ...form, appId: result.app.id }));
       setNotice(`${result.app.name} deployed from ${gitForm.branch}.`);
@@ -273,17 +282,37 @@ export function PanelShell() {
       const result = await api<{ app: ManagedApp }>("/api/apps/compose", {
         method: "POST",
         csrfToken,
-        body: composeForm
+        body: { ...composeForm, projectId: selectedProjectId || composeForm.projectId }
       });
       setNotice(`${result.app.name} compose stack deployed.`);
       await refresh();
     });
   }
 
+  function openProject(projectId: string) {
+    setSelectedProjectId(projectId);
+    setTab("general");
+    setDomainForm((form) => ({ ...form, appId: "" }));
+    setAppSettingsForm((form) => ({ ...form, projectId, appId: "", databaseId: "" }));
+    setGitForm((form) => ({ ...form, projectId, databaseId: "" }));
+    setSampleForm((form) => ({ ...form, projectId }));
+    setComposeForm((form) => ({ ...form, projectId }));
+    setExternalDbForm((form) => ({ ...form, projectId }));
+    setManagedDbForm((form) => ({ ...form, projectId }));
+    setLogs("");
+  }
+
+  function showAllProjects() {
+    setSelectedProjectId("");
+    setTab("general");
+    setLogs("");
+  }
+
   async function createProject() {
     await run("Creating project", async () => {
       const result = await api<{ project: ProjectRecord }>("/api/projects", { method: "POST", csrfToken, body: projectForm });
       setProjectForm({ name: "New Project", description: "" });
+      openProject(result.project.id);
       setNotice(`${result.project.name} created.`);
       await refresh();
     });
@@ -296,7 +325,7 @@ export function PanelShell() {
         method: "POST",
         csrfToken,
         body: {
-          projectId: appSettingsForm.projectId,
+          projectId: selectedProjectId || appSettingsForm.projectId,
           serviceRole: appSettingsForm.serviceRole,
           corsOrigins: splitLines(appSettingsForm.corsText),
           databaseId: appSettingsForm.databaseId
@@ -320,7 +349,7 @@ export function PanelShell() {
 
   async function createManagedDatabase() {
     await run("Creating Postgres", async () => {
-      const result = await api<{ database: DatabaseResource }>("/api/databases/managed-postgres", { method: "POST", csrfToken, body: managedDbForm });
+      const result = await api<{ database: DatabaseResource }>("/api/databases/managed-postgres", { method: "POST", csrfToken, body: { ...managedDbForm, projectId: selectedProjectId || managedDbForm.projectId } });
       setGitForm((form) => ({ ...form, databaseId: result.database.id }));
       setNotice(`${result.database.name} created on localhost:${result.database.localPort || result.database.port}.`);
       await refresh();
@@ -329,7 +358,7 @@ export function PanelShell() {
 
   async function createExternalDatabase() {
     await run("Saving external database", async () => {
-      const result = await api<{ database: DatabaseResource }>("/api/databases/external-postgres", { method: "POST", csrfToken, body: externalDbForm });
+      const result = await api<{ database: DatabaseResource }>("/api/databases/external-postgres", { method: "POST", csrfToken, body: { ...externalDbForm, projectId: selectedProjectId || externalDbForm.projectId } });
       setGitForm((form) => ({ ...form, databaseId: result.database.id }));
       setExternalDbForm((form) => ({ ...form, url: "" }));
       setNotice(`${result.database.name} saved. ${result.database.lastMessage || ""}`.trim());
@@ -459,66 +488,174 @@ export function PanelShell() {
     );
   }
 
-  const apps = state?.apps ?? [];
-  const projects = state?.projects ?? [];
-  const databases = state?.databases ?? [];
-  const deployments = state?.deployments ?? [];
+  const allApps = state?.apps ?? [];
+  const allProjects = state?.projects ?? [];
+  const allDatabases = state?.databases ?? [];
+  const allDeployments = state?.deployments ?? [];
+  const currentProject = allProjects.find((project) => project.id === selectedProjectId);
+  const apps = currentProject ? allApps.filter((app) => app.projectId === currentProject.id) : allApps;
+  const projects = currentProject ? [currentProject] : allProjects;
+  const databases = currentProject ? allDatabases.filter((database) => database.projectId === currentProject.id) : allDatabases;
+  const scopedAppIds = new Set(apps.map((app) => app.id));
+  const deployments = currentProject ? allDeployments.filter((deployment) => scopedAppIds.has(deployment.appId)) : allDeployments;
+  const filteredProjects = allProjects.filter((project) => {
+    const query = projectSearch.trim().toLowerCase();
+    if (!query) return true;
+    return project.name.toLowerCase().includes(query) || (project.description || "").toLowerCase().includes(query);
+  });
   const activeApp = apps.find((app) => app.id === domainForm.appId) || apps[0];
   const selectedSettingsApp = apps.find((app) => app.id === appSettingsForm.appId);
+  const selectedDomainApp = apps.find((app) => app.id === domainForm.appId) || activeApp;
   const vpsIp = publicIp(status);
+
+  if (!currentProject) {
+    return (
+      <main className="min-h-screen bg-[#050505] text-zinc-100">
+        <div className="grid min-h-screen lg:grid-cols-[240px_1fr]">
+          <aside className="border-b border-line bg-[#050505] p-3 lg:border-b-0 lg:border-r">
+            <Brand compact />
+            <div className="mt-5 grid gap-2">
+              <button className="svp-button justify-start bg-[#1b1b1e]" onClick={showAllProjects}>
+                <Layers3 size={15} />
+                Projects
+              </button>
+            </div>
+            <div className="mt-6 border-t border-line pt-4 text-xs text-zinc-500">
+              <p>Server IP</p>
+              <p className="mt-1 break-all text-zinc-300">{vpsIp || "checking"}</p>
+            </div>
+          </aside>
+
+          <section className="min-w-0">
+            <header className="border-b border-line px-4 py-3 md:px-6">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-xs font-bold text-zinc-500">Workspace</p>
+                  <h1 className="text-xl font-black text-ink">All Projects</h1>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
+                    <RefreshCw size={15} />
+                    Refresh
+                  </button>
+                  <button className="svp-button" onClick={() => void logout()}>
+                    <Lock size={15} />
+                    Logout
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <div className="mx-auto max-w-7xl space-y-5 px-4 py-5 md:px-6">
+              {(notice || busy) && <Notice busy={busy} notice={notice} />}
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <Metric label="Projects" value={allProjects.length} detail="Apps grouped by product" icon={Layers3} />
+                <Metric label="Services" value={allApps.length} detail="Frontend, API, workers" icon={Boxes} />
+                <Metric label="Databases" value={allDatabases.length} detail="Managed and external" icon={Database} />
+                <Metric label="Deployments" value={allDeployments.length} detail="Recent lifecycle events" icon={Activity} />
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+                <Panel title="New Project" icon={Layers3}>
+                  <div className="grid gap-3">
+                    <Field label="Project name" value={projectForm.name} onChange={(name) => setProjectForm({ ...projectForm, name })} placeholder="my-product" />
+                    <TextArea label="What will run here?" value={projectForm.description} onChange={(description) => setProjectForm({ ...projectForm, description })} placeholder="Frontend + API + Postgres, domains, env..." />
+                    <button className="svp-button-primary w-fit" onClick={() => void createProject()} disabled={Boolean(busy) || !projectForm.name.trim()}>
+                      <Layers3 size={16} />
+                      Create Project
+                    </button>
+                  </div>
+                </Panel>
+
+                <section className="space-y-3">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <label className="min-w-0 flex-1">
+                      <span className="sr-only">Search projects</span>
+                      <input className="svp-input" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Search projects..." />
+                    </label>
+                    <button
+                      className="svp-button-primary"
+                      onClick={() => {
+                        setProjectForm({ name: "New Project", description: "" });
+                        setNotice("Fill the New Project form on the left, then create it to open a focused project workspace.");
+                      }}
+                    >
+                      Add New
+                    </button>
+                  </div>
+                  <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} onOpen={openProject} />
+                </section>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#050505] text-zinc-100">
-      <header className="border-b border-line bg-[#050505]/95 px-4 py-3 md:px-6">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
+      <div className="grid min-h-screen lg:grid-cols-[240px_1fr]">
+        <aside className="border-b border-line bg-[#050505] p-3 lg:border-b-0 lg:border-r">
           <Brand compact />
-          <div className="flex items-center gap-2">
-            <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
-              <RefreshCw size={15} />
-              Refresh
-            </button>
-            <button className="svp-button" onClick={() => void logout()}>
-              <Lock size={15} />
-              Logout
-            </button>
+          <button className="svp-button mt-5 w-full justify-start" onClick={showAllProjects}>
+            <Layers3 size={15} />
+            All Projects
+          </button>
+          <div className="mt-5 rounded-md border border-line bg-panel p-3">
+            <p className="svp-label">Current project</p>
+            <p className="mt-2 truncate font-black text-ink">{currentProject.name}</p>
+            <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{currentProject.description || "Services, deploys, env, domains, storage."}</p>
           </div>
-        </div>
-      </header>
+          <nav className="mt-5 grid gap-1" aria-label="Project navigation">
+            {tabs.map((item) => (
+              <TabButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />
+            ))}
+          </nav>
+          <div className="mt-6 border-t border-line pt-4 text-xs text-zinc-500">
+            <p>Server IP</p>
+            <p className="mt-1 break-all text-zinc-300">{vpsIp || "checking"}</p>
+            <p className="mt-3">Panel</p>
+            <p className="mt-1 text-zinc-300">Auth protected</p>
+          </div>
+        </aside>
 
-      <section className="mx-auto max-w-7xl space-y-4 px-4 py-5 md:px-6">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-bold text-zinc-500">Projects &gt; Supavibe VPS &gt; Server</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-black tracking-normal text-ink">Supavibe VPS</h1>
-              <span className="text-sm font-semibold text-zinc-500">self-hosted-panel</span>
+        <section className="min-w-0">
+          <header className="border-b border-line bg-[#050505]/95 px-4 py-3 md:px-6">
+            <div className="mx-auto flex max-w-7xl flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-zinc-500">All Projects &gt; {currentProject.name}</p>
+                <h1 className="mt-1 truncate text-2xl font-black tracking-normal text-ink">{currentProject.name}</h1>
+                <p className="mt-1 max-w-3xl text-sm text-zinc-400">
+                  {currentProject.description || "Deploy frontend, backend, workers, Docker Compose, domains, storage, logs, firewall, and rollbacks from one project workspace."}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button className="svp-button-primary" onClick={() => setTab("deployments")} disabled={Boolean(busy)}>
+                  <Play size={15} />
+                  New Deployment
+                </button>
+                {activeApp?.domain && (
+                  <a className="svp-button" href={`https://${activeApp.domain}`} target="_blank" rel="noreferrer">
+                    <Globe2 size={15} />
+                    Visit
+                  </a>
+                )}
+                <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
+                  <RefreshCw size={15} />
+                  Refresh
+                </button>
+                <button className="svp-button" onClick={() => void logout()}>
+                  <Lock size={15} />
+                  Logout
+                </button>
+              </div>
             </div>
-            <p className="mt-1 text-sm text-zinc-400">
-              Manage apps, deployments, domains, firewall, logs, and runtime health on this server.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="svp-badge">
-              <Server size={13} />
-              {vpsIp || "IP checking"}
-            </span>
-            <span className="svp-badge">
-              <Shield size={13} />
-              Auth protected
-            </span>
-          </div>
-        </div>
+          </header>
 
-        <nav className="svp-tabbar" aria-label="Project settings">
-          {tabs.map((item) => (
-            <button key={item.id} className={`svp-tab ${tab === item.id ? "svp-tab-active" : ""}`} onClick={() => setTab(item.id)}>
-              <item.icon size={14} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        {(notice || busy) && <Notice busy={busy} notice={notice} />}
+          <div className="mx-auto max-w-7xl space-y-4 px-4 py-5 md:px-6">
+            {(notice || busy) && <Notice busy={busy} notice={notice} />}
 
         {tab === "general" && (
           <div className="space-y-4">
@@ -549,32 +686,85 @@ export function PanelShell() {
               </div>
             </Panel>
 
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-              <Metric label="Projects" value={projects.length} detail="Frontend, backend, workers" icon={Layers3} />
-              <Metric label="Apps" value={apps.length} detail="Managed by this panel" icon={Boxes} />
-              <Metric label="DBs" value={databases.length} detail="Managed or external Postgres" icon={Database} />
-              <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={Database} />
-              <Metric label="Caddy" value={isActive(status?.caddy) ? 1 : 0} detail={outputLabel(status?.caddy)} icon={Globe2} />
-              <Metric label="Data" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <Metric label="Services" value={apps.length} detail="Frontend, API, workers" icon={Boxes} />
+              <Metric label="Deployments" value={deployments.length} detail="Rollbacks and deploy history" icon={Activity} />
+              <Metric label="Storage" value={databases.length} detail="Managed or external Postgres" icon={Database} />
+              <Metric label="Domains" value={apps.filter((app) => app.domain).length} detail="Caddy HTTPS routes" icon={Globe2} />
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-              <Panel title="Create Project" icon={Layers3}>
-                <div className="grid gap-3">
-                  <Field label="Project name" value={projectForm.name} onChange={(name) => setProjectForm({ ...projectForm, name })} placeholder="My SaaS" />
-                  <TextArea label="Notes" value={projectForm.description} onChange={(description) => setProjectForm({ ...projectForm, description })} placeholder="Frontend, API, database, domains..." />
-                  <button className="svp-button-primary w-fit" onClick={() => void createProject()} disabled={Boolean(busy) || !projectForm.name.trim()}>
-                    <Layers3 size={16} />
-                    Create Project
-                  </button>
+            <Panel title="Production Deployment" icon={Server}>
+              {activeApp ? (
+                <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+                  <div className="rounded-md border border-line bg-[#050505] p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="svp-label">Active service</p>
+                        <h2 className="mt-2 truncate text-xl font-black text-ink">{activeApp.name}</h2>
+                        <p className="mt-1 text-sm text-zinc-500">
+                          {activeApp.serviceRole || "fullstack"} - {activeApp.strategy} - {activeApp.source || "manual"}
+                        </p>
+                      </div>
+                      <StatusPill ok={activeApp.status === "running"} label={activeApp.status} />
+                    </div>
+                    <div className="mt-4 grid gap-2 text-sm text-zinc-400">
+                      <p>Source: {activeApp.repoUrl ? `${activeApp.repoUrl} @ ${activeApp.branch || "main"}` : activeApp.source || "sample"}</p>
+                      <p>Route: {activeApp.domain ? activeApp.domain : `127.0.0.1:${activeApp.port}`}</p>
+                      <p>Database: {activeApp.databaseId ? databaseName(databases, activeApp.databaseId) : "No database bound"}</p>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button className="svp-button-primary" onClick={() => setTab("deployments")}>
+                        <Play size={15} />
+                        Deploy
+                      </button>
+                      <button className="svp-button" onClick={() => void appAction(activeApp.id, "health")}>
+                        <HeartPulse size={15} />
+                        Health
+                      </button>
+                      <button className="svp-button" onClick={() => void loadLogs(activeApp.id)}>
+                        <Terminal size={15} />
+                        Logs
+                      </button>
+                      {activeApp.source && (
+                        <button className="svp-button" onClick={() => void appAction(activeApp.id, "redeploy")}>
+                          <GitBranch size={15} />
+                          Redeploy
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-line bg-[#050505] p-4">
+                    <p className="font-black text-ink">Production checklist</p>
+                    <div className="mt-3 grid gap-2">
+                      <ChecklistRow done={apps.some((app) => app.source === "git" || app.source === "compose")} label="Deploy from Git or Compose" onClick={() => setTab("deployments")} />
+                      <ChecklistRow done={apps.some((app) => app.envKeys?.length)} label="Set environment variables" onClick={() => setTab("environment")} />
+                      <ChecklistRow done={databases.length > 0} label="Create or connect database" onClick={() => setTab("database")} />
+                      <ChecklistRow done={apps.some((app) => app.domain)} label="Add domain and Caddy route" onClick={() => setTab("domains")} />
+                      <ChecklistRow done={apps.some((app) => app.status === "running")} label="Check runtime health" onClick={() => setTab("monitoring")} />
+                    </div>
+                  </div>
                 </div>
-              </Panel>
-              <Panel title="Projects" icon={Server}>
-                <ProjectGrid projects={projects} apps={apps} databases={databases} />
-              </Panel>
-            </div>
+              ) : (
+                <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+                  <div>
+                    <p className="text-sm text-zinc-400">This project is empty. Start with a sample API, a Git repo, static site, systemd service, or Docker Compose stack.</p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button className="svp-button-primary" onClick={() => setTab("deployments")}>
+                        <Play size={15} />
+                        Deploy First Service
+                      </button>
+                      <button className="svp-button" onClick={() => setTab("database")}>
+                        <Database size={15} />
+                        Add Storage
+                      </button>
+                    </div>
+                  </div>
+                  <Info title="Project scoped workspace" body="Once you open a project, services, env vars, domains, logs, storage, and deployment history are filtered to this project only." />
+                </div>
+              )}
+            </Panel>
 
-            <Panel title="Managed Apps" icon={Server}>
+            <Panel title="Services" icon={Server}>
               <AppGrid apps={apps} projects={projects} databases={databases} onLogs={loadLogs} onStop={stop} onAction={appAction} />
             </Panel>
           </div>
@@ -923,7 +1113,9 @@ export function PanelShell() {
             </Panel>
           </div>
         )}
-      </section>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }
@@ -956,6 +1148,57 @@ function SecurityBanner({ status }: { status: Record<string, unknown> | null }) 
   );
 }
 
+function ProjectCards({
+  projects,
+  apps,
+  databases,
+  deployments,
+  onOpen
+}: {
+  projects: ProjectRecord[];
+  apps: ManagedApp[];
+  databases: DatabaseResource[];
+  deployments: DeploymentEvent[];
+  onOpen: (projectId: string) => void;
+}) {
+  if (projects.length === 0) {
+    return <p className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">No projects match that search. Create a project and it opens as its own deployment workspace.</p>;
+  }
+
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      {projects.map((project) => {
+        const projectApps = apps.filter((app) => app.projectId === project.id);
+        const projectDbs = databases.filter((database) => database.projectId === project.id);
+        const projectAppIds = new Set(projectApps.map((app) => app.id));
+        const lastDeployment = deployments.find((deployment) => projectAppIds.has(deployment.appId));
+        const primaryDomain = projectApps.find((app) => app.domain)?.domain;
+        const runningCount = projectApps.filter((app) => app.status === "running").length;
+        return (
+          <button key={project.id} className="rounded-md border border-line bg-panel p-4 text-left transition hover:border-zinc-600 hover:bg-[#161618]" onClick={() => onOpen(project.id)}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-base font-black text-ink">{project.name}</p>
+                <p className="mt-1 truncate text-sm text-zinc-500">{primaryDomain || project.description || "No production domain yet"}</p>
+              </div>
+              <StatusPill ok={runningCount > 0 || projectApps.length === 0} label={projectApps.length ? `${runningCount}/${projectApps.length} running` : "new"} />
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="svp-badge">{projectApps.length} services</span>
+              <span className="svp-badge">{projectApps.filter((app) => app.serviceRole === "frontend").length} frontend</span>
+              <span className="svp-badge">{projectApps.filter((app) => app.serviceRole === "backend").length} backend</span>
+              <span className="svp-badge">{projectDbs.length} db</span>
+            </div>
+            <p className="mt-4 text-xs text-zinc-500">
+              {lastDeployment ? `${lastDeployment.action}: ${lastDeployment.message}` : "Open project to deploy frontend, backend, storage, domains, and logs."}
+            </p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ProjectGrid({ projects, apps, databases }: { projects: ProjectRecord[]; apps: ManagedApp[]; databases: DatabaseResource[] }) {
   if (projects.length === 0) return <p className="text-sm text-zinc-500">No projects yet. Create one, then deploy frontend/backend services into it.</p>;
   return (
@@ -977,6 +1220,15 @@ function ProjectGrid({ projects, apps, databases }: { projects: ProjectRecord[];
         );
       })}
     </div>
+  );
+}
+
+function ChecklistRow({ done, label, onClick }: { done: boolean; label: string; onClick: () => void }) {
+  return (
+    <button className="flex items-center justify-between gap-3 rounded-md border border-line bg-panel px-3 py-2 text-left text-sm transition hover:border-zinc-600" onClick={onClick}>
+      <span className={done ? "text-zinc-300" : "text-zinc-500"}>{label}</span>
+      <StatusPill ok={done} label={done ? "done" : "todo"} />
+    </button>
   );
 }
 
