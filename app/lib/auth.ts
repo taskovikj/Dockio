@@ -64,7 +64,7 @@ export async function login(email: string, password: string) {
   jar.set(COOKIE, token, {
     httpOnly: true,
     sameSite: "strict",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookie(),
     path: "/",
     expires: new Date(session.expiresAt)
   });
@@ -126,4 +126,12 @@ function assertStrongPassword(password: string) {
   if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
     throw new Error("Password must include uppercase, lowercase, and a number.");
   }
+}
+
+function shouldUseSecureCookie() {
+  const explicit = process.env.SVP_COOKIE_SECURE?.trim().toLowerCase();
+  if (explicit === "true") return true;
+  if (explicit === "false") return false;
+  const publicUrl = process.env.SVP_PUBLIC_ORIGIN || process.env.SVP_PUBLIC_BASE_URL || "";
+  return publicUrl.startsWith("https://");
 }
