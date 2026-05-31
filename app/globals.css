@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  background: #f5f7f4;
+}
+
+body {
+  margin: 0;
+  background: #f5f7f4;
+  color: #111827;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.svp-panel {
+  border: 1px solid #d9e2d7;
+  background: #ffffff;
+  border-radius: 6px;
+}
+
+.svp-input {
+  width: 100%;
+  border: 1px solid #d9e2d7;
+  border-radius: 5px;
+  background: #ffffff;
+  padding: 0.65rem 0.75rem;
+  outline: none;
+}
+
+.svp-input:focus {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 2px rgb(15 118 110 / 0.12);
+}
+
+.svp-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64705f;
+}
+
+.svp-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid #d9e2d7;
+  border-radius: 5px;
+  background: #ffffff;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.svp-button-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border-radius: 5px;
+  background: #0f766e;
+  color: #ffffff;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.svp-button:disabled,
+.svp-button-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.svp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #d9e2d7;
+  border-radius: 999px;
+  background: #f5f7f4;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
