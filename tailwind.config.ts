@@ -5,10 +5,10 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#111827",
-        panel: "#f5f7f4",
-        line: "#d9e2d7",
-        action: "#0f766e"
+        ink: "#f4f4f5",
+        panel: "#111113",
+        line: "#242428",
+        action: "#fafafa"
       }
     }
   },

@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-type Tab = "overview" | "deploy" | "domains" | "firewall" | "logs" | "audit";
+type Tab = "general" | "environment" | "monitoring" | "logs" | "deployments" | "domains" | "advanced";
 type Strategy = "docker" | "systemd" | "static" | "compose";
 type GitMode = "dockerfile" | "node" | "static";
 
@@ -96,19 +96,20 @@ interface CommandOutput {
 }
 
 const tabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
-  { id: "overview", label: "Overview", icon: Layers3 },
-  { id: "deploy", label: "Deploy", icon: Play },
-  { id: "domains", label: "Domains", icon: Globe2 },
-  { id: "firewall", label: "Firewall", icon: Shield },
+  { id: "general", label: "General", icon: Layers3 },
+  { id: "environment", label: "Environment", icon: KeyRound },
+  { id: "monitoring", label: "Monitoring", icon: HeartPulse },
   { id: "logs", label: "Logs", icon: Terminal },
-  { id: "audit", label: "Audit", icon: Activity }
+  { id: "deployments", label: "Deployments", icon: Activity },
+  { id: "domains", label: "Domains", icon: Globe2 },
+  { id: "advanced", label: "Advanced", icon: Wrench }
 ];
 
 export function PanelShell() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [state, setState] = useState<StatePayload | null>(null);
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>("general");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [csrfToken, setCsrfToken] = useState("");
@@ -289,11 +290,11 @@ export function PanelShell() {
 
   if (!auth.user) {
     return (
-      <main className="flex min-h-screen items-center justify-center p-4">
+      <main className="flex min-h-screen items-center justify-center bg-[#050505] p-4 text-zinc-100">
         <section className="svp-panel w-full max-w-lg p-5">
           <Brand />
           <h1 className="text-2xl font-black text-ink">{auth.setupRequired ? "Create admin account" : "Sign in"}</h1>
-          <p className="mt-2 text-sm text-neutral-600">
+          <p className="mt-2 text-sm text-zinc-400">
             Use auth when the panel port is public. For private Tailscale-only installs it is still safer to keep a password.
           </p>
           <div className="mt-5 grid gap-3">
@@ -304,7 +305,7 @@ export function PanelShell() {
               <Field label="Setup code" value={authForm.setupCode} onChange={(setupCode) => setAuthForm({ ...authForm, setupCode })} />
             )}
             {auth.setupRequired && (
-              <p className="rounded-md border border-line bg-panel p-3 text-xs text-neutral-600">
+              <p className="rounded-md border border-line bg-panel p-3 text-xs text-zinc-400">
                 Passwords must be at least 12 characters and include uppercase, lowercase, and a number. On installed servers, the setup code is printed by the installer and stored in `/etc/supavibe-panel/panel.env`.
               </p>
             )}
@@ -319,226 +320,334 @@ export function PanelShell() {
     );
   }
 
+  const apps = state?.apps ?? [];
+  const deployments = state?.deployments ?? [];
+  const activeApp = apps.find((app) => app.id === domainForm.appId) || apps[0];
+  const vpsIp = publicIp(status);
+
   return (
-    <main className="min-h-screen">
-      <div className="flex min-h-screen">
-        <aside className="hidden w-64 shrink-0 border-r border-line bg-white p-4 lg:block">
-          <Brand />
-          <nav className="grid gap-1">
-            {tabs.map((item) => (
-              <TabButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />
-            ))}
-          </nav>
-        </aside>
-        <section className="min-w-0 flex-1">
-          <header className="border-b border-line bg-white/80 px-4 py-4 md:px-6">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div>
-                <p className="svp-label">Single VPS self-hosted panel</p>
-                <h1 className="text-2xl font-black text-ink">Supavibe VPS Panel</h1>
+    <main className="min-h-screen bg-[#050505] text-zinc-100">
+      <header className="border-b border-line bg-[#050505]/95 px-4 py-3 md:px-6">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
+          <Brand compact />
+          <div className="flex items-center gap-2">
+            <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
+              <RefreshCw size={15} />
+              Refresh
+            </button>
+            <button className="svp-button" onClick={() => void logout()}>
+              <Lock size={15} />
+              Logout
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section className="mx-auto max-w-7xl space-y-4 px-4 py-5 md:px-6">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-xs font-bold text-zinc-500">Projects &gt; Supavibe VPS &gt; Server</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-black tracking-normal text-ink">Supavibe VPS</h1>
+              <span className="text-sm font-semibold text-zinc-500">self-hosted-panel</span>
+            </div>
+            <p className="mt-1 text-sm text-zinc-400">
+              Manage apps, deployments, domains, firewall, logs, and runtime health on this server.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="svp-badge">
+              <Server size={13} />
+              {vpsIp || "IP checking"}
+            </span>
+            <span className="svp-badge">
+              <Shield size={13} />
+              Auth protected
+            </span>
+          </div>
+        </div>
+
+        <nav className="svp-tabbar" aria-label="Project settings">
+          {tabs.map((item) => (
+            <button key={item.id} className={`svp-tab ${tab === item.id ? "svp-tab-active" : ""}`} onClick={() => setTab(item.id)}>
+              <item.icon size={14} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        <SecurityBanner status={status} />
+        {(notice || busy) && <Notice busy={busy} notice={notice} />}
+
+        {tab === "general" && (
+          <div className="space-y-4">
+            <Panel title="Deploy Settings" icon={Play}>
+              <div className="flex flex-wrap items-center gap-2">
+                <button className="svp-button-primary" onClick={() => void (gitForm.repoUrl ? deployGit() : deploySample())} disabled={Boolean(busy)}>
+                  <Play size={15} />
+                  Deploy
+                </button>
+                <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
+                  <RefreshCw size={15} />
+                  Reload
+                </button>
+                <span className="svp-badge">Autodeploy off</span>
+                <button className="svp-button" onClick={() => activeApp && void appAction(activeApp.id, "redeploy")} disabled={Boolean(busy) || !activeApp?.source}>
+                  <Wrench size={15} />
+                  Rebuild
+                </button>
+                <button className="svp-button" onClick={() => activeApp && void appAction(activeApp.id, "restart")} disabled={Boolean(busy) || !activeApp}>
+                  <RotateCcw size={15} />
+                  Start
+                </button>
+                <button className="svp-button" onClick={() => setNotice("Terminal access is intentionally not exposed in the web panel yet. Use logs and safe lifecycle actions here, or SSH into the VPS for shell work.")}>
+                  <Terminal size={15} />
+                  Open Terminal
+                </button>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {tabs.map((item) => (
-                  <button key={item.id} className={`svp-button lg:hidden ${tab === item.id ? "border-action text-action" : ""}`} onClick={() => setTab(item.id)}>
-                    <item.icon size={15} />
-                    {item.label}
+            </Panel>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <Metric label="Apps" value={apps.length} detail="Managed by this panel" icon={Boxes} />
+              <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={Database} />
+              <Metric label="Caddy" value={isActive(status?.caddy) ? 1 : 0} detail={outputLabel(status?.caddy)} icon={Globe2} />
+              <Metric label="Data" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
+            </div>
+
+            <Panel title="Managed Apps" icon={Server}>
+              <AppGrid apps={apps} onLogs={loadLogs} onStop={stop} onAction={appAction} />
+            </Panel>
+          </div>
+        )}
+
+        {tab === "environment" && (
+          <div className="grid gap-4 xl:grid-cols-[440px_1fr]">
+            <Panel title="Environment" icon={KeyRound}>
+              <div className="grid gap-3">
+                <TextArea label="Deploy-time environment variables" value={gitForm.envText} onChange={(envText) => setGitForm({ ...gitForm, envText })} placeholder={"DATABASE_URL=...\nNODE_ENV=production"} />
+                <p className="rounded-md border border-line bg-panel p-3 text-xs text-zinc-400">
+                  Values are written into the app .env file during deployment. The dashboard state stores only variable names for safety.
+                </p>
+              </div>
+            </Panel>
+            <Panel title="Configured Keys" icon={Lock}>
+              <div className="grid gap-2">
+                {apps.length === 0 && <p className="text-sm text-zinc-500">No app environment keys yet.</p>}
+                {apps.map((app) => (
+                  <div key={app.id} className="rounded-md border border-line bg-panel p-3">
+                    <p className="font-bold text-ink">{app.name}</p>
+                    <p className="mt-1 text-xs text-zinc-500">{app.envKeys?.length ? app.envKeys.join(", ") : "No keys captured"}</p>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          </div>
+        )}
+
+        {tab === "monitoring" && (
+          <div className="grid gap-4 xl:grid-cols-[1fr_1.3fr]">
+            <div className="grid gap-3 md:grid-cols-2">
+              <Metric label="Apps" value={apps.length} detail="Active records" icon={Boxes} />
+              <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={Database} />
+              <Metric label="Caddy" value={isActive(status?.caddy) ? 1 : 0} detail={outputLabel(status?.caddy)} icon={Globe2} />
+              <Metric label="Data" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
+            </div>
+            <Panel title="Server Status" icon={Activity}>
+              <pre className="svp-code max-h-[520px] overflow-auto rounded-md p-4 text-xs">{JSON.stringify(status, null, 2)}</pre>
+            </Panel>
+          </div>
+        )}
+
+        {tab === "logs" && (
+          <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+            <Panel title="Services" icon={Server}>
+              <div className="grid gap-2">
+                {apps.length === 0 && <p className="text-sm text-zinc-500">Deploy an app first, then logs appear here.</p>}
+                {apps.map((app) => (
+                  <button key={app.id} className="svp-button justify-start" onClick={() => void loadLogs(app.id)}>
+                    <Terminal size={14} />
+                    {app.name}
                   </button>
                 ))}
-                <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
-                  <RefreshCw size={16} />
-                  Refresh
-                </button>
-                <button className="svp-button" onClick={() => void logout()}>
-                  <Lock size={16} />
-                  Logout
-                </button>
               </div>
-            </div>
-          </header>
+            </Panel>
+            <Panel title="Runtime Logs" icon={Terminal}>
+              <pre className="svp-code min-h-96 overflow-auto rounded-md p-4 text-xs">{logs || "Select a service to load recent logs."}</pre>
+            </Panel>
+          </div>
+        )}
 
-          <div className="space-y-4 p-4 md:p-6">
-            <SecurityBanner status={status} />
-            {(notice || busy) && <Notice busy={busy} notice={notice} />}
-
-            {tab === "overview" && (
-              <div className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <Metric label="Apps" value={state?.apps.length ?? 0} detail="Managed by this panel" icon={Boxes} />
-                  <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={Database} />
-                  <Metric label="Caddy" value={isActive(status?.caddy) ? 1 : 0} detail={outputLabel(status?.caddy)} icon={Globe2} />
-                  <Metric label="Data" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
+        {tab === "deployments" && (
+          <div className="space-y-4">
+            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+              <Panel title="Provider" icon={GitBranch}>
+                <div className="grid gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    <span className="svp-tab svp-tab-active">Git</span>
+                    <span className="svp-tab">Docker</span>
+                    <span className="svp-tab">Compose</span>
+                  </div>
+                  <Field label="App name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
+                  <Field label="Repository URL" value={gitForm.repoUrl} onChange={(repoUrl) => setGitForm({ ...gitForm, repoUrl })} placeholder="https://github.com/user/repo.git" />
+                  <Field label="Branch" value={gitForm.branch} onChange={(branch) => setGitForm({ ...gitForm, branch })} />
                 </div>
-                <Panel title="Managed Apps" icon={Server}>
-                  <AppGrid apps={state?.apps ?? []} onLogs={loadLogs} onStop={stop} onAction={appAction} />
-                </Panel>
-                <Panel title="Recent Deployments" icon={Activity}>
-                  <DeploymentList deployments={state?.deployments ?? []} apps={state?.apps ?? []} />
-                </Panel>
-              </div>
-            )}
+              </Panel>
 
-            {tab === "deploy" && (
-              <div className="grid gap-4 xl:grid-cols-[440px_1fr]">
-                <Panel title="Deploy From Git" icon={GitBranch}>
-                  <div className="grid gap-3">
-                    <Field label="App name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
-                    <Field label="Repository URL" value={gitForm.repoUrl} onChange={(repoUrl) => setGitForm({ ...gitForm, repoUrl })} placeholder="https://github.com/user/repo.git" />
-                    <Field label="Branch" value={gitForm.branch} onChange={(branch) => setGitForm({ ...gitForm, branch })} />
-                    <label className="grid gap-1">
-                      <span className="svp-label">Deploy mode</span>
-                      <select className="svp-input" value={gitForm.mode} onChange={(event) => setGitForm({ ...gitForm, mode: event.target.value as GitMode })}>
-                        <option value="dockerfile">Use repository Dockerfile</option>
-                        <option value="node">Auto Node/Next/Vite Docker</option>
-                        <option value="static">Static build served by nginx/Caddy</option>
-                      </select>
-                    </label>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <Field label="Build command" value={gitForm.buildCommand} onChange={(buildCommand) => setGitForm({ ...gitForm, buildCommand })} placeholder="auto: npm run build" />
-                      <Field label="Start command" value={gitForm.startCommand} onChange={(startCommand) => setGitForm({ ...gitForm, startCommand })} placeholder="auto: npm run start" />
-                    </div>
+              <Panel title="Build Type" icon={Wrench}>
+                <div className="grid gap-3">
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input type="radio" checked={gitForm.mode === "dockerfile"} onChange={() => setGitForm({ ...gitForm, mode: "dockerfile" })} />
+                    Dockerfile
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input type="radio" checked={gitForm.mode === "node"} onChange={() => setGitForm({ ...gitForm, mode: "node" })} />
+                    Node/Next/Vite generated Dockerfile
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input type="radio" checked={gitForm.mode === "static"} onChange={() => setGitForm({ ...gitForm, mode: "static" })} />
+                    Static build
+                  </label>
+                  <div className="grid gap-3 border-t border-line pt-3 md:grid-cols-2">
+                    <Field label="Build command" value={gitForm.buildCommand} onChange={(buildCommand) => setGitForm({ ...gitForm, buildCommand })} placeholder="auto: npm run build" />
+                    <Field label="Start command" value={gitForm.startCommand} onChange={(startCommand) => setGitForm({ ...gitForm, startCommand })} placeholder="auto: npm run start" />
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
                     <Field label="Container port" value={gitForm.containerPort} onChange={(containerPort) => setGitForm({ ...gitForm, containerPort })} placeholder="3000" />
                     <Field label="Health path" value={gitForm.healthPath} onChange={(healthPath) => setGitForm({ ...gitForm, healthPath })} placeholder="/" />
-                    <TextArea label="Environment variables" value={gitForm.envText} onChange={(envText) => setGitForm({ ...gitForm, envText })} placeholder={"DATABASE_URL=...\nNODE_ENV=production"} />
-                    <button className="svp-button-primary" onClick={() => void deployGit()} disabled={Boolean(busy) || !gitForm.repoUrl}>
-                      <GitBranch size={16} />
-                      Deploy Git App
-                    </button>
-                    <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
-                      Deploy only repositories you trust. Build scripts run on this VPS while creating the app image.
-                    </p>
                   </div>
-                </Panel>
-                <Panel title="Sample Deployment" icon={Play}>
-                  <div className="grid gap-3">
-                    <Field label="App name" value={sampleForm.name} onChange={(name) => setSampleForm({ ...sampleForm, name })} />
-                    <label className="grid gap-1">
-                      <span className="svp-label">Strategy</span>
-                      <select className="svp-input" value={sampleForm.strategy} onChange={(event) => setSampleForm({ ...sampleForm, strategy: event.target.value as Strategy })}>
-                        <option value="docker">Docker container</option>
-                        <option value="systemd">No Docker, systemd Node service</option>
-                        <option value="static">Static files, Caddy file_server</option>
-                      </select>
-                    </label>
-                    <button className="svp-button-primary" onClick={() => void deploySample()} disabled={Boolean(busy)}>
-                      <Play size={16} />
-                      Deploy Sample
-                    </button>
-                    <p className="rounded-md border border-line bg-panel p-3 text-xs text-neutral-600">
-                      Samples are real deployments on this VPS. Docker binds to 127.0.0.1, systemd runs as the panel user, and public traffic should go through Caddy.
-                    </p>
-                  </div>
-                </Panel>
-                <Panel title="Advanced Deployments" icon={Layers3}>
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <Info title="Docker" body="Builds an image, starts a labelled container, and binds only to localhost." />
-                    <Info title="No Docker" body="Creates an immutable folder and a systemd service for simple Node apps." />
-                    <Info title="Static" body="Writes static assets and serves them through Caddy after domain setup." />
-                    <Info title="Lifecycle controls" body="Restart, stop, redeploy, delete, health check, logs, domains, and Docker prune actions are available from the dashboard." />
-                  </div>
-                  <div className="mt-4 grid gap-3 border-t border-line pt-4">
-                    <h3 className="font-black text-ink">Docker Compose Stack</h3>
-                    <Field label="Stack name" value={composeForm.name} onChange={(name) => setComposeForm({ ...composeForm, name })} />
-                    <Field label="Repository URL" value={composeForm.repoUrl} onChange={(repoUrl) => setComposeForm({ ...composeForm, repoUrl })} placeholder="https://github.com/user/compose-repo.git" />
-                    <Field label="Branch" value={composeForm.branch} onChange={(branch) => setComposeForm({ ...composeForm, branch })} />
-                    <TextArea label="Compose .env" value={composeForm.envText} onChange={(envText) => setComposeForm({ ...composeForm, envText })} />
-                    <button className="svp-button" onClick={() => void deployCompose()} disabled={Boolean(busy) || !composeForm.repoUrl}>
-                      <Boxes size={16} />
-                      Deploy Compose
-                    </button>
-                  </div>
-                </Panel>
-              </div>
-            )}
-
-            {tab === "domains" && (
-              <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-                <Panel title="Add Domain" icon={Globe2}>
-                  <div className="grid gap-3">
-                    <label className="grid gap-1">
-                      <span className="svp-label">App</span>
-                      <select className="svp-input" value={domainForm.appId} onChange={(event) => setDomainForm({ ...domainForm, appId: event.target.value })}>
-                        <option value="">Select app</option>
-                        {(state?.apps ?? []).map((app) => (
-                          <option key={app.id} value={app.id}>
-                            {app.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <Field label="Domain" value={domainForm.domain} onChange={(domain) => setDomainForm({ ...domainForm, domain })} placeholder="app.example.com" />
-                    <button className="svp-button-primary" onClick={() => void configureAppDomain()} disabled={!domainForm.appId || !domainForm.domain || Boolean(busy)}>
-                      <Globe2 size={16} />
-                      Configure Caddy
-                    </button>
-                  </div>
-                </Panel>
-                <Panel title="DNS Requirement" icon={Shield}>
-                  <div className="space-y-3 text-sm text-neutral-700">
-                    <p>Point domains to this VPS public IP, then configure Caddy here. Caddy will request HTTPS certificates automatically.</p>
-                    <pre className="overflow-auto rounded-md bg-ink p-3 text-xs text-green-100">{`A     ${domainForm.domain || "app.example.com"} -> ${publicIp(status) || "YOUR_VPS_PUBLIC_IP"}\nAAAA  optional if this VPS has IPv6`}</pre>
-                    {selectedDomainApp && <Info title="Selected app" body={`${selectedDomainApp.name} via ${selectedDomainApp.strategy}${selectedDomainApp.port ? ` on 127.0.0.1:${selectedDomainApp.port}` : ""}`} />}
-                  </div>
-                </Panel>
-              </div>
-            )}
-
-            {tab === "firewall" && (
-              <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-                <Panel title="Firewall Baseline" icon={Shield}>
-                  <div className="grid gap-3">
-                    <Field label="Panel port" value={firewallForm.panelPort} onChange={(panelPort) => setFirewallForm({ ...firewallForm, panelPort })} />
-                    <Field label="Trusted CIDR" value={firewallForm.trustedCidr} onChange={(trustedCidr) => setFirewallForm({ ...firewallForm, trustedCidr })} placeholder="100.64.0.0/10" />
-                    <button className="svp-button-primary" onClick={() => void applyFirewall()} disabled={Boolean(busy)}>
-                      <Flame size={16} />
-                      Apply Baseline
-                    </button>
-                    <button className="svp-button" onClick={() => void pruneSystem()} disabled={Boolean(busy)}>
-                      <Wrench size={16} />
-                      Docker Prune
-                    </button>
-                  </div>
-                </Panel>
-                <Panel title="Current Server Status" icon={Activity}>
-                  <pre className="max-h-[520px] overflow-auto rounded-md bg-ink p-4 text-xs text-green-100">{JSON.stringify(status, null, 2)}</pre>
-                </Panel>
-              </div>
-            )}
-
-            {tab === "logs" && (
-              <Panel title="Logs" icon={Terminal}>
-                <pre className="min-h-96 overflow-auto rounded-md bg-ink p-4 text-xs text-green-100">{logs || "Select an app and click Logs."}</pre>
-              </Panel>
-            )}
-
-            {tab === "audit" && (
-              <Panel title="Audit" icon={Activity}>
-                <div className="grid gap-2">
-                  {(state?.audit ?? []).map((event) => (
-                    <div key={event.id} className="rounded-md border border-line bg-white p-3 text-sm">
-                      <p className="font-bold text-ink">{event.action}</p>
-                      <p className="text-neutral-700">{event.message}</p>
-                      <p className="text-xs text-neutral-500">{new Date(event.createdAt).toLocaleString()}</p>
-                    </div>
-                  ))}
+                  <button className="svp-button-primary w-fit" onClick={() => void deployGit()} disabled={Boolean(busy) || !gitForm.repoUrl}>
+                    <GitBranch size={16} />
+                    Deploy Git App
+                  </button>
                 </div>
               </Panel>
-            )}
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+              <Panel title="Sample Deployment" icon={Play}>
+                <div className="grid gap-3">
+                  <Field label="App name" value={sampleForm.name} onChange={(name) => setSampleForm({ ...sampleForm, name })} />
+                  <label className="grid gap-1">
+                    <span className="svp-label">Strategy</span>
+                    <select className="svp-input" value={sampleForm.strategy} onChange={(event) => setSampleForm({ ...sampleForm, strategy: event.target.value as Strategy })}>
+                      <option value="docker">Docker container</option>
+                      <option value="systemd">No Docker, systemd Node service</option>
+                      <option value="static">Static files, Caddy file_server</option>
+                    </select>
+                  </label>
+                  <button className="svp-button-primary" onClick={() => void deploySample()} disabled={Boolean(busy)}>
+                    <Play size={16} />
+                    Deploy Sample
+                  </button>
+                </div>
+              </Panel>
+
+              <Panel title="Docker Compose Stack" icon={Layers3}>
+                <div className="grid gap-3">
+                  <Field label="Stack name" value={composeForm.name} onChange={(name) => setComposeForm({ ...composeForm, name })} />
+                  <Field label="Repository URL" value={composeForm.repoUrl} onChange={(repoUrl) => setComposeForm({ ...composeForm, repoUrl })} placeholder="https://github.com/user/compose-repo.git" />
+                  <Field label="Branch" value={composeForm.branch} onChange={(branch) => setComposeForm({ ...composeForm, branch })} />
+                  <TextArea label="Compose .env" value={composeForm.envText} onChange={(envText) => setComposeForm({ ...composeForm, envText })} />
+                  <button className="svp-button w-fit" onClick={() => void deployCompose()} disabled={Boolean(busy) || !composeForm.repoUrl}>
+                    <Boxes size={16} />
+                    Deploy Compose
+                  </button>
+                </div>
+              </Panel>
+            </div>
+
+            <Panel title="Recent Deployments" icon={Activity}>
+              <DeploymentList deployments={deployments} apps={apps} />
+            </Panel>
           </div>
-        </section>
-      </div>
+        )}
+
+        {tab === "domains" && (
+          <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+            <Panel title="Add Domain" icon={Globe2}>
+              <div className="grid gap-3">
+                <label className="grid gap-1">
+                  <span className="svp-label">App</span>
+                  <select className="svp-input" value={domainForm.appId} onChange={(event) => setDomainForm({ ...domainForm, appId: event.target.value })}>
+                    <option value="">Select app</option>
+                    {apps.map((app) => (
+                      <option key={app.id} value={app.id}>
+                        {app.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Field label="Domain" value={domainForm.domain} onChange={(domain) => setDomainForm({ ...domainForm, domain })} placeholder="app.example.com" />
+                <button className="svp-button-primary" onClick={() => void configureAppDomain()} disabled={!domainForm.appId || !domainForm.domain || Boolean(busy)}>
+                  <Globe2 size={16} />
+                  Configure Caddy
+                </button>
+              </div>
+            </Panel>
+            <Panel title="DNS Requirement" icon={Shield}>
+              <div className="space-y-3 text-sm text-zinc-400">
+                <p>Point domains to this VPS public IP, then configure Caddy here. Caddy will request HTTPS certificates automatically.</p>
+                <pre className="svp-code overflow-auto rounded-md p-3 text-xs">{`A     ${domainForm.domain || "app.example.com"} -> ${vpsIp || "YOUR_VPS_PUBLIC_IP"}\nAAAA  optional if this VPS has IPv6`}</pre>
+                {selectedDomainApp && <Info title="Selected app" body={`${selectedDomainApp.name} via ${selectedDomainApp.strategy}${selectedDomainApp.port ? ` on 127.0.0.1:${selectedDomainApp.port}` : ""}`} />}
+              </div>
+            </Panel>
+          </div>
+        )}
+
+        {tab === "advanced" && (
+          <div className="space-y-4">
+            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+              <Panel title="Firewall Baseline" icon={Shield}>
+                <div className="grid gap-3">
+                  <Field label="Panel port" value={firewallForm.panelPort} onChange={(panelPort) => setFirewallForm({ ...firewallForm, panelPort })} />
+                  <Field label="Trusted CIDR" value={firewallForm.trustedCidr} onChange={(trustedCidr) => setFirewallForm({ ...firewallForm, trustedCidr })} placeholder="100.64.0.0/10" />
+                  <button className="svp-button-primary" onClick={() => void applyFirewall()} disabled={Boolean(busy)}>
+                    <Flame size={16} />
+                    Apply Baseline
+                  </button>
+                  <button className="svp-button" onClick={() => void pruneSystem()} disabled={Boolean(busy)}>
+                    <Wrench size={16} />
+                    Docker Prune
+                  </button>
+                </div>
+              </Panel>
+              <Panel title="Management Surface" icon={Shield}>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <Info title="Docker" body="Builds images, starts labelled containers, and binds app ports only to localhost." />
+                  <Info title="No Docker" body="Creates systemd Node services for simple apps without exposing raw shell commands." />
+                  <Info title="Static" body="Serves generated static assets through Caddy with rollback-friendly folders." />
+                  <Info title="Safety" body="No arbitrary terminal endpoint is exposed. Use SSH for shell work and this panel for structured actions." />
+                </div>
+              </Panel>
+            </div>
+
+            <Panel title="Audit" icon={Activity}>
+              <div className="grid gap-2">
+                {(state?.audit ?? []).map((event) => (
+                  <div key={event.id} className="rounded-md border border-line bg-panel p-3 text-sm">
+                    <p className="font-bold text-ink">{event.action}</p>
+                    <p className="text-zinc-400">{event.message}</p>
+                    <p className="text-xs text-zinc-600">{new Date(event.createdAt).toLocaleString()}</p>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          </div>
+        )}
+      </section>
     </main>
   );
 }
 
-function Brand() {
+function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="mb-6 flex items-center gap-3">
-      <div className="flex h-10 w-10 items-center justify-center rounded-md bg-ink text-white">
+    <div className={`flex items-center gap-3 ${compact ? "" : "mb-6"}`}>
+      <div className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-[#111113] text-white">
         <Server size={20} />
       </div>
       <div>
         <p className="font-black text-ink">Supavibe VPS</p>
-        <p className="text-xs text-neutral-500">Self-hosted panel</p>
+        <p className="text-xs text-zinc-500">Self-hosted panel</p>
       </div>
     </div>
   );
@@ -546,11 +655,11 @@ function Brand() {
 
 function SecurityBanner({ status }: { status: Record<string, unknown> | null }) {
   return (
-    <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+    <div className="rounded-md border border-yellow-900/70 bg-yellow-950/25 p-3 text-sm text-yellow-100">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="font-black">If this port is public, keep login enabled and restrict the panel port by firewall.</p>
-          <p className="mt-1">Apps should be public through Caddy on 80/443. App runtimes should stay on localhost ports.</p>
+          <p className="mt-1 text-yellow-200/80">Apps should be public through Caddy on 80/443. App runtimes should stay on localhost ports.</p>
         </div>
         <span className="svp-badge">Public IP: {publicIp(status) || "checking"}</span>
       </div>
@@ -569,25 +678,25 @@ function AppGrid({
   onStop: (id: string) => Promise<void>;
   onAction: (id: string, action: "restart" | "redeploy" | "health" | "delete") => Promise<void>;
 }) {
-  if (apps.length === 0) return <p className="text-sm text-neutral-600">No apps yet. Deploy a Docker, systemd, or static sample.</p>;
+  if (apps.length === 0) return <p className="text-sm text-zinc-500">No apps yet. Deploy a Docker, systemd, or static sample.</p>;
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       {apps.map((app) => (
-        <article key={app.id} className="rounded-md border border-line bg-white p-3">
+        <article key={app.id} className="rounded-md border border-line bg-panel p-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate font-bold text-ink">{app.name}</p>
-              <p className="text-xs text-neutral-600">
+              <p className="text-xs text-zinc-500">
                 {app.deployMode || app.strategy} {app.source ? `- ${app.source}` : ""} {app.port ? `- 127.0.0.1:${app.port}` : ""}
                 {app.containerPort ? ` -> :${app.containerPort}` : ""}
               </p>
-              {app.repoUrl && <p className="mt-1 truncate text-xs text-neutral-500">{app.repoUrl} {app.branch ? `@ ${app.branch}` : ""}</p>}
-              {app.commitSha && <p className="mt-1 text-xs text-neutral-500">commit {app.commitSha}</p>}
+              {app.repoUrl && <p className="mt-1 truncate text-xs text-zinc-600">{app.repoUrl} {app.branch ? `@ ${app.branch}` : ""}</p>}
+              {app.commitSha && <p className="mt-1 text-xs text-zinc-600">commit {app.commitSha}</p>}
               {app.domain && <a className="mt-1 block break-all text-xs font-bold text-action" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>}
             </div>
             <StatusPill ok={app.status === "running"} label={app.status} />
           </div>
-          {app.lastMessage && <p className="mt-2 text-xs text-neutral-600">{app.lastMessage}</p>}
+          {app.lastMessage && <p className="mt-2 text-xs text-zinc-500">{app.lastMessage}</p>}
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="svp-button" onClick={() => void onLogs(app.id)}>
               <Terminal size={14} />
@@ -611,7 +720,7 @@ function AppGrid({
               <Square size={14} />
               Stop
             </button>
-            <button className="svp-button" onClick={() => void onAction(app.id, "delete")}>
+            <button className="svp-button-danger" onClick={() => void onAction(app.id, "delete")}>
               <Trash2 size={14} />
               Delete
             </button>
@@ -623,16 +732,16 @@ function AppGrid({
 }
 
 function DeploymentList({ deployments, apps }: { deployments: DeploymentEvent[]; apps: ManagedApp[] }) {
-  if (deployments.length === 0) return <p className="text-sm text-neutral-600">No deployment events yet.</p>;
+  if (deployments.length === 0) return <p className="text-sm text-zinc-500">No deployment events yet.</p>;
   return (
     <div className="grid gap-2">
       {deployments.slice(0, 8).map((event) => {
         const app = apps.find((item) => item.id === event.appId);
         return (
-          <div key={event.id} className="flex flex-col gap-1 rounded-md border border-line bg-white p-3 text-sm md:flex-row md:items-center md:justify-between">
+          <div key={event.id} className="flex flex-col gap-1 rounded-md border border-line bg-panel p-3 text-sm md:flex-row md:items-center md:justify-between">
             <div>
               <p className="font-bold text-ink">{app?.name || event.appId} - {event.action}</p>
-              <p className="text-neutral-600">{event.message}</p>
+              <p className="text-zinc-400">{event.message}</p>
             </div>
             <StatusPill ok={event.status === "succeeded"} label={event.status} />
           </div>
@@ -664,7 +773,7 @@ function Panel({ title, icon: Icon, children }: { title: string; icon: LucideIco
   return (
     <section className="svp-panel p-4">
       <div className="mb-4 flex items-center gap-2">
-        <Icon className="text-action" size={18} />
+        <Icon className="text-zinc-300" size={18} />
         <h2 className="font-black text-ink">{title}</h2>
       </div>
       {children}
@@ -679,9 +788,9 @@ function Metric({ label, value, detail, icon: Icon }: { label: string; value: nu
         <div>
           <p className="svp-label">{label}</p>
           <p className="mt-2 text-3xl font-black text-ink">{value}</p>
-          <p className="mt-1 break-all text-xs text-neutral-600">{detail}</p>
+          <p className="mt-1 break-all text-xs text-zinc-500">{detail}</p>
         </div>
-        <div className="rounded-md bg-panel p-2 text-action">
+        <div className="rounded-md border border-line bg-[#050505] p-2 text-zinc-300">
           <Icon size={20} />
         </div>
       </div>
@@ -693,7 +802,7 @@ function Info({ title, body }: { title: string; body: string }) {
   return (
     <div className="rounded-md border border-line bg-panel p-3 text-sm">
       <p className="font-bold text-ink">{title}</p>
-      <p className="mt-1 text-neutral-600">{body}</p>
+      <p className="mt-1 text-zinc-500">{body}</p>
     </div>
   );
 }
@@ -701,7 +810,7 @@ function Info({ title, body }: { title: string; body: string }) {
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
   const Icon = ok ? CheckCircle2 : CircleAlert;
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-bold ${ok ? "border-teal-200 bg-teal-50 text-teal-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-bold ${ok ? "border-emerald-900 bg-emerald-950/40 text-emerald-300" : "border-yellow-900 bg-yellow-950/40 text-yellow-300"}`}>
       <Icon size={13} />
       {label}
     </span>
@@ -711,7 +820,7 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
 function TabButton({ item, active, onClick }: { item: { id: Tab; label: string; icon: LucideIcon }; active: boolean; onClick: () => void }) {
   const Icon = item.icon;
   return (
-    <button className={`flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-bold ${active ? "bg-panel text-action" : "text-neutral-600 hover:bg-panel"}`} onClick={onClick}>
+    <button className={`flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-bold ${active ? "bg-panel text-action" : "text-zinc-500 hover:bg-panel"}`} onClick={onClick}>
       <Icon size={17} />
       {item.label}
     </button>
@@ -724,7 +833,7 @@ function Notice({ busy, notice }: { busy: string; notice: string }) {
       {busy ? <RefreshCw className="mt-0.5 animate-spin text-action" size={18} /> : <CheckCircle2 className="mt-0.5 text-action" size={18} />}
       <div>
         <p className="text-sm font-bold text-ink">{busy || "Status"}</p>
-        {notice && <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-700">{notice}</p>}
+        {notice && <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-400">{notice}</p>}
       </div>
     </div>
   );
@@ -732,10 +841,10 @@ function Notice({ busy, notice }: { busy: string; notice: string }) {
 
 function Loading() {
   return (
-    <main className="flex min-h-screen items-center justify-center p-4">
+    <main className="flex min-h-screen items-center justify-center bg-[#050505] p-4 text-zinc-100">
       <section className="svp-panel p-5">
         <Brand />
-        <p className="text-sm text-neutral-600">Loading panel...</p>
+        <p className="text-sm text-zinc-500">Loading panel...</p>
       </section>
     </main>
   );
