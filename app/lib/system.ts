@@ -6,12 +6,16 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
+  appendDeploymentLog,
   audit,
   deploymentEvent,
+  finishDeployment,
   getAppsDir,
   getDataDir,
+  getLogsDir,
   getSecretsDir,
   readState,
+  startDeployment,
   updateState,
   type AppStrategy,
   type DatabaseResource,
@@ -23,6 +27,7 @@ import {
   assertSafeAppName,
   assertSafeCidr,
   assertSafeDockerName,
+  assertSafeDockerImage,
   assertSafeDomain,
   assertSafeEnvKey,
   assertSafeGitRepo,
@@ -30,7 +35,9 @@ import {
   assertNetworkPort,
   assertSafePort,
   assertSafeBranch,
+  assertSafeComposeYaml,
   assertSafeOrigin,
+  assertSafeRelativePath,
   assertSafeSystemdService,
   parseEnvText,
   redact,
@@ -168,6 +175,7 @@ export async function deployGitApp(input: {
   serviceRole?: ServiceRole;
   repoUrl: string;
   branch?: string;
+  appDirectory?: string;
   mode: "dockerfile" | "node" | "static";
   buildCommand?: string;
   startCommand?: string;
@@ -186,6 +194,7 @@ export async function deployGitApp(input: {
   if (databaseId && !state.databases.some((database) => database.id === databaseId)) throw new Error("Database not found.");
   const repoUrl = assertSafeGitRepo(input.repoUrl);
   const branch = assertSafeBranch(input.branch || "main");
+  const appDirectory = assertSafeRelativePath(input.appDirectory || "", "App directory");
   const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
   const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), id));
   const sourceDir = assertManagedPath(getAppsDir(), path.join(appDir, "source"));
@@ -201,8 +210,10 @@ export async function deployGitApp(input: {
     serviceRole: input.serviceRole || "fullstack",
     strategy: "docker",
     source: "git",
+    sourceType: "git-url",
     repoUrl,
     branch,
+    appDirectory,
     deployMode: input.mode,
     buildCommand: cleanCommand(input.buildCommand || ""),
     startCommand: cleanCommand(input.startCommand || ""),
@@ -221,12 +232,28 @@ export async function deployGitApp(input: {
     state.apps.unshift(app);
   });
 
+  const deploymentId = startDeployment({
+    appId: app.id,
+    action: "deploy",
+    message: `Deploying ${name} from ${branch}.`,
+    sourceType: "git-url",
+    strategy: input.mode,
+    branch
+  });
   try {
+    appendDeploymentLog(deploymentId, "preparing workspace", `Workspace ready for ${app.id}.`);
+    appendDeploymentLog(deploymentId, "cloning repository", `${repoUrl} @ ${branch}`);
     await safeRunOrThrow("git", ["clone", "--depth", "1", "--branch", branch, repoUrl, sourceDir]);
+    appendDeploymentLog(deploymentId, "checking branch", "Repository cloned.");
     const commit = await safeRun("git", ["rev-parse", "--short", "HEAD"], sourceDir);
     const image = "svp_" + app.id + ":" + Date.now();
-    const dockerfile = prepareDockerfile(sourceDir, appDir, input.mode, app);
-    await safeRunOrThrow("docker", ["build", "-t", image, "-f", dockerfile, sourceDir]);
+    const buildDir = appDirectory ? assertManagedPath(sourceDir, path.join(sourceDir, appDirectory)) : sourceDir;
+    if (!fs.existsSync(buildDir)) throw new Error(`App directory ${appDirectory} was not found in the repository.`);
+    appendDeploymentLog(deploymentId, "detecting app", appDirectory ? `Using app directory ${appDirectory}.` : "Using repository root.");
+    const dockerfile = prepareDockerfile(buildDir, appDir, input.mode, app);
+    appendDeploymentLog(deploymentId, "building image", `Building ${image}.`);
+    await safeRunOrThrow("docker", ["build", "-t", image, "-f", dockerfile, buildDir]);
+    appendDeploymentLog(deploymentId, "starting service", `Starting container on 127.0.0.1:${app.port}.`);
     await replaceDockerContainer(app, image, envFile);
     markApp(app.id, {
       status: "running",
@@ -235,12 +262,13 @@ export async function deployGitApp(input: {
       commitSha: commit.ok ? commit.stdout.trim() : undefined,
       lastMessage: `Git ${input.mode} app deployed from ${branch}.`
     });
-    deploymentEvent(app.id, "deploy", "succeeded", `Deployed ${name} from ${branch}.`);
-    audit("app.deploy_git", "Git app deployed.", { appId: app.id, name, repoUrl, branch, mode: input.mode, envKeys: env.keys });
+    finishDeployment(deploymentId, "succeeded", `Deployed ${name} from ${branch}.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined, imageTag: image });
+    audit("app.deploy_git", "Git app deployed.", { appId: app.id, name, repoUrl, branch, appDirectory, mode: input.mode, envKeys: env.keys });
     return readState().apps.find((item) => item.id === app.id) || app;
   } catch (error) {
-    markApp(app.id, { status: "failed", lastMessage: error instanceof Error ? redact(error.message) : "Deploy failed." });
-    deploymentEvent(app.id, "deploy", "failed", error instanceof Error ? redact(error.message) : "Deploy failed.");
+    const message = error instanceof Error ? redact(error.message) : "Deploy failed.";
+    markApp(app.id, { status: "failed", lastMessage: message });
+    finishDeployment(deploymentId, "failed", message);
     throw error;
   }
 }
@@ -264,6 +292,7 @@ export async function deployComposeApp(input: { name: string; projectId?: string
     serviceRole: "fullstack",
     strategy: "compose",
     source: "compose",
+    sourceType: "git-url",
     repoUrl,
     branch,
     deployMode: "compose",
@@ -278,24 +307,147 @@ export async function deployComposeApp(input: { name: string; projectId?: string
   updateState((state) => {
     state.apps.unshift(app);
   });
+  const deploymentId = startDeployment({
+    appId: app.id,
+    action: "compose_deploy",
+    message: `Deploying Compose stack ${name}.`,
+    sourceType: "git-url",
+    strategy: "compose",
+    branch
+  });
   try {
+    appendDeploymentLog(deploymentId, "cloning repository", `${repoUrl} @ ${branch}`);
     await safeRunOrThrow("git", ["clone", "--depth", "1", "--branch", branch, repoUrl, sourceDir]);
     writeEnvFile(sourceDir, env.env);
     const composeFile = findComposeFile(sourceDir);
     if (!composeFile) throw new Error("No docker-compose.yml, docker-compose.yaml, compose.yml, or compose.yaml found.");
     const commit = await safeRun("git", ["rev-parse", "--short", "HEAD"], sourceDir);
+    appendDeploymentLog(deploymentId, "validating compose", "Running docker compose config.");
+    await safeRunOrThrow("docker", ["compose", "-p", app.composeProject!, "-f", composeFile, "config", "-q"], sourceDir);
+    appendDeploymentLog(deploymentId, "starting compose", "Running docker compose up -d --build.");
     await safeRunOrThrow("docker", ["compose", "-p", app.composeProject!, "-f", composeFile, "up", "-d", "--build"], sourceDir);
     markApp(app.id, {
       status: "running",
       commitSha: commit.ok ? commit.stdout.trim() : undefined,
       lastMessage: "Docker Compose stack is running. Review compose ports before exposing publicly."
     });
-    deploymentEvent(app.id, "compose_deploy", "succeeded", `Compose stack ${name} deployed.`);
+    finishDeployment(deploymentId, "succeeded", `Compose stack ${name} deployed.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined });
     audit("app.deploy_compose", "Compose stack deployed.", { appId: app.id, name, repoUrl, branch, envKeys: env.keys });
     return readState().apps.find((item) => item.id === app.id) || app;
   } catch (error) {
-    markApp(app.id, { status: "failed", lastMessage: error instanceof Error ? redact(error.message) : "Compose deploy failed." });
-    deploymentEvent(app.id, "compose_deploy", "failed", error instanceof Error ? redact(error.message) : "Compose deploy failed.");
+    const message = error instanceof Error ? redact(error.message) : "Compose deploy failed.";
+    markApp(app.id, { status: "failed", lastMessage: message });
+    finishDeployment(deploymentId, "failed", message);
+    throw error;
+  }
+}
+
+export async function deployComposeYamlApp(input: { name: string; projectId?: string; composeYaml: string; envText?: string }) {
+  const name = assertSafeAppName(input.name);
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
+  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const composeYaml = assertSafeComposeYaml(input.composeYaml);
+  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
+  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), id));
+  const sourceDir = assertManagedPath(getAppsDir(), path.join(appDir, "compose"));
+  fs.mkdirSync(sourceDir, { recursive: true, mode: 0o750 });
+  const env = parseEnvText(input.envText || "");
+  const composeFile = path.join(sourceDir, "compose.yaml");
+  fs.writeFileSync(composeFile, composeYaml, { mode: 0o640 });
+  writeEnvFile(sourceDir, env.env);
+  const now = new Date().toISOString();
+  const app: ManagedApp = {
+    id,
+    projectId: projectId || undefined,
+    name,
+    serviceRole: "fullstack",
+    strategy: "compose",
+    source: "compose",
+    sourceType: "compose-yaml",
+    deployMode: "compose",
+    composeProject: "svp_" + id,
+    envKeys: env.keys,
+    port: 0,
+    status: "created",
+    rootDir: appDir,
+    createdAt: now,
+    updatedAt: now
+  };
+  updateState((state) => {
+    state.apps.unshift(app);
+  });
+  const deploymentId = startDeployment({ appId: app.id, action: "compose_deploy", message: `Deploying pasted Compose stack ${name}.`, sourceType: "compose-yaml", strategy: "compose" });
+  try {
+    appendDeploymentLog(deploymentId, "validating compose", "Running docker compose config.");
+    await safeRunOrThrow("docker", ["compose", "-p", app.composeProject!, "-f", composeFile, "config", "-q"], sourceDir);
+    appendDeploymentLog(deploymentId, "starting compose", "Running docker compose up -d.");
+    await safeRunOrThrow("docker", ["compose", "-p", app.composeProject!, "-f", composeFile, "up", "-d"], sourceDir);
+    markApp(app.id, { status: "running", lastMessage: "Pasted Docker Compose stack is running." });
+    finishDeployment(deploymentId, "succeeded", `Compose stack ${name} deployed.`);
+    audit("app.deploy_compose_yaml", "Pasted Compose stack deployed.", { appId: app.id, name, envKeys: env.keys });
+    return readState().apps.find((item) => item.id === app.id) || app;
+  } catch (error) {
+    const message = error instanceof Error ? redact(error.message) : "Compose deploy failed.";
+    markApp(app.id, { status: "failed", lastMessage: message });
+    finishDeployment(deploymentId, "failed", message);
+    throw error;
+  }
+}
+
+export async function deployDockerImageApp(input: {
+  name: string;
+  projectId?: string;
+  serviceRole?: ServiceRole;
+  image: string;
+  containerPort: number;
+  envText?: string;
+  healthPath?: string;
+}) {
+  const name = assertSafeAppName(input.name);
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
+  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const image = assertSafeDockerImage(input.image);
+  const containerPort = assertContainerPort(input.containerPort || 3000);
+  const env = parseEnvText(input.envText || "");
+  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
+  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), id));
+  fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
+  const envFile = writeEnvFile(appDir, env.env);
+  const now = new Date().toISOString();
+  const app: ManagedApp = {
+    id,
+    projectId: projectId || undefined,
+    name,
+    serviceRole: input.serviceRole || "fullstack",
+    strategy: "docker",
+    sourceType: "docker-image",
+    dockerImage: image,
+    containerPort,
+    healthPath: cleanHealthPath(input.healthPath || "/"),
+    envKeys: env.keys,
+    port: await findOpenPort(),
+    status: "created",
+    rootDir: appDir,
+    createdAt: now,
+    updatedAt: now
+  };
+  updateState((state) => {
+    state.apps.unshift(app);
+  });
+  const deploymentId = startDeployment({ appId: app.id, action: "deploy_image", message: `Deploying Docker image ${image}.`, sourceType: "docker-image", strategy: "docker" });
+  try {
+    appendDeploymentLog(deploymentId, "pulling image", image);
+    await safeRunOrThrow("docker", ["pull", image]);
+    appendDeploymentLog(deploymentId, "starting service", `Publishing only on 127.0.0.1:${app.port}.`);
+    await replaceDockerContainer(app, image, envFile);
+    markApp(app.id, { status: "running", containerName: "svp_" + app.id, imageTag: image, lastMessage: "Docker image is running." });
+    finishDeployment(deploymentId, "succeeded", `Docker image ${image} deployed.`, { imageTag: image });
+    audit("app.deploy_image", "Docker image deployed.", { appId: app.id, name, image, envKeys: env.keys });
+    return readState().apps.find((item) => item.id === app.id) || app;
+  } catch (error) {
+    const message = error instanceof Error ? redact(error.message) : "Docker image deploy failed.";
+    markApp(app.id, { status: "failed", lastMessage: message });
+    finishDeployment(deploymentId, "failed", message);
     throw error;
   }
 }
@@ -350,6 +502,18 @@ export async function readAppLogs(appId: string) {
   return { ok: true, command: "static", stdout: "Static app is served by Caddy after a domain is configured.", stderr: "" };
 }
 
+export async function readDeploymentLogs(deploymentId: string) {
+  const id = assertSafeId(deploymentId, "deploymentId");
+  const deployment = readState().deployments.find((item) => item.id === id);
+  if (!deployment) throw new Error("Deployment not found.");
+  if (!deployment.logsPath) {
+    return { ok: true, command: "deployment-log", stdout: deployment.message, stderr: "" };
+  }
+  const logsPath = assertManagedPath(getLogsDir(), deployment.logsPath);
+  const text = fs.existsSync(logsPath) ? fs.readFileSync(logsPath, "utf8") : "Deployment log file is missing.";
+  return { ok: true, command: "deployment-log " + id, stdout: redact(text).split(/\r?\n/).slice(-1000).join("\n"), stderr: "" };
+}
+
 export async function stopApp(appId: string) {
   const id = assertSafeId(appId, "appId");
   const app = readState().apps.find((item) => item.id === id);
@@ -361,7 +525,7 @@ export async function stopApp(appId: string) {
     await safeRun("sudo", ["systemctl", "disable", "--now", assertSafeSystemdService(app.serviceName)]);
   }
   if (app.strategy === "compose" && app.composeProject && app.rootDir) {
-    const sourceDir = assertManagedPath(getAppsDir(), path.join(app.rootDir, "source"));
+    const sourceDir = composeSourceDirForApp(app);
     const composeFile = findComposeFile(sourceDir);
     if (composeFile) await safeRun("docker", ["compose", "-p", assertSafeDockerName(app.composeProject), "-f", composeFile, "stop"], sourceDir);
   }
@@ -384,7 +548,7 @@ export async function restartApp(appId: string) {
   } else if (app.serviceName) {
     await safeRunOrThrow("sudo", ["systemctl", "restart", assertSafeSystemdService(app.serviceName)]);
   } else if (app.strategy === "compose" && app.composeProject && app.rootDir) {
-    const sourceDir = assertManagedPath(getAppsDir(), path.join(app.rootDir, "source"));
+    const sourceDir = composeSourceDirForApp(app);
     const composeFile = findComposeFile(sourceDir);
     if (!composeFile) throw new Error("Compose file is missing.");
     await safeRunOrThrow("docker", ["compose", "-p", assertSafeDockerName(app.composeProject), "-f", composeFile, "up", "-d"], sourceDir);
@@ -407,6 +571,7 @@ export async function redeployApp(appId: string) {
       serviceRole: app.serviceRole,
       repoUrl: app.repoUrl,
       branch: app.branch,
+      appDirectory: app.appDirectory,
       mode: app.deployMode,
       buildCommand: app.buildCommand,
       startCommand: app.startCommand,
@@ -420,7 +585,18 @@ export async function redeployApp(appId: string) {
     await stopApp(app.id);
     return deployComposeApp({ name: app.name, projectId: app.projectId, repoUrl: app.repoUrl, branch: app.branch });
   }
-  throw new Error("Redeploy is available for Git and Compose apps only.");
+  if (app.sourceType === "docker-image" && app.dockerImage) {
+    await stopApp(app.id);
+    return deployDockerImageApp({
+      name: app.name,
+      projectId: app.projectId,
+      serviceRole: app.serviceRole,
+      image: app.dockerImage,
+      containerPort: app.containerPort || 3000,
+      healthPath: app.healthPath
+    });
+  }
+  throw new Error("Redeploy is available for Git, Compose repository, and Docker image apps only.");
 }
 
 export async function deleteApp(appId: string) {
@@ -631,6 +807,14 @@ export async function applyFirewallRule(input: { action: "allow" | "deny"; port:
   else args.push(String(port) + "/" + protocol);
   const result = await safeRun("sudo", args);
   audit("firewall.rule", `${input.action} ${port}/${protocol}.`, { port, protocol, sourceCidr: sourceCidr || "any" });
+  return result;
+}
+
+export async function deleteFirewallRule(input: { ruleNumber: number }) {
+  const ruleNumber = input.ruleNumber;
+  if (!Number.isInteger(ruleNumber) || ruleNumber < 1 || ruleNumber > 999) throw new Error("Firewall rule number must be between 1 and 999.");
+  const result = await safeRun("sudo", ["ufw", "--force", "delete", String(ruleNumber)]);
+  audit("firewall.delete_rule", `Deleted firewall rule #${ruleNumber}.`, { ruleNumber });
   return result;
 }
 
@@ -1061,6 +1245,13 @@ function findComposeFile(sourceDir: string) {
     if (fs.existsSync(file)) return file;
   }
   return "";
+}
+
+function composeSourceDirForApp(app: ManagedApp) {
+  const root = assertManagedPath(getAppsDir(), app.rootDir || "");
+  const pasted = assertManagedPath(getAppsDir(), path.join(root, "compose"));
+  if (fs.existsSync(pasted)) return pasted;
+  return assertManagedPath(getAppsDir(), path.join(root, "source"));
 }
 
 function escapeHtml(value: string) {

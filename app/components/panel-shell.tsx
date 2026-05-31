@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-type Tab = "general" | "environment" | "database" | "monitoring" | "logs" | "deployments" | "domains" | "advanced";
+type Tab = "general" | "services" | "environment" | "database" | "monitoring" | "logs" | "deployments" | "domains" | "advanced";
 type Strategy = "docker" | "systemd" | "static" | "compose";
 type GitMode = "dockerfile" | "node" | "static";
 type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
@@ -51,6 +51,9 @@ interface ManagedApp {
   source?: "sample" | "git" | "compose";
   repoUrl?: string;
   branch?: string;
+  appDirectory?: string;
+  dockerImage?: string;
+  sourceType?: string;
   commitSha?: string;
   deployMode?: GitMode | "compose";
   buildCommand?: string;
@@ -108,11 +111,20 @@ interface AuditEvent {
 
 interface DeploymentEvent {
   id: string;
+  projectId?: string;
   appId: string;
   action: string;
-  status: string;
+  status: "running" | "succeeded" | "failed";
   message: string;
   createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  sourceType?: string;
+  strategy?: string;
+  branch?: string;
+  commitSha?: string;
+  imageTag?: string;
+  steps?: Array<{ at: string; step: string; status: string; message: string }>;
 }
 
 interface StatePayload {
@@ -134,6 +146,7 @@ interface CommandOutput {
 
 const tabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
   { id: "general", label: "Overview", icon: Layers3 },
+  { id: "services", label: "Services", icon: Boxes },
   { id: "deployments", label: "Deployments", icon: Activity },
   { id: "logs", label: "Logs", icon: Terminal },
   { id: "monitoring", label: "Observability", icon: HeartPulse },
@@ -162,6 +175,7 @@ export function PanelShell() {
     serviceRole: "fullstack" as ServiceRole,
     repoUrl: "",
     branch: "main",
+    appDirectory: "",
     mode: "node" as GitMode,
     buildCommand: "",
     startCommand: "",
@@ -171,10 +185,13 @@ export function PanelShell() {
     corsOrigins: [] as string[],
     databaseId: ""
   });
+  const [imageForm, setImageForm] = useState({ name: "Docker Image App", projectId: "", serviceRole: "fullstack" as ServiceRole, image: "nginx:1.27-alpine", containerPort: "80", healthPath: "/", envText: "" });
   const [composeForm, setComposeForm] = useState({ name: "Compose Stack", projectId: "", repoUrl: "", branch: "main", envText: "" });
+  const [composeYamlForm, setComposeYamlForm] = useState({ name: "Pasted Compose Stack", projectId: "", composeYaml: "services:\n  web:\n    image: nginx:1.27-alpine\n    restart: unless-stopped\n", envText: "" });
   const [domainForm, setDomainForm] = useState({ appId: "", domain: "" });
   const [firewallForm, setFirewallForm] = useState({ panelPort: "3099", trustedCidr: "100.64.0.0/10" });
   const [firewallRuleForm, setFirewallRuleForm] = useState({ action: "allow" as "allow" | "deny", port: "8080", protocol: "tcp" as "tcp" | "udp", sourceCidr: "" });
+  const [firewallDeleteForm, setFirewallDeleteForm] = useState({ ruleNumber: "" });
   const [appSettingsForm, setAppSettingsForm] = useState({ appId: "", projectId: "", serviceRole: "fullstack" as ServiceRole, corsText: "", databaseId: "" });
   const [externalDbForm, setExternalDbForm] = useState({ projectId: "", name: "External Postgres", provider: "External Postgres", url: "", envKey: "DATABASE_URL" });
   const [managedDbForm, setManagedDbForm] = useState({ projectId: "", name: "Managed Postgres", envKey: "DATABASE_URL" });
@@ -210,8 +227,10 @@ export function PanelShell() {
       projectId: form.projectId || nextState.projects[0]?.id || ""
     }));
     setGitForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    setImageForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setSampleForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setComposeForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    setComposeYamlForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setExternalDbForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setManagedDbForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setSelectedProjectId((projectId) => (projectId && !nextState.projects.some((project) => project.id === projectId) ? "" : projectId));
@@ -277,6 +296,19 @@ export function PanelShell() {
     });
   }
 
+  async function deployImage() {
+    await run("Deploying Docker image", async () => {
+      const result = await api<{ app: ManagedApp }>("/api/apps/image", {
+        method: "POST",
+        csrfToken,
+        body: { ...imageForm, projectId: selectedProjectId || imageForm.projectId, containerPort: Number(imageForm.containerPort) }
+      });
+      setDomainForm((form) => ({ ...form, appId: result.app.id }));
+      setNotice(`${result.app.name} deployed from ${imageForm.image}.`);
+      await refresh();
+    });
+  }
+
   async function deployCompose() {
     await run("Deploying Compose stack", async () => {
       const result = await api<{ app: ManagedApp }>("/api/apps/compose", {
@@ -289,14 +321,28 @@ export function PanelShell() {
     });
   }
 
+  async function deployComposeYaml() {
+    await run("Deploying pasted Compose stack", async () => {
+      const result = await api<{ app: ManagedApp }>("/api/apps/compose-yaml", {
+        method: "POST",
+        csrfToken,
+        body: { ...composeYamlForm, projectId: selectedProjectId || composeYamlForm.projectId }
+      });
+      setNotice(`${result.app.name} compose stack deployed.`);
+      await refresh();
+    });
+  }
+
   function openProject(projectId: string) {
     setSelectedProjectId(projectId);
     setTab("general");
     setDomainForm((form) => ({ ...form, appId: "" }));
     setAppSettingsForm((form) => ({ ...form, projectId, appId: "", databaseId: "" }));
     setGitForm((form) => ({ ...form, projectId, databaseId: "" }));
+    setImageForm((form) => ({ ...form, projectId }));
     setSampleForm((form) => ({ ...form, projectId }));
     setComposeForm((form) => ({ ...form, projectId }));
+    setComposeYamlForm((form) => ({ ...form, projectId }));
     setExternalDbForm((form) => ({ ...form, projectId }));
     setManagedDbForm((form) => ({ ...form, projectId }));
     setLogs("");
@@ -430,6 +476,14 @@ export function PanelShell() {
     });
   }
 
+  async function loadDeploymentLogs(deploymentId: string) {
+    await run("Loading deployment log", async () => {
+      const result = await api<{ logs: CommandOutput }>(`/api/deployments/${deploymentId}/logs`);
+      setLogs([result.logs.command, result.logs.stdout, result.logs.stderr].filter(Boolean).join("\n\n"));
+      setTab("logs");
+    });
+  }
+
   async function applyFirewallRule() {
     await run("Applying firewall rule", async () => {
       const result = await api<{ result: CommandOutput }>("/api/firewall/rule", {
@@ -439,6 +493,19 @@ export function PanelShell() {
       });
       setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
       setNotice(`Firewall ${firewallRuleForm.action} rule applied.`);
+      await refresh();
+    });
+  }
+
+  async function deleteFirewallRule() {
+    await run("Deleting firewall rule", async () => {
+      const result = await api<{ result: CommandOutput }>("/api/firewall/delete-rule", {
+        method: "POST",
+        csrfToken,
+        body: { ruleNumber: Number(firewallDeleteForm.ruleNumber) }
+      });
+      setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
+      setNotice(`Firewall rule #${firewallDeleteForm.ruleNumber} deleted.`);
       await refresh();
     });
   }
@@ -669,7 +736,7 @@ export function PanelShell() {
                   <RefreshCw size={15} />
                   Reload
                 </button>
-                <button className="svp-button" onClick={() => activeApp && void appAction(activeApp.id, "redeploy")} disabled={Boolean(busy) || !activeApp?.source}>
+                <button className="svp-button" onClick={() => activeApp && void appAction(activeApp.id, "redeploy")} disabled={Boolean(busy) || !(activeApp?.source || activeApp?.sourceType === "docker-image")}>
                   <Wrench size={15} />
                   Rebuild
                 </button>
@@ -787,8 +854,20 @@ export function PanelShell() {
               )}
             </Panel>
 
+          </div>
+        )}
+
+        {tab === "services" && (
+          <div className="space-y-4">
             <Panel title="Services" icon={Server}>
               <AppGrid apps={apps} projects={projects} databases={databases} onLogs={loadLogs} onStop={stop} onAction={appAction} />
+            </Panel>
+            <Panel title="Service Roles" icon={Boxes}>
+              <div className="grid gap-3 md:grid-cols-4">
+                {roleOptions().map((role) => (
+                  <Info key={role.value} title={role.label} body={`${apps.filter((app) => (app.serviceRole || "fullstack") === role.value).length} service${apps.filter((app) => (app.serviceRole || "fullstack") === role.value).length === 1 ? "" : "s"}`} />
+                ))}
+              </div>
             </Panel>
           </div>
         )}
@@ -960,6 +1039,7 @@ export function PanelShell() {
                   <Field label="App name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
                   <Field label="Repository URL" value={gitForm.repoUrl} onChange={(repoUrl) => setGitForm({ ...gitForm, repoUrl })} placeholder="https://github.com/user/repo.git" />
                   <Field label="Branch" value={gitForm.branch} onChange={(branch) => setGitForm({ ...gitForm, branch })} />
+                  <Field label="App directory" value={gitForm.appDirectory} onChange={(appDirectory) => setGitForm({ ...gitForm, appDirectory })} placeholder="apps/web or blank for repo root" />
                   <Select label="Database" value={gitForm.databaseId} onChange={(databaseId) => setGitForm({ ...gitForm, databaseId })} options={[{ value: "", label: "No database" }, ...databases.map((database) => ({ value: database.id, label: `${database.name} (${database.envKey})` }))]} />
                 </div>
               </Panel>
@@ -995,6 +1075,26 @@ export function PanelShell() {
             </div>
 
             <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+              <Panel title="Docker Image" icon={Boxes}>
+                <div className="grid gap-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Select label="Project" value={imageForm.projectId} onChange={(projectId) => setImageForm({ ...imageForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
+                    <Select label="Service role" value={imageForm.serviceRole} onChange={(serviceRole) => setImageForm({ ...imageForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
+                  </div>
+                  <Field label="App name" value={imageForm.name} onChange={(name) => setImageForm({ ...imageForm, name })} />
+                  <Field label="Image" value={imageForm.image} onChange={(image) => setImageForm({ ...imageForm, image })} placeholder="nginx:1.27-alpine or ghcr.io/user/app:tag" />
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Field label="Container port" value={imageForm.containerPort} onChange={(containerPort) => setImageForm({ ...imageForm, containerPort })} placeholder="3000" />
+                    <Field label="Health path" value={imageForm.healthPath} onChange={(healthPath) => setImageForm({ ...imageForm, healthPath })} placeholder="/" />
+                  </div>
+                  <TextArea label="Image env" value={imageForm.envText} onChange={(envText) => setImageForm({ ...imageForm, envText })} />
+                  <button className="svp-button-primary w-fit" onClick={() => void deployImage()} disabled={Boolean(busy) || !imageForm.image.trim()}>
+                    <Boxes size={16} />
+                    Deploy Image
+                  </button>
+                </div>
+              </Panel>
+
               <Panel title="Sample Deployment" icon={Play}>
                 <div className="grid gap-3">
                   <div className="grid gap-3 md:grid-cols-2">
@@ -1016,8 +1116,10 @@ export function PanelShell() {
                   </button>
                 </div>
               </Panel>
+            </div>
 
-              <Panel title="Docker Compose Stack" icon={Layers3}>
+            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+              <Panel title="Compose From Git" icon={Layers3}>
                 <div className="grid gap-3">
                   <Select label="Project" value={composeForm.projectId} onChange={(projectId) => setComposeForm({ ...composeForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
                   <Field label="Stack name" value={composeForm.name} onChange={(name) => setComposeForm({ ...composeForm, name })} />
@@ -1030,10 +1132,23 @@ export function PanelShell() {
                   </button>
                 </div>
               </Panel>
+
+              <Panel title="Pasted Compose YAML" icon={Layers3}>
+                <div className="grid gap-3">
+                  <Select label="Project" value={composeYamlForm.projectId} onChange={(projectId) => setComposeYamlForm({ ...composeYamlForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
+                  <Field label="Stack name" value={composeYamlForm.name} onChange={(name) => setComposeYamlForm({ ...composeYamlForm, name })} />
+                  <TextArea label="compose.yaml" value={composeYamlForm.composeYaml} onChange={(composeYaml) => setComposeYamlForm({ ...composeYamlForm, composeYaml })} />
+                  <TextArea label="Compose .env" value={composeYamlForm.envText} onChange={(envText) => setComposeYamlForm({ ...composeYamlForm, envText })} />
+                  <button className="svp-button w-fit" onClick={() => void deployComposeYaml()} disabled={Boolean(busy) || !composeYamlForm.composeYaml.trim()}>
+                    <Boxes size={16} />
+                    Deploy Pasted Compose
+                  </button>
+                </div>
+              </Panel>
             </div>
 
             <Panel title="Recent Deployments" icon={Activity}>
-              <DeploymentList deployments={deployments} apps={apps} />
+              <DeploymentList deployments={deployments} apps={apps} onLogs={loadDeploymentLogs} />
             </Panel>
           </div>
         )}
@@ -1099,6 +1214,13 @@ export function PanelShell() {
                     <Flame size={16} />
                     Apply Rule
                   </button>
+                  <div className="border-t border-line pt-3">
+                    <Field label="Delete numbered UFW rule" value={firewallDeleteForm.ruleNumber} onChange={(ruleNumber) => setFirewallDeleteForm({ ...firewallDeleteForm, ruleNumber })} placeholder="Run ufw status numbered, then enter number" />
+                    <button className="svp-button-danger mt-3 w-fit" onClick={() => void deleteFirewallRule()} disabled={Boolean(busy) || !firewallDeleteForm.ruleNumber.trim()}>
+                      <Trash2 size={16} />
+                      Delete Rule
+                    </button>
+                  </div>
                 </div>
               </Panel>
             </div>
@@ -1270,10 +1392,12 @@ function AppGrid({
             <div className="min-w-0">
               <p className="truncate font-bold text-ink">{app.name}</p>
               <p className="text-xs text-zinc-500">
-                {projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"} - {app.deployMode || app.strategy} {app.source ? `- ${app.source}` : ""} {app.port ? `- 127.0.0.1:${app.port}` : ""}
+                {projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"} - {app.deployMode || app.strategy} {app.sourceType || app.source ? `- ${app.sourceType || app.source}` : ""} {app.port ? `- 127.0.0.1:${app.port}` : ""}
                 {app.containerPort ? ` -> :${app.containerPort}` : ""}
               </p>
               {app.repoUrl && <p className="mt-1 truncate text-xs text-zinc-600">{app.repoUrl} {app.branch ? `@ ${app.branch}` : ""}</p>}
+              {app.appDirectory && <p className="mt-1 truncate text-xs text-zinc-600">directory {app.appDirectory}</p>}
+              {app.dockerImage && <p className="mt-1 truncate text-xs text-zinc-600">image {app.dockerImage}</p>}
               {app.commitSha && <p className="mt-1 text-xs text-zinc-600">commit {app.commitSha}</p>}
               {app.domain && <a className="mt-1 block break-all text-xs font-bold text-action" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>}
               {app.databaseId && <p className="mt-1 text-xs text-zinc-600">db {databaseName(databases, app.databaseId)}</p>}
@@ -1294,7 +1418,7 @@ function AppGrid({
               <RotateCcw size={14} />
               Restart
             </button>
-            {app.source && (
+            {(app.source || app.sourceType === "docker-image") && (
               <button className="svp-button" onClick={() => void onAction(app.id, "redeploy")}>
                 <GitBranch size={14} />
                 Redeploy
@@ -1315,7 +1439,7 @@ function AppGrid({
   );
 }
 
-function DeploymentList({ deployments, apps }: { deployments: DeploymentEvent[]; apps: ManagedApp[] }) {
+function DeploymentList({ deployments, apps, onLogs }: { deployments: DeploymentEvent[]; apps: ManagedApp[]; onLogs: (id: string) => Promise<void> }) {
   if (deployments.length === 0) return <p className="text-sm text-zinc-500">No deployment events yet.</p>;
   return (
     <div className="grid gap-2">
@@ -1326,8 +1450,17 @@ function DeploymentList({ deployments, apps }: { deployments: DeploymentEvent[];
             <div>
               <p className="font-bold text-ink">{app?.name || event.appId} - {event.action}</p>
               <p className="text-zinc-400">{event.message}</p>
+              <p className="text-xs text-zinc-600">
+                {[event.sourceType, event.strategy, event.branch ? `branch ${event.branch}` : "", event.commitSha ? `commit ${event.commitSha}` : ""].filter(Boolean).join(" - ")}
+              </p>
             </div>
-            <StatusPill ok={event.status === "succeeded"} label={event.status} />
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="svp-button" onClick={() => void onLogs(event.id)}>
+                <Terminal size={14} />
+                Logs
+              </button>
+              <StatusPill ok={event.status === "succeeded"} label={event.status} />
+            </div>
           </div>
         );
       })}

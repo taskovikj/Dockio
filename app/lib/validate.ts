@@ -112,6 +112,35 @@ export function assertSafeGitRepo(value: string) {
   return parsed.toString();
 }
 
+export function assertSafeRelativePath(value: string, label = "path") {
+  const item = value.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!item) return "";
+  if (item.length > 220 || item.includes("\0") || item.split("/").some((part) => !part || part === "." || part === "..")) {
+    throw new Error(`${label} must be a relative path inside the project.`);
+  }
+  if (!/^[A-Za-z0-9._/-]+$/.test(item)) throw new Error(`${label} contains unsupported characters.`);
+  return item;
+}
+
+export function assertSafeDockerImage(value: string) {
+  const image = value.trim();
+  if (image.length < 2 || image.length > 240) throw new Error("Docker image must be 2-240 characters.");
+  if (image.includes("\0") || image.includes(" ") || image.includes("://")) throw new Error("Docker image format is invalid.");
+  if (!/^[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9._-]{1,128})?$/.test(image)) {
+    throw new Error("Docker image must look like nginx:1.27, ghcr.io/user/app:tag, or user/app:tag.");
+  }
+  return image;
+}
+
+export function assertSafeComposeYaml(value: string) {
+  const yaml = value.trim();
+  if (yaml.length < 12) throw new Error("Compose YAML is too short.");
+  if (yaml.length > 120_000) throw new Error("Compose YAML is too large for this panel.");
+  if (yaml.includes("\0")) throw new Error("Compose YAML contains invalid characters.");
+  if (!/(^|\n)\s*services\s*:/i.test(yaml)) throw new Error("Compose YAML must contain a services: section.");
+  return yaml.endsWith("\n") ? yaml : yaml + "\n";
+}
+
 export function assertSafeBranch(value: string) {
   const branch = (value.trim() || "main").slice(0, 120);
   if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes("..") || branch.startsWith("/") || branch.endsWith("/")) {

@@ -13,11 +13,15 @@ import {
   createManagedPostgres,
   createProject,
   deleteApp,
+  deleteFirewallRule,
   deployComposeApp,
+  deployComposeYamlApp,
+  deployDockerImageApp,
   deployGitApp,
   deploySampleApp,
   getDatabaseConnection,
   readAppLogs,
+  readDeploymentLogs,
   redeployApp,
   restartApp,
   serverStatus,
@@ -58,6 +62,7 @@ const gitDeploySchema = z.object({
   serviceRole: z.enum(["frontend", "backend", "worker", "fullstack"]).optional().default("fullstack"),
   repoUrl: z.string().url(),
   branch: z.string().optional().default("main"),
+  appDirectory: z.string().max(220).optional().default(""),
   mode: z.enum(["dockerfile", "node", "static"]),
   buildCommand: z.string().max(160).optional().default(""),
   startCommand: z.string().max(160).optional().default(""),
@@ -76,6 +81,23 @@ const composeDeploySchema = z.object({
   envText: z.string().max(20_000).optional().default("")
 });
 
+const composeYamlDeploySchema = z.object({
+  name: z.string().min(1).max(80),
+  projectId: z.string().optional().default(""),
+  composeYaml: z.string().min(1).max(120_000),
+  envText: z.string().max(20_000).optional().default("")
+});
+
+const imageDeploySchema = z.object({
+  name: z.string().min(1).max(80),
+  projectId: z.string().optional().default(""),
+  serviceRole: z.enum(["frontend", "backend", "worker", "fullstack"]).optional().default("fullstack"),
+  image: z.string().min(1).max(240),
+  containerPort: z.coerce.number().int().min(1).max(65535).optional().default(3000),
+  healthPath: z.string().max(120).optional().default("/"),
+  envText: z.string().max(20_000).optional().default("")
+});
+
 const domainSchema = z.object({
   domain: z.string().min(1).max(253)
 });
@@ -90,6 +112,10 @@ const firewallRuleSchema = z.object({
   port: z.coerce.number().int(),
   protocol: z.enum(["tcp", "udp"]).optional().default("tcp"),
   sourceCidr: z.string().optional().default("")
+});
+
+const firewallDeleteSchema = z.object({
+  ruleNumber: z.coerce.number().int().min(1).max(999)
 });
 
 const projectSchema = z.object({
@@ -175,6 +201,10 @@ async function route(request: Request, context: RouteContext) {
       rateLimit(request, { key: "firewall-rule", limit: 20, windowMs: 60_000 });
       return ok({ result: await applyFirewallRule(firewallRuleSchema.parse(await request.json())) }, 200, requestId);
     }
+    if (segments[0] === "firewall" && segments[1] === "delete-rule" && request.method === "POST") {
+      rateLimit(request, { key: "firewall-delete-rule", limit: 20, windowMs: 60_000 });
+      return ok({ result: await deleteFirewallRule(firewallDeleteSchema.parse(await request.json())) }, 200, requestId);
+    }
     if (segments[0] === "apps" && segments[1] === "sample" && request.method === "POST") {
       rateLimit(request, { key: "deploy-sample", limit: 10, windowMs: 60_000 });
       return ok({ app: await deploySampleApp(sampleSchema.parse(await request.json())) }, 201, requestId);
@@ -186,6 +216,17 @@ async function route(request: Request, context: RouteContext) {
     if (segments[0] === "apps" && segments[1] === "compose" && request.method === "POST") {
       rateLimit(request, { key: "deploy-compose", limit: 5, windowMs: 60_000 });
       return ok({ app: await deployComposeApp(composeDeploySchema.parse(await request.json())) }, 201, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] === "compose-yaml" && request.method === "POST") {
+      rateLimit(request, { key: "deploy-compose-yaml", limit: 5, windowMs: 60_000 });
+      return ok({ app: await deployComposeYamlApp(composeYamlDeploySchema.parse(await request.json())) }, 201, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] === "image" && request.method === "POST") {
+      rateLimit(request, { key: "deploy-image", limit: 8, windowMs: 60_000 });
+      return ok({ app: await deployDockerImageApp(imageDeploySchema.parse(await request.json())) }, 201, requestId);
+    }
+    if (segments[0] === "deployments" && segments[1] && segments[2] === "logs" && request.method === "GET") {
+      return ok({ logs: await readDeploymentLogs(segments[1]) }, 200, requestId);
     }
     if (segments[0] === "apps" && segments[1] && segments[2] === "domain" && request.method === "POST") {
       const body = domainSchema.parse(await request.json());
