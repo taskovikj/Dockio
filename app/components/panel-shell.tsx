@@ -578,7 +578,7 @@ export function PanelShell() {
                       className="svp-button-primary"
                       onClick={() => {
                         setProjectForm({ name: "New Project", description: "" });
-                        setNotice("Fill the New Project form on the left, then create it to open a focused project workspace.");
+                        setNotice("Fill the New Project form on the left, then create it to open the project.");
                       }}
                     >
                       Add New
@@ -625,10 +625,10 @@ export function PanelShell() {
           <header className="border-b border-line bg-[#050505]/95 px-4 py-3 md:px-6">
             <div className="mx-auto flex max-w-7xl flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="min-w-0">
-                <p className="text-xs font-bold text-zinc-500">All Projects &gt; {currentProject.name}</p>
+                <p className="text-xs font-bold text-zinc-500">Projects / {currentProject.name}</p>
                 <h1 className="mt-1 truncate text-2xl font-black tracking-normal text-ink">{currentProject.name}</h1>
                 <p className="mt-1 max-w-3xl text-sm text-zinc-400">
-                  {currentProject.description || "Deploy frontend, backend, workers, Docker Compose, domains, storage, logs, firewall, and rollbacks from one project workspace."}
+                  {currentProject.description || "One focused place for this app: services, deploys, env, storage, domains, logs, firewall, and rollbacks."}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -659,7 +659,7 @@ export function PanelShell() {
 
         {tab === "general" && (
           <div className="space-y-4">
-            <Panel title="Deploy Settings" icon={Play}>
+            <Panel title="Project Actions" icon={Play}>
               <div className="flex flex-wrap items-center gap-2">
                 <button className="svp-button-primary" onClick={() => setTab("deployments")} disabled={Boolean(busy)}>
                   <Play size={15} />
@@ -693,13 +693,13 @@ export function PanelShell() {
               <Metric label="Domains" value={apps.filter((app) => app.domain).length} detail="Caddy HTTPS routes" icon={Globe2} />
             </div>
 
-            <Panel title="Production Deployment" icon={Server}>
+            <Panel title="Project Overview" icon={Server}>
               {activeApp ? (
                 <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
                   <div className="rounded-md border border-line bg-[#050505] p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="svp-label">Active service</p>
+                        <p className="svp-label">Primary service</p>
                         <h2 className="mt-2 truncate text-xl font-black text-ink">{activeApp.name}</h2>
                         <p className="mt-1 text-sm text-zinc-500">
                           {activeApp.serviceRole || "fullstack"} - {activeApp.strategy} - {activeApp.source || "manual"}
@@ -734,32 +734,55 @@ export function PanelShell() {
                     </div>
                   </div>
                   <div className="rounded-md border border-line bg-[#050505] p-4">
-                    <p className="font-black text-ink">Production checklist</p>
-                    <div className="mt-3 grid gap-2">
-                      <ChecklistRow done={apps.some((app) => app.source === "git" || app.source === "compose")} label="Deploy from Git or Compose" onClick={() => setTab("deployments")} />
-                      <ChecklistRow done={apps.some((app) => app.envKeys?.length)} label="Set environment variables" onClick={() => setTab("environment")} />
-                      <ChecklistRow done={databases.length > 0} label="Create or connect database" onClick={() => setTab("database")} />
-                      <ChecklistRow done={apps.some((app) => app.domain)} label="Add domain and Caddy route" onClick={() => setTab("domains")} />
-                      <ChecklistRow done={apps.some((app) => app.status === "running")} label="Check runtime health" onClick={() => setTab("monitoring")} />
+                    <p className="font-black text-ink">Project resources</p>
+                    <div className="mt-3 grid gap-3 text-sm text-zinc-400">
+                      <div className="grid grid-cols-2 gap-2">
+                        <Info title="Runtime" body={`${apps.filter((app) => app.status === "running").length} running / ${apps.length} total services`} />
+                        <Info title="Storage" body={databases.length ? `${databases.length} database resource${databases.length === 1 ? "" : "s"}` : "No database attached"} />
+                        <Info title="Routing" body={apps.some((app) => app.domain) ? "Domain route configured" : "No domain connected"} />
+                        <Info title="Deploys" body={deployments.length ? `${deployments.length} recorded events` : "No deploy events yet"} />
+                      </div>
+                      <div className="flex flex-wrap gap-2 border-t border-line pt-3">
+                        <button className="svp-button" onClick={() => setTab("environment")}>
+                          <KeyRound size={14} />
+                          Env
+                        </button>
+                        <button className="svp-button" onClick={() => setTab("database")}>
+                          <Database size={14} />
+                          Storage
+                        </button>
+                        <button className="svp-button" onClick={() => setTab("domains")}>
+                          <Globe2 size={14} />
+                          Domains
+                        </button>
+                        <button className="svp-button" onClick={() => setTab("advanced")}>
+                          <Shield size={14} />
+                          Server
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
               ) : (
                 <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
                   <div>
-                    <p className="text-sm text-zinc-400">This project is empty. Start with a sample API, a Git repo, static site, systemd service, or Docker Compose stack.</p>
-                    <div className="mt-4 flex flex-wrap gap-2">
+                    <p className="text-sm text-zinc-400">This project is empty. Add one service first, then configure env vars, storage, domains, and logs inside this same workspace.</p>
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
                       <button className="svp-button-primary" onClick={() => setTab("deployments")}>
                         <Play size={15} />
-                        Deploy First Service
+                        Deploy Service
+                      </button>
+                      <button className="svp-button" onClick={() => setTab("environment")}>
+                        <KeyRound size={15} />
+                        Prepare Env
                       </button>
                       <button className="svp-button" onClick={() => setTab("database")}>
                         <Database size={15} />
-                        Add Storage
+                        Add Database
                       </button>
                     </div>
                   </div>
-                  <Info title="Project scoped workspace" body="Once you open a project, services, env vars, domains, logs, storage, and deployment history are filtered to this project only." />
+                  <Info title="How this works" body="Project screens only show resources attached to this project, so frontend, backend, database, domains, and logs stay grouped together." />
                 </div>
               )}
             </Panel>
@@ -1162,7 +1185,7 @@ function ProjectCards({
   onOpen: (projectId: string) => void;
 }) {
   if (projects.length === 0) {
-    return <p className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">No projects match that search. Create a project and it opens as its own deployment workspace.</p>;
+    return <p className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">No projects match that search. Create a project to group its services, domains, databases, logs, and deploy history.</p>;
   }
 
   return (
@@ -1179,7 +1202,7 @@ function ProjectCards({
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate text-base font-black text-ink">{project.name}</p>
-                <p className="mt-1 truncate text-sm text-zinc-500">{primaryDomain || project.description || "No production domain yet"}</p>
+                <p className="mt-1 truncate text-sm text-zinc-500">{primaryDomain || project.description || "No domain connected yet"}</p>
               </div>
               <StatusPill ok={runningCount > 0 || projectApps.length === 0} label={projectApps.length ? `${runningCount}/${projectApps.length} running` : "new"} />
             </div>
@@ -1190,7 +1213,7 @@ function ProjectCards({
               <span className="svp-badge">{projectDbs.length} db</span>
             </div>
             <p className="mt-4 text-xs text-zinc-500">
-              {lastDeployment ? `${lastDeployment.action}: ${lastDeployment.message}` : "Open project to deploy frontend, backend, storage, domains, and logs."}
+              {lastDeployment ? `${lastDeployment.action}: ${lastDeployment.message}` : "Open project to manage its services, storage, domains, and logs."}
             </p>
           </button>
         );
@@ -1220,15 +1243,6 @@ function ProjectGrid({ projects, apps, databases }: { projects: ProjectRecord[];
         );
       })}
     </div>
-  );
-}
-
-function ChecklistRow({ done, label, onClick }: { done: boolean; label: string; onClick: () => void }) {
-  return (
-    <button className="flex items-center justify-between gap-3 rounded-md border border-line bg-panel px-3 py-2 text-left text-sm transition hover:border-zinc-600" onClick={onClick}>
-      <span className={done ? "text-zinc-300" : "text-zinc-500"}>{label}</span>
-      <StatusPill ok={done} label={done ? "done" : "todo"} />
-    </button>
   );
 }
 
