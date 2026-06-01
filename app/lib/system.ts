@@ -343,6 +343,7 @@ export async function deployGitApp(input: {
     await safeRunOrThrow("docker", ["build", "-t", image, "-f", dockerfile, buildDir]);
     appendDeploymentLog(deploymentId, "starting service", `Starting container on ${app.publicPreview ? "0.0.0.0" : "127.0.0.1"}:${app.port}.`);
     await replaceDockerContainer(app, image, envFile);
+    await waitForAppHealth(app, deploymentId);
     if (app.publicPreview) {
       await openPreviewFirewallPort(app.port, deploymentId);
     }
@@ -538,6 +539,7 @@ export async function deployDockerImageApp(input: {
     await safeRunOrThrow("docker", ["pull", image]);
     appendDeploymentLog(deploymentId, "starting service", `Starting container on ${app.publicPreview ? "0.0.0.0" : "127.0.0.1"}:${app.port}.`);
     await replaceDockerContainer(app, image, envFile);
+    await waitForAppHealth(app, deploymentId);
     if (app.publicPreview) {
       await openPreviewFirewallPort(app.port, deploymentId);
     }
@@ -726,11 +728,11 @@ export async function checkAppHealth(appId: string) {
   if (!app.port) return { ok: false, message: "No localhost port is registered for this app." };
   const pathName = cleanHealthPath(app.healthPath || "/");
   try {
-    const response = await fetch(`http://127.0.0.1:${app.port}${pathName}`, { signal: AbortSignal.timeout(5000) });
-    const ok = response.status >= 200 && response.status < 500;
-    const message = `HTTP ${response.status} from ${pathName}`;
+    const result = await fetchLocalHealth(app.port, pathName);
+    const ok = result.status >= 200 && result.status < 500;
+    const message = `HTTP ${result.status} from ${pathName}`;
     markApp(app.id, { lastMessage: message, status: ok ? "running" : "failed" });
-    return { ok, status: response.status, message };
+    return { ok, status: result.status, message };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Health check failed.";
     markApp(app.id, { lastMessage: message, status: "failed" });
@@ -936,6 +938,39 @@ async function openPreviewFirewallPort(port: number, deploymentId?: string) {
   }
   audit("firewall.preview_port", result.ok ? `Allowed preview port ${safePort}/tcp.` : `Preview firewall update failed for ${safePort}/tcp.`, { port: safePort, ok: result.ok });
   return result;
+}
+
+async function waitForAppHealth(app: ManagedApp, deploymentId: string) {
+  const safePort = assertSafePort(app.port);
+  const pathName = cleanHealthPath(app.healthPath || "/");
+  appendDeploymentLog(deploymentId, "health check", `Waiting for ${pathName} on 127.0.0.1:${safePort}.`);
+  let lastMessage = "No response yet.";
+  for (let attempt = 1; attempt <= 30; attempt += 1) {
+    try {
+      const result = await fetchLocalHealth(safePort, pathName, 3000);
+      lastMessage = `HTTP ${result.status} from ${pathName}`;
+      if (result.status >= 200 && result.status < 500) {
+        appendDeploymentLog(deploymentId, "health check", `Service is reachable: ${lastMessage}.`);
+        return;
+      }
+    } catch (error) {
+      lastMessage = error instanceof Error ? error.message : "Health check failed.";
+    }
+    await sleep(1000);
+  }
+  appendDeploymentLog(deploymentId, "health check failed", lastMessage);
+  throw new UserFacingError(`Service started, but health check failed at ${pathName} on port ${safePort}: ${redact(lastMessage)}`, 500);
+}
+
+async function fetchLocalHealth(port: number, pathName: string, timeoutMs = 5000) {
+  const safePort = assertSafePort(port);
+  const safePath = cleanHealthPath(pathName);
+  const response = await fetch(`http://127.0.0.1:${safePort}${safePath}`, { signal: AbortSignal.timeout(timeoutMs) });
+  return { status: response.status };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function deployDockerSample(app: ManagedApp) {
@@ -1322,6 +1357,7 @@ function prepareDockerfile(sourceDir: string, appDir: string, mode: "dockerfile"
     if (!fs.existsSync(existing)) throw new Error("Dockerfile mode selected, but the repository has no Dockerfile at the root.");
     return existing;
   }
+  const runtimePort = mode === "static" ? 80 : assertContainerPort(app.containerPort || 3000);
   const packageManager = detectPackageManager(sourceDir);
   const installCommand = packageManager === "pnpm" ? "corepack enable && pnpm install --frozen-lockfile" : packageManager === "yarn" ? "corepack enable && yarn install --frozen-lockfile" : "npm ci || npm install";
   const run = packageManager === "pnpm" ? "pnpm" : packageManager === "yarn" ? "yarn" : "npm run";
@@ -1350,8 +1386,8 @@ function prepareDockerfile(sourceDir: string, appDir: string, mode: "dockerfile"
           "RUN " + buildCommand,
           "ENV NODE_ENV=production",
           "ENV HOST=0.0.0.0",
-          "ENV PORT=3000",
-          "EXPOSE 3000",
+          "ENV PORT=" + runtimePort,
+          "EXPOSE " + runtimePort,
           "CMD [\"sh\", \"-lc\", " + JSON.stringify(startCommand) + "]",
           ""
         ].join("\n");
