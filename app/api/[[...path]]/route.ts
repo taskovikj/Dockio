@@ -8,10 +8,14 @@ import {
   analyzeGitRepo,
   applyFirewallBaseline,
   applyFirewallRule,
+  attachDatabaseToApp,
   checkAppHealth,
   configureDomain,
   createExternalDatabase,
   createManagedPostgres,
+  createManagedRedis,
+  deleteAppEnvironmentKey,
+  deleteDatabase,
   deleteDeployment,
   createProject,
   deleteProject,
@@ -26,7 +30,9 @@ import {
   readDeploymentLogs,
   redeployApp,
   restartApp,
+  setAppEnvironment,
   serverStatus,
+  startApp,
   stopApp,
   systemPrune,
   testDatabase,
@@ -127,7 +133,8 @@ const projectSchema = z.object({
 });
 
 const projectDeleteSchema = z.object({
-  confirmation: z.string().min(1).max(80)
+  confirmation: z.string().min(1).max(80),
+  deleteVolumes: z.boolean().optional().default(false)
 });
 
 const appSettingsSchema = z.object({
@@ -149,6 +156,29 @@ const managedDatabaseSchema = z.object({
   projectId: z.string().optional().default(""),
   name: z.string().min(1).max(80),
   envKey: z.string().max(80).optional().default("DATABASE_URL")
+});
+
+const managedRedisSchema = z.object({
+  projectId: z.string().optional().default(""),
+  name: z.string().min(1).max(80),
+  envKey: z.string().max(80).optional().default("REDIS_URL")
+});
+
+const appEnvSchema = z.object({
+  envText: z.string().max(20_000),
+  replace: z.boolean().optional().default(false)
+});
+
+const appEnvDeleteSchema = z.object({
+  key: z.string().min(1).max(80)
+});
+
+const databaseAttachSchema = z.object({
+  appId: z.string().min(1).max(80)
+});
+
+const databaseDeleteSchema = z.object({
+  deleteVolume: z.boolean().optional().default(false)
 });
 
 export async function GET(request: Request, context: RouteContext) {
@@ -190,7 +220,7 @@ async function route(request: Request, context: RouteContext) {
     if (segments[0] === "projects" && segments[1] && segments[2] === "delete" && request.method === "POST") {
       rateLimit(request, { key: "project-delete", limit: 5, windowMs: 60_000 });
       const body = projectDeleteSchema.parse(await request.json());
-      return ok(await deleteProject({ projectId: segments[1], confirmation: body.confirmation }), 200, requestId);
+      return ok(await deleteProject({ projectId: segments[1], confirmation: body.confirmation, deleteVolumes: body.deleteVolumes }), 200, requestId);
     }
     if (segments[0] === "repos" && segments[1] === "detect" && request.method === "POST") {
       rateLimit(request, { key: "repo-detect", limit: 12, windowMs: 60_000 });
@@ -252,8 +282,19 @@ async function route(request: Request, context: RouteContext) {
       const body = appSettingsSchema.parse(await request.json());
       return ok({ app: await updateAppSettings({ appId: segments[1], ...body }) }, 200, requestId);
     }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "env" && request.method === "POST") {
+      const body = appEnvSchema.parse(await request.json());
+      return ok({ app: await setAppEnvironment({ appId: segments[1], ...body }) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "env-delete" && request.method === "POST") {
+      const body = appEnvDeleteSchema.parse(await request.json());
+      return ok({ app: await deleteAppEnvironmentKey({ appId: segments[1], key: body.key }) }, 200, requestId);
+    }
     if (segments[0] === "apps" && segments[1] && segments[2] === "logs" && request.method === "GET") {
       return ok({ logs: await readAppLogs(segments[1]) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "start" && request.method === "POST") {
+      return ok({ app: await startApp(segments[1]) }, 200, requestId);
     }
     if (segments[0] === "apps" && segments[1] && segments[2] === "stop" && request.method === "POST") {
       return ok({ app: await stopApp(segments[1]) }, 200, requestId);
@@ -274,6 +315,10 @@ async function route(request: Request, context: RouteContext) {
       rateLimit(request, { key: "db-managed", limit: 8, windowMs: 60_000 });
       return ok({ database: await createManagedPostgres(managedDatabaseSchema.parse(await request.json())) }, 201, requestId);
     }
+    if (segments[0] === "databases" && segments[1] === "managed-redis" && request.method === "POST") {
+      rateLimit(request, { key: "db-managed-redis", limit: 8, windowMs: 60_000 });
+      return ok({ database: await createManagedRedis(managedRedisSchema.parse(await request.json())) }, 201, requestId);
+    }
     if (segments[0] === "databases" && segments[1] === "external-postgres" && request.method === "POST") {
       rateLimit(request, { key: "db-external", limit: 12, windowMs: 60_000 });
       return ok({ database: await createExternalDatabase(externalDatabaseSchema.parse(await request.json())) }, 201, requestId);
@@ -283,6 +328,14 @@ async function route(request: Request, context: RouteContext) {
     }
     if (segments[0] === "databases" && segments[1] && segments[2] === "connection" && request.method === "POST") {
       return ok({ connection: await getDatabaseConnection(segments[1]) }, 200, requestId);
+    }
+    if (segments[0] === "databases" && segments[1] && segments[2] === "attach" && request.method === "POST") {
+      const body = databaseAttachSchema.parse(await request.json());
+      return ok({ app: await attachDatabaseToApp({ databaseId: segments[1], appId: body.appId }) }, 200, requestId);
+    }
+    if (segments[0] === "databases" && segments[1] && segments[2] === "delete" && request.method === "POST") {
+      const body = databaseDeleteSchema.parse(await request.json());
+      return ok(await deleteDatabase({ databaseId: segments[1], deleteVolume: body.deleteVolume }), 200, requestId);
     }
 
     return fail("Not found", 404, requestId);
@@ -298,7 +351,8 @@ async function authRoute(request: Request, segments: string[], requestId: string
     const body = setupSchema.parse(await request.json());
     requireSetupCode(body.setupCode);
     const admin = await createAdmin(body);
-    return ok({ user: { email: admin.email, name: admin.name }, setupRequired: false }, 201, requestId);
+    const session = await login(body.email, body.password);
+    return ok({ user: { email: admin.email, name: admin.name }, csrfToken: session.csrfToken, setupRequired: false }, 201, requestId);
   }
   if (segments[1] === "login" && request.method === "POST") {
     rateLimit(request, { key: "login", limit: 8, windowMs: 10 * 60_000 });

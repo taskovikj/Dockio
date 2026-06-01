@@ -1,12 +1,12 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { redactValue } from "./validate";
+import { redactValue, slug } from "./validate";
 
 export type AppStrategy = "docker" | "systemd" | "static" | "compose";
 export type AppStatus = "created" | "running" | "failed" | "stopped";
 export type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
-export type DatabaseKind = "managed-postgres" | "external-postgres";
+export type DatabaseKind = "managed-postgres" | "external-postgres" | "managed-redis";
 export type DeploymentStatus = "running" | "succeeded" | "failed";
 
 export interface AdminAccount {
@@ -30,6 +30,7 @@ export interface ManagedApp {
   id: string;
   projectId?: string;
   name: string;
+  slug: string;
   serviceRole?: ServiceRole;
   strategy: AppStrategy;
   port: number;
@@ -66,6 +67,7 @@ export interface ManagedApp {
 export interface ProjectRecord {
   id: string;
   name: string;
+  slug: string;
   description?: string;
   createdAt: string;
   updatedAt: string;
@@ -75,6 +77,7 @@ export interface DatabaseResource {
   id: string;
   projectId?: string;
   name: string;
+  slug: string;
   kind: DatabaseKind;
   provider: string;
   envKey: string;
@@ -182,15 +185,15 @@ export function readState(): PanelState {
       ...initialState,
       ...parsed,
       sessions: (parsed.sessions || []).filter((session) => new Date(session.expiresAt).getTime() > Date.now()),
-      projects: parsed.projects || [],
-      apps: parsed.apps || [],
-      databases: parsed.databases || [],
+      projects: (parsed.projects || []).map((project) => ({ ...project, slug: project.slug || slug(project.name || project.id) })),
+      apps: (parsed.apps || []).map((app) => ({ ...app, slug: app.slug || slug(app.name || app.id) })),
+      databases: (parsed.databases || []).map((database) => ({ ...database, slug: database.slug || slug(database.name || database.id) })),
       audit: parsed.audit || [],
       deployments: parsed.deployments || []
     };
     if (next.projects.length === 0) {
       const now = new Date().toISOString();
-      next.projects = [{ id: "default", name: "Default Project", description: next.apps.length > 0 ? "Imported prototype apps" : "First project workspace", createdAt: now, updatedAt: now }];
+      next.projects = [{ id: "default", name: "Default Project", slug: "default", description: next.apps.length > 0 ? "Imported prototype apps" : "First project workspace", createdAt: now, updatedAt: now }];
       next.apps = next.apps.map((app) => ({ ...app, projectId: app.projectId || "default" }));
       writeState(next);
     }

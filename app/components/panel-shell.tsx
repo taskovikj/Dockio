@@ -45,6 +45,7 @@ interface ManagedApp {
   id: string;
   projectId?: string;
   name: string;
+  slug: string;
   serviceRole?: ServiceRole;
   strategy: Strategy;
   port: number;
@@ -80,6 +81,7 @@ interface ManagedApp {
 interface ProjectRecord {
   id: string;
   name: string;
+  slug: string;
   description?: string;
   createdAt: string;
   updatedAt: string;
@@ -89,7 +91,8 @@ interface DatabaseResource {
   id: string;
   projectId?: string;
   name: string;
-  kind: "managed-postgres" | "external-postgres";
+  slug: string;
+  kind: "managed-postgres" | "external-postgres" | "managed-redis";
   provider: string;
   envKey: string;
   status: string;
@@ -203,6 +206,7 @@ export function PanelShell() {
   const [authForm, setAuthForm] = useState({ email: "", name: "", password: "", setupCode: "" });
   const [projectForm, setProjectForm] = useState({ name: "New Project", description: "" });
   const [projectDeleteConfirm, setProjectDeleteConfirm] = useState("");
+  const [projectDeleteVolumes, setProjectDeleteVolumes] = useState(false);
   const [gitForm, setGitForm] = useState({
     name: "Git App",
     projectId: "",
@@ -230,6 +234,8 @@ export function PanelShell() {
   const [appSettingsForm, setAppSettingsForm] = useState({ appId: "", projectId: "", serviceRole: "fullstack" as ServiceRole, corsText: "", databaseId: "" });
   const [externalDbForm, setExternalDbForm] = useState({ projectId: "", name: "External Postgres", provider: "External Postgres", url: "", envKey: "DATABASE_URL" });
   const [managedDbForm, setManagedDbForm] = useState({ projectId: "", name: "Managed Postgres", envKey: "DATABASE_URL" });
+  const [managedRedisForm, setManagedRedisForm] = useState({ projectId: "", name: "Managed Redis", envKey: "REDIS_URL" });
+  const [appEnvForm, setAppEnvForm] = useState({ appId: "", envText: "", replace: false, deleteKey: "" });
   const [corsPresetForm, setCorsPresetForm] = useState({ frontendOrigin: "", backendOrigin: "" });
   const [logs, setLogs] = useState("");
   const [repoAnalysis, setRepoAnalysis] = useState<RepoAnalysis | null>(null);
@@ -263,12 +269,17 @@ export function PanelShell() {
       appId: form.appId && nextState.apps.some((app) => app.id === form.appId && (!selectedProjectId || app.projectId === selectedProjectId)) ? form.appId : defaultApp?.id || "",
       projectId: form.projectId || nextState.projects[0]?.id || ""
     }));
+    setAppEnvForm((form) => ({
+      ...form,
+      appId: form.appId && nextState.apps.some((app) => app.id === form.appId && (!selectedProjectId || app.projectId === selectedProjectId)) ? form.appId : defaultApp?.id || ""
+    }));
     setGitForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setImageForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setComposeForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setComposeYamlForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setExternalDbForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setManagedDbForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    setManagedRedisForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setSelectedProjectId((projectId) => (projectId && !nextState.projects.some((project) => project.id === projectId) ? "" : projectId));
   }
 
@@ -396,12 +407,14 @@ export function PanelShell() {
     setTab("general");
     setDomainForm((form) => ({ ...form, appId: "" }));
     setAppSettingsForm((form) => ({ ...form, projectId, appId: "", databaseId: "" }));
+    setAppEnvForm((form) => ({ ...form, appId: "", envText: "", deleteKey: "" }));
     setGitForm((form) => ({ ...form, projectId, databaseId: "" }));
     setImageForm((form) => ({ ...form, projectId }));
     setComposeForm((form) => ({ ...form, projectId }));
     setComposeYamlForm((form) => ({ ...form, projectId }));
     setExternalDbForm((form) => ({ ...form, projectId }));
     setManagedDbForm((form) => ({ ...form, projectId }));
+    setManagedRedisForm((form) => ({ ...form, projectId }));
     setLogs("");
   }
 
@@ -433,9 +446,10 @@ export function PanelShell() {
       await api(`/api/projects/${currentProject.id}/delete`, {
         method: "POST",
         csrfToken,
-        body: { confirmation: projectDeleteConfirm }
+        body: { confirmation: projectDeleteConfirm, deleteVolumes: projectDeleteVolumes }
       });
       setProjectDeleteConfirm("");
+      setProjectDeleteVolumes(false);
       setNotice(`${currentProject.name} was deleted.`);
       showAllProjects();
       await refresh();
@@ -480,6 +494,14 @@ export function PanelShell() {
     });
   }
 
+  async function createManagedRedis() {
+    await run("Creating Redis", async () => {
+      const result = await api<{ database: DatabaseResource }>("/api/databases/managed-redis", { method: "POST", csrfToken, body: { ...managedRedisForm, projectId: selectedProjectId || managedRedisForm.projectId } });
+      setNotice(`${result.database.name} created. Attach it to a service to inject ${result.database.envKey}.`);
+      await refresh();
+    });
+  }
+
   async function createExternalDatabase() {
     await run("Saving external database", async () => {
       const result = await api<{ database: DatabaseResource }>("/api/databases/external-postgres", { method: "POST", csrfToken, body: { ...externalDbForm, projectId: selectedProjectId || externalDbForm.projectId } });
@@ -501,6 +523,50 @@ export function PanelShell() {
       } else {
         setNotice(payload?.message || "Database action completed.");
       }
+      await refresh();
+    });
+  }
+
+  async function attachDatabase(databaseId: string, appId: string) {
+    if (!appId) return;
+    await run("Attaching database", async () => {
+      await api(`/api/databases/${databaseId}/attach`, { method: "POST", csrfToken, body: { appId } });
+      setNotice("Database env value attached. Redeploy the service to apply it.");
+      await refresh();
+    });
+  }
+
+  async function deleteDatabaseResource(databaseId: string, deleteVolume: boolean) {
+    const database = state?.databases.find((item) => item.id === databaseId);
+    const expected = database?.slug || database?.name || databaseId;
+    const typed = window.prompt(`Type ${expected} to delete this database resource. ${deleteVolume ? "The Docker volume will also be removed." : "The Docker volume is kept when possible."}`);
+    if (typed !== expected) {
+      setNotice("Database delete cancelled. Confirmation did not match.");
+      return;
+    }
+    await run("Deleting database", async () => {
+      await api(`/api/databases/${databaseId}/delete`, { method: "POST", csrfToken, body: { deleteVolume } });
+      setNotice("Database resource deleted.");
+      await refresh();
+    });
+  }
+
+  async function saveAppEnvironment() {
+    if (!appEnvForm.appId) return;
+    await run("Saving environment", async () => {
+      await api(`/api/apps/${appEnvForm.appId}/env`, { method: "POST", csrfToken, body: { envText: appEnvForm.envText, replace: appEnvForm.replace } });
+      setAppEnvForm((form) => ({ ...form, envText: "" }));
+      setNotice("Environment keys saved. Redeploy the service to apply them.");
+      await refresh();
+    });
+  }
+
+  async function deleteAppEnvKey() {
+    if (!appEnvForm.appId || !appEnvForm.deleteKey.trim()) return;
+    await run("Deleting environment key", async () => {
+      await api(`/api/apps/${appEnvForm.appId}/env-delete`, { method: "POST", csrfToken, body: { key: appEnvForm.deleteKey } });
+      setAppEnvForm((form) => ({ ...form, deleteKey: "" }));
+      setNotice("Environment key removed. Redeploy the service to apply it.");
       await refresh();
     });
   }
@@ -529,13 +595,13 @@ export function PanelShell() {
     });
   }
 
-  async function appAction(appId: string, action: "restart" | "redeploy" | "health" | "delete") {
+  async function appAction(appId: string, action: "start" | "restart" | "redeploy" | "health" | "delete") {
     if (action === "delete") {
       const app = state?.apps.find((item) => item.id === appId);
-      const expected = app?.name || appId;
-      const typed = window.prompt(`Type ${expected} to permanently delete this service, containers, files, and deployment history.`);
+      const expected = app?.slug || app?.name || appId;
+      const typed = window.prompt(`Type ${expected} to delete this service and its runtime resources. Deployment history is kept.`);
       if (typed !== expected) {
-        setNotice("Delete cancelled. The typed service name did not match.");
+        setNotice("Delete cancelled. The typed service slug did not match.");
         return;
       }
     }
@@ -665,7 +731,7 @@ export function PanelShell() {
   const filteredProjects = allProjects.filter((project) => {
     const query = projectSearch.trim().toLowerCase();
     if (!query) return true;
-    return project.name.toLowerCase().includes(query) || (project.description || "").toLowerCase().includes(query);
+    return project.name.toLowerCase().includes(query) || project.slug.toLowerCase().includes(query) || (project.description || "").toLowerCase().includes(query);
   });
   const activeApp = apps.find((app) => app.id === domainForm.appId) || apps[0];
   const selectedSettingsApp = apps.find((app) => app.id === appSettingsForm.appId);
@@ -1029,6 +1095,39 @@ export function PanelShell() {
               </Panel>
             </div>
 
+            <Panel title="Saved Service Environment" icon={Lock}>
+              <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
+                <div className="grid gap-3">
+                  <label className="grid gap-1">
+                    <span className="svp-label">Service</span>
+                    <select className="svp-input" value={appEnvForm.appId} onChange={(event) => setAppEnvForm({ ...appEnvForm, appId: event.target.value })}>
+                      <option value="">Select service</option>
+                      {apps.map((app) => (
+                        <option key={app.id} value={app.id}>{app.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <TextArea label="Environment variables" value={appEnvForm.envText} onChange={(envText) => setAppEnvForm({ ...appEnvForm, envText })} placeholder={"JWT_SECRET=...\nDATABASE_URL=..."} />
+                  <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
+                    <input className="mt-1" type="checkbox" checked={appEnvForm.replace} onChange={(event) => setAppEnvForm({ ...appEnvForm, replace: event.target.checked })} />
+                    <span><span className="block font-bold text-ink">Replace existing saved env</span><span className="mt-1 block text-xs text-zinc-500">Leave unchecked to add or update only the keys you paste.</span></span>
+                  </label>
+                  <button className="svp-button-primary w-fit" onClick={() => void saveAppEnvironment()} disabled={Boolean(busy) || !appEnvForm.appId || !appEnvForm.envText.trim()}>
+                    <KeyRound size={15} />
+                    Save Env
+                  </button>
+                </div>
+                <div className="grid content-start gap-3">
+                  <Info title="Secrets stay server-side" body="Values are written to this VPS data directory and only env key names are shown in the dashboard state." />
+                  <Field label="Delete one env key" value={appEnvForm.deleteKey} onChange={(deleteKey) => setAppEnvForm({ ...appEnvForm, deleteKey })} placeholder="JWT_SECRET" />
+                  <button className="svp-button-danger w-fit" onClick={() => void deleteAppEnvKey()} disabled={Boolean(busy) || !appEnvForm.appId || !appEnvForm.deleteKey.trim()}>
+                    <Trash2 size={15} />
+                    Delete Key
+                  </button>
+                </div>
+              </div>
+            </Panel>
+
             <Panel title="Configured Keys" icon={Lock}>
               <div className="grid gap-2">
                 {apps.length === 0 && <p className="text-sm text-zinc-500">No app environment keys yet.</p>}
@@ -1050,7 +1149,7 @@ export function PanelShell() {
 
         {tab === "database" && (
           <div className="space-y-4">
-            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+            <div className="grid gap-4 xl:grid-cols-3">
               <Panel title="Managed Postgres" icon={Database}>
                 <div className="grid gap-3">
                   <Select label="Project" value={managedDbForm.projectId} onChange={(projectId) => setManagedDbForm({ ...managedDbForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
@@ -1061,6 +1160,19 @@ export function PanelShell() {
                     Create Postgres
                   </button>
                   <Info title="Safe default" body="The container binds Postgres to 127.0.0.1 only. It is not exposed publicly through the firewall." />
+                </div>
+              </Panel>
+
+              <Panel title="Managed Redis" icon={HardDrive}>
+                <div className="grid gap-3">
+                  <Select label="Project" value={managedRedisForm.projectId} onChange={(projectId) => setManagedRedisForm({ ...managedRedisForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
+                  <Field label="Redis name" value={managedRedisForm.name} onChange={(name) => setManagedRedisForm({ ...managedRedisForm, name })} />
+                  <Field label="Env key" value={managedRedisForm.envKey} onChange={(envKey) => setManagedRedisForm({ ...managedRedisForm, envKey })} placeholder="REDIS_URL" />
+                  <button className="svp-button-primary w-fit" onClick={() => void createManagedRedis()} disabled={Boolean(busy)}>
+                    <HardDrive size={16} />
+                    Create Redis
+                  </button>
+                  <Info title="Internal network" body="Redis joins the Supavibe Docker network and is injected into services as REDIS_URL when attached." />
                 </div>
               </Panel>
 
@@ -1082,7 +1194,7 @@ export function PanelShell() {
             </div>
 
             <Panel title="Database Resources" icon={Database}>
-              <DatabaseGrid databases={databases} projects={projects} onAction={databaseAction} />
+              <DatabaseGrid databases={databases} projects={projects} apps={apps} onAction={databaseAction} onAttach={attachDatabase} onDelete={deleteDatabaseResource} />
             </Panel>
           </div>
         )}
@@ -1390,13 +1502,17 @@ export function PanelShell() {
               <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
                 <div>
                   <p className="text-sm text-zinc-400">
-                    Delete this full project, including its services, deployment records, managed database containers/volumes, stored secrets, Caddy route files, and managed app files.
+                    Delete this full project, including its services, deployment records, managed database containers, stored secrets, Caddy route files, and managed app files. Database volumes are kept unless you explicitly include them.
                   </p>
-                  <p className="mt-3 text-sm font-bold text-red-300">Type {currentProject.name} to confirm.</p>
+                  <p className="mt-3 text-sm font-bold text-red-300">Type {currentProject.slug} to confirm.</p>
                 </div>
                 <div className="grid gap-3">
-                  <Field label="Confirmation" value={projectDeleteConfirm} onChange={setProjectDeleteConfirm} placeholder={currentProject.name} />
-                  <button className="svp-button-danger justify-center" onClick={() => void deleteCurrentProject()} disabled={Boolean(busy) || projectDeleteConfirm !== currentProject.name}>
+                  <Field label="Confirmation" value={projectDeleteConfirm} onChange={setProjectDeleteConfirm} placeholder={currentProject.slug} />
+                  <label className="flex items-start gap-3 rounded-md border border-red-950/70 bg-red-950/20 p-3 text-sm text-red-100">
+                    <input className="mt-1" type="checkbox" checked={projectDeleteVolumes} onChange={(event) => setProjectDeleteVolumes(event.target.checked)} />
+                    <span><span className="block font-bold">Also delete managed database volumes</span><span className="mt-1 block text-xs text-red-200/70">Leave off when you might need the data later.</span></span>
+                  </label>
+                  <button className="svp-button-danger justify-center" onClick={() => void deleteCurrentProject()} disabled={Boolean(busy) || projectDeleteConfirm !== currentProject.slug}>
                     <Trash2 size={16} />
                     Delete Full Project
                   </button>
@@ -1591,7 +1707,7 @@ function AppGrid({
   vpsIp: string;
   onLogs: (id: string) => Promise<void>;
   onStop: (id: string) => Promise<void>;
-  onAction: (id: string, action: "restart" | "redeploy" | "health" | "delete") => Promise<void>;
+  onAction: (id: string, action: "start" | "restart" | "redeploy" | "health" | "delete") => Promise<void>;
 }) {
   if (apps.length === 0) return <p className="text-sm text-zinc-500">No services yet. Deploy a public Git repository from the Deployments tab.</p>;
   return (
@@ -1626,6 +1742,10 @@ function AppGrid({
             <button className="svp-button" onClick={() => void onAction(app.id, "health")}>
               <HeartPulse size={14} />
               Health
+            </button>
+            <button className="svp-button" onClick={() => void onAction(app.id, "start")}>
+              <Play size={14} />
+              Start
             </button>
             <button className="svp-button" onClick={() => void onAction(app.id, "restart")}>
               <RotateCcw size={14} />
@@ -1755,11 +1875,17 @@ function DeploymentList({ deployments, apps, onLogs, onDelete }: { deployments: 
 function DatabaseGrid({
   databases,
   projects,
-  onAction
+  apps,
+  onAction,
+  onAttach,
+  onDelete
 }: {
   databases: DatabaseResource[];
   projects: ProjectRecord[];
+  apps: ManagedApp[];
   onAction: (id: string, action: "test" | "connection") => Promise<void>;
+  onAttach: (id: string, appId: string) => Promise<void>;
+  onDelete: (id: string, deleteVolume: boolean) => Promise<void>;
 }) {
   if (databases.length === 0) return <p className="text-sm text-zinc-500">No database resources yet. Create managed Postgres or connect an external provider.</p>;
   return (
@@ -1784,7 +1910,28 @@ function DatabaseGrid({
               <KeyRound size={14} />
               Reveal URL
             </button>
+            <button className="svp-button-danger" onClick={() => void onDelete(database.id, false)}>
+              <Trash2 size={14} />
+              Delete
+            </button>
+            {database.kind === "managed-postgres" && (
+              <button className="svp-button-danger" onClick={() => void onDelete(database.id, true)}>
+                <Trash2 size={14} />
+                Delete + Volume
+              </button>
+            )}
           </div>
+          <label className="mt-3 grid gap-1">
+            <span className="svp-label">Attach to service</span>
+            <select className="svp-input" value="" onChange={(event) => event.target.value && void onAttach(database.id, event.target.value)}>
+              <option value="">Choose service...</option>
+              {apps
+                .filter((app) => !database.projectId || !app.projectId || app.projectId === database.projectId)
+                .map((app) => (
+                  <option key={app.id} value={app.id}>{app.name}</option>
+                ))}
+            </select>
+          </label>
         </article>
       ))}
     </div>

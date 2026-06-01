@@ -84,10 +84,13 @@ export interface RepoAnalysis {
 
 export async function createProject(input: { name: string; description?: string }) {
   const name = assertSafeAppName(input.name);
+  const current = readState();
+  const projectSlug = uniqueSlug(current.projects.map((project) => project.slug || project.id), slug(name));
   const now = new Date().toISOString();
   const project = {
-    id: slug(name) + "-" + crypto.randomBytes(3).toString("hex"),
+    id: projectSlug + "-" + crypto.randomBytes(3).toString("hex"),
     name,
+    slug: projectSlug,
     description: (input.description || "").trim().slice(0, 280),
     createdAt: now,
     updatedAt: now
@@ -99,12 +102,12 @@ export async function createProject(input: { name: string; description?: string 
   return project;
 }
 
-export async function deleteProject(input: { projectId: string; confirmation: string }) {
+export async function deleteProject(input: { projectId: string; confirmation: string; deleteVolumes?: boolean }) {
   const projectId = assertSafeId(input.projectId, "projectId");
   const state = readState();
   const project = state.projects.find((item) => item.id === projectId);
   if (!project) throw new Error("Project not found.");
-  if (input.confirmation !== project.name) throw new UserFacingError(`Type ${project.name} to confirm project deletion.`, 400);
+  if (input.confirmation !== project.slug) throw new UserFacingError(`Type ${project.slug} to confirm project deletion.`, 400);
 
   const projectApps = state.apps.filter((app) => app.projectId === projectId);
   const projectDatabases = state.databases.filter((database) => database.projectId === projectId);
@@ -112,7 +115,7 @@ export async function deleteProject(input: { projectId: string; confirmation: st
     await cleanupAppResources(app);
   }
   for (const database of projectDatabases) {
-    await cleanupDatabaseResource(database);
+    await cleanupDatabaseResource(database, Boolean(input.deleteVolumes));
   }
 
   updateState((next) => {
@@ -124,7 +127,7 @@ export async function deleteProject(input: { projectId: string; confirmation: st
     next.projects = next.projects.filter((item) => item.id !== projectId);
     if (next.projects.length === 0) {
       const now = new Date().toISOString();
-      next.projects.push({ id: "default", name: "Default Project", description: "First project workspace", createdAt: now, updatedAt: now });
+      next.projects.push({ id: "default", name: "Default Project", slug: "default", description: "First project workspace", createdAt: now, updatedAt: now });
     }
   });
   audit("project.delete", "Deleted project " + project.name + ".", {
@@ -222,9 +225,12 @@ export async function serverStatus() {
 export async function deploySampleApp(input: { name: string; strategy: AppStrategy; projectId?: string; serviceRole?: ServiceRole }) {
   const name = assertSafeAppName(input.name || input.strategy + " sample");
   const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
-  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
-  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
-  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), id));
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const project = projectId ? state.projects.find((item) => item.id === projectId) : undefined;
+  const appSlug = uniqueSlug(state.apps.filter((app) => app.projectId === projectId).map((app) => app.slug || app.id), slug(name));
+  const id = appSlug + "-" + crypto.randomBytes(3).toString("hex");
+  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), project?.slug || "default", appSlug));
   fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
 
   const now = new Date().toISOString();
@@ -232,6 +238,7 @@ export async function deploySampleApp(input: { name: string; strategy: AppStrate
     id,
     projectId: projectId || undefined,
     name,
+    slug: appSlug,
     serviceRole: input.serviceRole || "fullstack",
     strategy: input.strategy,
     port: input.strategy === "static" ? 0 : await findOpenPort(),
@@ -312,22 +319,26 @@ export async function deployGitApp(input: {
   const state = readState();
   if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
   if (databaseId && !state.databases.some((database) => database.id === databaseId)) throw new Error("Database not found.");
+  const project = projectId ? state.projects.find((item) => item.id === projectId) : undefined;
+  const database = databaseId ? state.databases.find((item) => item.id === databaseId) : undefined;
+  const appSlug = uniqueSlug(state.apps.filter((app) => app.projectId === projectId).map((app) => app.slug || app.id), slug(name));
+  const projectSlug = project?.slug || "default";
   const repoUrl = assertSafeGitRepo(input.repoUrl);
   const branch = assertSafeBranch(input.branch || "main");
   const appDirectory = assertSafeRelativePath(input.appDirectory || "", "App directory");
-  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
-  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), id));
+  const id = appSlug + "-" + crypto.randomBytes(3).toString("hex");
+  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), projectSlug, appSlug));
   const sourceDir = assertManagedPath(getAppsDir(), path.join(appDir, "source"));
   fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
   const now = new Date().toISOString();
   const port = await findOpenPort();
   const publicPreview = Boolean(input.publicPreview);
   const env = parseEnvText(input.envText || "");
-  const envFile = writeEnvFile(appDir, env.env);
   const app: ManagedApp = {
     id,
     projectId: projectId || undefined,
     name,
+    slug: appSlug,
     serviceRole: input.serviceRole || "fullstack",
     strategy: "docker",
     source: "git",
@@ -340,7 +351,7 @@ export async function deployGitApp(input: {
     startCommand: cleanCommand(input.startCommand || ""),
     containerPort: input.mode === "static" ? 80 : assertContainerPort(input.containerPort || 3000),
     healthPath: cleanHealthPath(input.healthPath || "/"),
-    envKeys: env.keys,
+    envKeys: uniqueStrings([...env.keys, ...(database ? [database.envKey] : [])]),
     corsOrigins,
     databaseId: databaseId || undefined,
     port,
@@ -365,6 +376,7 @@ export async function deployGitApp(input: {
     branch
   });
   try {
+    const envFile = writeAppEnvFile(app, env.env, deploymentId);
     appendDeploymentLog(deploymentId, "preparing workspace", `Workspace ready for ${app.id}.`);
     appendDeploymentLog(deploymentId, "cloning repository", `${repoUrl} @ ${branch}`);
     await safeRunOrThrow("git", ["clone", "--depth", "1", "--branch", branch, repoUrl, sourceDir]);
@@ -406,11 +418,14 @@ export async function deployGitApp(input: {
 export async function deployComposeApp(input: { name: string; projectId?: string; repoUrl: string; branch?: string; envText?: string }) {
   const name = assertSafeAppName(input.name);
   const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
-  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const project = projectId ? state.projects.find((item) => item.id === projectId) : undefined;
+  const appSlug = uniqueSlug(state.apps.filter((app) => app.projectId === projectId).map((app) => app.slug || app.id), slug(name));
   const repoUrl = assertSafeGitRepo(input.repoUrl);
   const branch = assertSafeBranch(input.branch || "main");
-  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
-  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), id));
+  const id = appSlug + "-" + crypto.randomBytes(3).toString("hex");
+  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), project?.slug || "default", appSlug));
   const sourceDir = assertManagedPath(getAppsDir(), path.join(appDir, "source"));
   fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
   const env = parseEnvText(input.envText || "");
@@ -419,6 +434,7 @@ export async function deployComposeApp(input: { name: string; projectId?: string
     id,
     projectId: projectId || undefined,
     name,
+    slug: appSlug,
     serviceRole: "fullstack",
     strategy: "compose",
     source: "compose",
@@ -475,10 +491,13 @@ export async function deployComposeApp(input: { name: string; projectId?: string
 export async function deployComposeYamlApp(input: { name: string; projectId?: string; composeYaml: string; envText?: string }) {
   const name = assertSafeAppName(input.name);
   const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
-  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const project = projectId ? state.projects.find((item) => item.id === projectId) : undefined;
+  const appSlug = uniqueSlug(state.apps.filter((app) => app.projectId === projectId).map((app) => app.slug || app.id), slug(name));
   const composeYaml = assertSafeComposeYaml(input.composeYaml);
-  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
-  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), id));
+  const id = appSlug + "-" + crypto.randomBytes(3).toString("hex");
+  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), project?.slug || "default", appSlug));
   const sourceDir = assertManagedPath(getAppsDir(), path.join(appDir, "compose"));
   fs.mkdirSync(sourceDir, { recursive: true, mode: 0o750 });
   const env = parseEnvText(input.envText || "");
@@ -490,6 +509,7 @@ export async function deployComposeYamlApp(input: { name: string; projectId?: st
     id,
     projectId: projectId || undefined,
     name,
+    slug: appSlug,
     serviceRole: "fullstack",
     strategy: "compose",
     source: "compose",
@@ -536,20 +556,24 @@ export async function deployDockerImageApp(input: {
 }) {
   const name = assertSafeAppName(input.name);
   const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
-  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const project = projectId ? state.projects.find((item) => item.id === projectId) : undefined;
+  const appSlug = uniqueSlug(state.apps.filter((app) => app.projectId === projectId).map((app) => app.slug || app.id), slug(name));
+  const projectSlug = project?.slug || "default";
   const image = assertSafeDockerImage(input.image);
   const containerPort = assertContainerPort(input.containerPort || 3000);
   const publicPreview = Boolean(input.publicPreview);
   const env = parseEnvText(input.envText || "");
-  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
-  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), id));
+  const id = appSlug + "-" + crypto.randomBytes(3).toString("hex");
+  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), projectSlug, appSlug));
   fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
-  const envFile = writeEnvFile(appDir, env.env);
   const now = new Date().toISOString();
   const app: ManagedApp = {
     id,
     projectId: projectId || undefined,
     name,
+    slug: appSlug,
     serviceRole: input.serviceRole || "fullstack",
     strategy: "docker",
     sourceType: "docker-image",
@@ -571,6 +595,7 @@ export async function deployDockerImageApp(input: {
   });
   const deploymentId = startDeployment({ appId: app.id, action: "deploy_image", message: `Deploying Docker image ${image}.`, sourceType: "docker-image", strategy: "docker" });
   try {
+    const envFile = writeAppEnvFile(app, env.env, deploymentId);
     appendDeploymentLog(deploymentId, "pulling image", image);
     await safeRunOrThrow("docker", ["pull", image]);
     appendDeploymentLog(deploymentId, "starting service", `Starting container on ${app.publicPreview ? "0.0.0.0" : "127.0.0.1"}:${app.port}.`);
@@ -720,8 +745,22 @@ export async function restartApp(appId: string) {
   return getManagedApp(app.id);
 }
 
+export async function startApp(appId: string) {
+  const app = getManagedApp(appId);
+  if (app.strategy === "docker" && app.containerName) {
+    const result = await safeRun("docker", ["start", assertSafeDockerName(app.containerName)]);
+    if (result.ok) {
+      markApp(app.id, { status: "running", lastMessage: "Started from dashboard." });
+      audit("app.start", "Started app.", { appId: app.id });
+      return getManagedApp(app.id);
+    }
+  }
+  return redeployApp(app.id);
+}
+
 export async function redeployApp(appId: string) {
   const app = getManagedApp(appId);
+  const envText = userEnvText(app);
   if (app.source === "git" && app.repoUrl && app.deployMode && app.deployMode !== "compose") {
     await stopApp(app.id);
     return deployGitApp({
@@ -736,8 +775,10 @@ export async function redeployApp(appId: string) {
       startCommand: app.startCommand,
       containerPort: app.containerPort,
       healthPath: app.healthPath,
+      envText,
       corsOrigins: app.corsOrigins,
-      databaseId: app.databaseId
+      databaseId: app.databaseId,
+      publicPreview: app.publicPreview
     });
   }
   if (app.source === "compose" && app.repoUrl) {
@@ -752,7 +793,9 @@ export async function redeployApp(appId: string) {
       serviceRole: app.serviceRole,
       image: app.dockerImage,
       containerPort: app.containerPort || 3000,
-      healthPath: app.healthPath
+      healthPath: app.healthPath,
+      envText,
+      publicPreview: app.publicPreview
     });
   }
   throw new Error("Redeploy is available for Git, Compose repository, and Docker image apps only.");
@@ -762,11 +805,9 @@ export async function deleteApp(appId: string) {
   const app = getManagedApp(appId);
   await cleanupAppResources(app);
   updateState((state) => {
-    removeDeploymentFiles(state.deployments.filter((deployment) => deployment.appId === app.id));
-    state.deployments = state.deployments.filter((deployment) => deployment.appId !== app.id);
     state.apps = state.apps.filter((item) => item.id !== app.id);
   });
-  audit("app.delete", "Deleted app.", { appId: app.id, name: app.name });
+  audit("app.delete", "Deleted app resources and kept deployment history.", { appId: app.id, name: app.name });
   return { ok: true };
 }
 
@@ -797,8 +838,10 @@ export async function createManagedPostgres(input: { projectId?: string; name: s
   const name = assertSafeAppName(input.name || "Postgres");
   const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
   const envKey = assertSafeEnvKey(input.envKey || "DATABASE_URL");
-  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
-  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const dbSlug = uniqueSlug(state.databases.filter((database) => database.projectId === projectId).map((database) => database.slug || database.id), slug(name));
+  const id = dbSlug + "-" + crypto.randomBytes(3).toString("hex");
   const localPort = await findOpenPort();
   const username = "svp_" + crypto.randomBytes(3).toString("hex");
   const database = "svp_" + crypto.randomBytes(3).toString("hex");
@@ -810,6 +853,7 @@ export async function createManagedPostgres(input: { projectId?: string; name: s
     [`POSTGRES_USER=${username}`, `POSTGRES_PASSWORD=${password}`, `POSTGRES_DB=${database}`].join("\n") + "\n"
   );
   await safeRunOrThrow("docker", ["volume", "create", "--label", "supavibe=true", volume]);
+  await ensureDockerNetwork();
   await safeRun("docker", ["rm", "-f", container]);
   try {
     await safeRunOrThrow("docker", [
@@ -828,7 +872,15 @@ export async function createManagedPostgres(input: { projectId?: string; name: s
       "--label",
       "supavibe=true",
       "--label",
+      "supavibe.managed=true",
+      "--label",
+      "supavibe.project=" + (state.projects.find((project) => project.id === projectId)?.slug || "default"),
+      "--label",
+      "supavibe.database=" + dbSlug,
+      "--label",
       "svp.databaseId=" + id,
+      "--network",
+      "supavibe",
       "--env-file",
       postgresEnvFile,
       "-v",
@@ -840,19 +892,20 @@ export async function createManagedPostgres(input: { projectId?: string; name: s
   } finally {
     fs.rmSync(postgresEnvFile, { force: true });
   }
-  const connectionUrl = `postgres://${encodeURIComponent(username)}:${encodeURIComponent(password)}@127.0.0.1:${localPort}/${encodeURIComponent(database)}`;
+  const connectionUrl = `postgresql://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${container}:5432/${encodeURIComponent(database)}`;
   const secretPath = writeSecretFile(id, connectionUrl);
   const now = new Date().toISOString();
   const resource: DatabaseResource = {
     id,
     projectId: projectId || undefined,
     name,
+    slug: dbSlug,
     kind: "managed-postgres",
     provider: "Docker Postgres 16",
     envKey,
     status: "running",
-    host: "127.0.0.1",
-    port: localPort,
+    host: container,
+    port: 5432,
     database,
     username,
     maskedUrl: maskDatabaseUrl(connectionUrl),
@@ -862,7 +915,7 @@ export async function createManagedPostgres(input: { projectId?: string; name: s
     localPort,
     createdAt: now,
     updatedAt: now,
-    lastMessage: "Managed Postgres is running on localhost only."
+    lastMessage: `Managed Postgres is running internally at ${container}:5432 and locally at 127.0.0.1:${localPort}.`
   };
   updateState((state) => {
     state.databases.unshift(resource);
@@ -871,13 +924,81 @@ export async function createManagedPostgres(input: { projectId?: string; name: s
   return { ...resource, secretPath: undefined };
 }
 
+export async function createManagedRedis(input: { projectId?: string; name: string; envKey?: string }) {
+  const name = assertSafeAppName(input.name || "Redis");
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
+  const envKey = assertSafeEnvKey(input.envKey || "REDIS_URL");
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const dbSlug = uniqueSlug(state.databases.filter((database) => database.projectId === projectId).map((database) => database.slug || database.id), slug(name));
+  const id = dbSlug + "-" + crypto.randomBytes(3).toString("hex");
+  const container = "svp_redis_" + id;
+  await ensureDockerNetwork();
+  await safeRun("docker", ["rm", "-f", container]);
+  await safeRunOrThrow("docker", [
+    "run",
+    "-d",
+    "--name",
+    container,
+    "--restart",
+    "unless-stopped",
+    "--memory",
+    "256m",
+    "--cpus",
+    "0.5",
+    "--pids-limit",
+    "128",
+    "--label",
+    "supavibe=true",
+    "--label",
+    "supavibe.managed=true",
+    "--label",
+    "supavibe.project=" + (state.projects.find((project) => project.id === projectId)?.slug || "default"),
+    "--label",
+    "supavibe.database=" + dbSlug,
+    "--label",
+    "svp.databaseId=" + id,
+    "--network",
+    "supavibe",
+    "redis:7-alpine"
+  ]);
+  const connectionUrl = `redis://${container}:6379`;
+  const secretPath = writeSecretFile(id, connectionUrl);
+  const now = new Date().toISOString();
+  const resource: DatabaseResource = {
+    id,
+    projectId: projectId || undefined,
+    name,
+    slug: dbSlug,
+    kind: "managed-redis",
+    provider: "Docker Redis 7",
+    envKey,
+    status: "running",
+    host: container,
+    port: 6379,
+    maskedUrl: connectionUrl,
+    secretPath,
+    dockerContainer: container,
+    createdAt: now,
+    updatedAt: now,
+    lastMessage: "Managed Redis is available inside the Supavibe Docker network."
+  };
+  updateState((next) => {
+    next.databases.unshift(resource);
+  });
+  audit("database.create_redis", "Created managed Redis.", { databaseId: id, projectId, envKey });
+  return { ...resource, secretPath: undefined };
+}
+
 export async function createExternalDatabase(input: { projectId?: string; name: string; url: string; provider?: string; envKey?: string }) {
   const name = assertSafeAppName(input.name || "External Postgres");
   const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
   const envKey = assertSafeEnvKey(input.envKey || "DATABASE_URL");
-  if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
   const parsed = parsePostgresUrl(input.url);
-  const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
+  const dbSlug = uniqueSlug(state.databases.filter((database) => database.projectId === projectId).map((database) => database.slug || database.id), slug(name));
+  const id = dbSlug + "-" + crypto.randomBytes(3).toString("hex");
   const secretPath = writeSecretFile(id, parsed.url);
   const tcp = await testTcp(parsed.host, parsed.port);
   const now = new Date().toISOString();
@@ -885,6 +1006,7 @@ export async function createExternalDatabase(input: { projectId?: string; name: 
     id,
     projectId: projectId || undefined,
     name,
+    slug: dbSlug,
     kind: "external-postgres",
     provider: (input.provider || "External Postgres").trim().slice(0, 80),
     envKey,
@@ -911,6 +1033,20 @@ export async function testDatabase(databaseId: string) {
   const id = assertSafeId(databaseId, "databaseId");
   const database = readState().databases.find((item) => item.id === id);
   if (!database) throw new Error("Database not found.");
+  if (database.dockerContainer) {
+    const inspect = await safeRun("docker", ["inspect", "-f", "{{.State.Running}}", assertSupavibeDockerResource(database.dockerContainer)]);
+    const ok = inspect.ok && inspect.stdout.trim() === "true";
+    updateState((state) => {
+      const current = state.databases.find((item) => item.id === id);
+      if (current) {
+        current.status = ok ? "running" : "failed";
+        current.lastMessage = ok ? "Container is running." : (inspect.stderr || inspect.stdout || "Container is not running.");
+        current.updatedAt = new Date().toISOString();
+      }
+    });
+    audit("database.test", "Tested managed database container.", { databaseId: id, ok });
+    return { ok, message: ok ? "Container is running." : (inspect.stderr || inspect.stdout || "Container is not running.") };
+  }
   const host = database.host || "127.0.0.1";
   const port = assertNetworkPort(database.port || 5432);
   const result = await testTcp(host, port);
@@ -934,6 +1070,84 @@ export async function getDatabaseConnection(databaseId: string) {
   const connectionUrl = fs.readFileSync(secretPath, "utf8").trim();
   audit("database.reveal", "Revealed database connection URL.", { databaseId: id });
   return { envKey: database.envKey, value: connectionUrl };
+}
+
+export async function attachDatabaseToApp(input: { databaseId: string; appId: string }) {
+  const databaseId = assertSafeId(input.databaseId, "databaseId");
+  const appId = assertSafeId(input.appId, "appId");
+  const state = readState();
+  const database = state.databases.find((item) => item.id === databaseId);
+  const app = state.apps.find((item) => item.id === appId);
+  if (!database || !database.secretPath) throw new Error("Database secret not found.");
+  if (!app) throw new Error("App not found.");
+  if (database.projectId && app.projectId && database.projectId !== app.projectId) throw new Error("Database and service must belong to the same project.");
+  const value = fs.readFileSync(assertManagedPath(getSecretsDir(), database.secretPath), "utf8").trim();
+  upsertAppEnvValues(app, { [database.envKey]: value }, false);
+  updateState((next) => {
+    const current = next.apps.find((item) => item.id === app.id);
+    if (current) {
+      current.databaseId = database.id;
+      current.envKeys = uniqueStrings([...(current.envKeys || []), database.envKey]);
+      current.lastMessage = `${database.envKey} attached from ${database.name}. Redeploy to apply it.`;
+      current.updatedAt = new Date().toISOString();
+    }
+  });
+  audit("database.attach", "Attached database to service env.", { databaseId, appId, envKey: database.envKey });
+  return readState().apps.find((item) => item.id === app.id);
+}
+
+export async function deleteDatabase(input: { databaseId: string; deleteVolume?: boolean }) {
+  const databaseId = assertSafeId(input.databaseId, "databaseId");
+  const database = readState().databases.find((item) => item.id === databaseId);
+  if (!database) throw new Error("Database not found.");
+  await cleanupDatabaseResource(database, Boolean(input.deleteVolume));
+  updateState((state) => {
+    state.databases = state.databases.filter((item) => item.id !== databaseId);
+    for (const app of state.apps) {
+      if (app.databaseId === databaseId) {
+        app.databaseId = undefined;
+        app.lastMessage = "Database binding was removed because the database resource was deleted.";
+        app.updatedAt = new Date().toISOString();
+      }
+    }
+  });
+  audit("database.delete", "Deleted database resource.", { databaseId, deleteVolume: Boolean(input.deleteVolume) });
+  return { ok: true };
+}
+
+export async function setAppEnvironment(input: { appId: string; envText: string; replace?: boolean }) {
+  const app = getManagedApp(input.appId);
+  const parsed = parseEnvText(input.envText || "");
+  upsertAppEnvValues(app, parsed.env, Boolean(input.replace));
+  updateState((state) => {
+    const current = state.apps.find((item) => item.id === app.id);
+    if (current) {
+      const existing = Boolean(input.replace) ? [] : current.envKeys || [];
+      current.envKeys = uniqueStrings([...existing, ...parsed.keys]);
+      current.lastMessage = "Environment variables saved. Redeploy to apply them.";
+      current.updatedAt = new Date().toISOString();
+    }
+  });
+  audit("app.env_set", "Saved service environment variables.", { appId: app.id, keys: parsed.keys, replace: Boolean(input.replace) });
+  return readState().apps.find((item) => item.id === app.id);
+}
+
+export async function deleteAppEnvironmentKey(input: { appId: string; key: string }) {
+  const app = getManagedApp(input.appId);
+  const key = assertSafeEnvKey(input.key);
+  const env = readAppEnvObject(app);
+  delete env[key];
+  writeAppEnvFile(app, env);
+  updateState((state) => {
+    const current = state.apps.find((item) => item.id === app.id);
+    if (current) {
+      current.envKeys = (current.envKeys || []).filter((item) => item !== key);
+      current.lastMessage = `${key} removed from environment. Redeploy to apply it.`;
+      current.updatedAt = new Date().toISOString();
+    }
+  });
+  audit("app.env_delete", "Deleted service environment key.", { appId: app.id, key });
+  return readState().apps.find((item) => item.id === app.id);
 }
 
 export async function applyFirewallBaseline(input: { panelPort: number; trustedCidr?: string }) {
@@ -1077,6 +1291,8 @@ async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: 
   const container = "svp_" + app.id;
   const containerPort = app.deployMode === "static" ? 80 : assertContainerPort(app.containerPort || 3000);
   const hostBind = app.publicPreview ? "0.0.0.0" : "127.0.0.1";
+  const project = app.projectId ? readState().projects.find((item) => item.id === app.projectId) : undefined;
+  await ensureDockerNetwork();
   await safeRun("docker", ["rm", "-f", container]);
   const args = [
     "run",
@@ -1098,7 +1314,15 @@ async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: 
     "--label",
     "supavibe=true",
     "--label",
+    "supavibe.managed=true",
+    "--label",
+    "supavibe.project=" + (project?.slug || "default"),
+    "--label",
+    "supavibe.service=" + (app.slug || slug(app.name)),
+    "--label",
     "svp.appId=" + app.id,
+    "--network",
+    "supavibe",
     "-p",
     hostBind + ":" + app.port + ":" + containerPort
   ];
@@ -1203,10 +1427,13 @@ async function cleanupAppResources(app: ManagedApp) {
   }
 }
 
-async function cleanupDatabaseResource(database: DatabaseResource) {
+async function cleanupDatabaseResource(database: DatabaseResource, deleteVolume = false) {
   if (database.kind === "managed-postgres") {
     if (database.dockerContainer) await safeRun("docker", ["rm", "-f", assertSupavibeDockerResource(database.dockerContainer)]);
-    if (database.dockerVolume) await safeRun("docker", ["volume", "rm", assertSupavibeDockerResource(database.dockerVolume)]);
+    if (deleteVolume && database.dockerVolume) await safeRun("docker", ["volume", "rm", assertSupavibeDockerResource(database.dockerVolume)]);
+  }
+  if (database.kind === "managed-redis" && database.dockerContainer) {
+    await safeRun("docker", ["rm", "-f", assertSupavibeDockerResource(database.dockerContainer)]);
   }
   if (database.secretPath) {
     try {
@@ -1395,6 +1622,85 @@ function writeEnvFile(appDir: string, env: Record<string, string>) {
     .join("\n");
   fs.writeFileSync(file, content + "\n", { mode: 0o600 });
   return file;
+}
+
+function writeAppEnvFile(app: ManagedApp, userEnv: Record<string, string>, deploymentId?: string) {
+  if (!app.rootDir) throw new Error("App root directory is missing.");
+  const appRoot = assertManagedPath(getAppsDir(), app.rootDir);
+  const runtimeEnv: Record<string, string> = {
+    ...userEnv,
+    PORT: String(app.deployMode === "static" ? 80 : app.containerPort || app.port || 3000),
+    HOST: "0.0.0.0",
+    SUPAVIBE_SERVICE_ID: app.id,
+    SUPAVIBE_SERVICE_SLUG: app.slug || slug(app.name)
+  };
+  if (app.projectId) {
+    const project = readState().projects.find((item) => item.id === app.projectId);
+    runtimeEnv.SUPAVIBE_PROJECT_ID = app.projectId;
+    runtimeEnv.SUPAVIBE_PROJECT_SLUG = project?.slug || "default";
+  }
+  if (deploymentId) runtimeEnv.SUPAVIBE_DEPLOYMENT_ID = deploymentId;
+  if (app.databaseId) {
+    const database = readState().databases.find((item) => item.id === app.databaseId);
+    if (database?.secretPath) {
+      runtimeEnv[assertSafeEnvKey(database.envKey)] = fs.readFileSync(assertManagedPath(getSecretsDir(), database.secretPath), "utf8").trim();
+    }
+  }
+  return writeEnvFile(appRoot, runtimeEnv);
+}
+
+function readAppEnvObject(app: ManagedApp) {
+  if (!app.rootDir) return {};
+  const file = assertManagedPath(getAppsDir(), path.join(assertManagedPath(getAppsDir(), app.rootDir), ".env"));
+  if (!fs.existsSync(file)) return {};
+  const env: Record<string, string> = {};
+  for (const rawLine of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const index = line.indexOf("=");
+    if (index <= 0) continue;
+    const key = assertSafeEnvKey(line.slice(0, index));
+    env[key] = line.slice(index + 1).replace(/\\n/g, "\n");
+  }
+  return env;
+}
+
+function upsertAppEnvValues(app: ManagedApp, values: Record<string, string>, replace: boolean) {
+  const clean = Object.fromEntries(Object.entries(values).map(([key, value]) => [assertSafeEnvKey(key), String(value)]));
+  const env = replace ? clean : { ...readAppEnvObject(app), ...clean };
+  writeAppEnvFile(app, env);
+}
+
+function userEnvText(app: ManagedApp) {
+  const env = readAppEnvObject(app);
+  const userOnly = Object.entries(env).filter(([key]) => {
+    if (key.startsWith("SUPAVIBE_")) return false;
+    if (["PORT", "HOST"].includes(key)) return false;
+    return true;
+  });
+  return userOnly.map(([key, value]) => `${key}=${value.replace(/\r?\n/g, "\\n")}`).join("\n");
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean).map(assertSafeEnvKey)));
+}
+
+function uniqueSlug(existing: string[], base: string) {
+  const taken = new Set(existing.filter(Boolean));
+  let candidate = slug(base);
+  let index = 2;
+  while (taken.has(candidate)) {
+    const suffix = "-" + index;
+    candidate = slug(base).slice(0, 48 - suffix.length) + suffix;
+    index += 1;
+  }
+  return candidate;
+}
+
+async function ensureDockerNetwork() {
+  const inspect = await safeRun("docker", ["network", "inspect", "supavibe"]);
+  if (inspect.ok) return;
+  await safeRunOrThrow("docker", ["network", "create", "--label", "supavibe=true", "supavibe"]);
 }
 
 function writeSecretFile(name: string, content: string) {
