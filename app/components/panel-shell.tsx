@@ -31,6 +31,8 @@ type Tab = "general" | "services" | "environment" | "database" | "monitoring" | 
 type Strategy = "docker" | "systemd" | "static" | "compose";
 type GitMode = "dockerfile" | "node" | "static";
 type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
+type DeployProvider = "git" | "image" | "compose" | "compose-yaml";
+type DeployStep = "source" | "details" | "build" | "runtime";
 
 interface AuthState {
   setupRequired: boolean;
@@ -196,8 +198,11 @@ export function PanelShell() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [csrfToken, setCsrfToken] = useState("");
+  const [deployProvider, setDeployProvider] = useState<DeployProvider>("git");
+  const [deployStep, setDeployStep] = useState<DeployStep>("source");
   const [authForm, setAuthForm] = useState({ email: "", name: "", password: "", setupCode: "" });
   const [projectForm, setProjectForm] = useState({ name: "New Project", description: "" });
+  const [projectDeleteConfirm, setProjectDeleteConfirm] = useState("");
   const [gitForm, setGitForm] = useState({
     name: "Git App",
     projectId: "",
@@ -311,6 +316,7 @@ export function PanelShell() {
       setDomainForm((form) => ({ ...form, appId: result.app.id }));
       setNotice(result.app.publicPreview ? `${result.app.name} deployed. Preview: ${previewUrl(result.app, publicIp(status))}` : `${result.app.name} deployed from ${gitForm.branch}.`);
       await refresh();
+      setDeployStep("runtime");
     });
   }
 
@@ -324,7 +330,8 @@ export function PanelShell() {
       setRepoAnalysis(result.analysis);
       const detected = result.analysis.services.find((service) => service.id === result.analysis.recommendedServiceId) || result.analysis.services[0];
       if (detected) applyDetectedService(detected, result.analysis.branch);
-      setNotice("Stack detected. Review the settings, then deploy.");
+      setDeployStep("build");
+      setNotice("Stack detected. Confirm the service and build settings, then continue.");
     });
   }
 
@@ -354,6 +361,7 @@ export function PanelShell() {
       setDomainForm((form) => ({ ...form, appId: result.app.id }));
       setNotice(result.app.publicPreview ? `${result.app.name} deployed. Preview: ${previewUrl(result.app, publicIp(status))}` : `${result.app.name} deployed from ${imageForm.image}.`);
       await refresh();
+      setDeployStep("runtime");
     });
   }
 
@@ -366,6 +374,7 @@ export function PanelShell() {
       });
       setNotice(`${result.app.name} compose stack deployed.`);
       await refresh();
+      setDeployStep("runtime");
     });
   }
 
@@ -378,6 +387,7 @@ export function PanelShell() {
       });
       setNotice(`${result.app.name} compose stack deployed.`);
       await refresh();
+      setDeployStep("runtime");
     });
   }
 
@@ -401,12 +411,33 @@ export function PanelShell() {
     setLogs("");
   }
 
+  function startDeployment(provider: DeployProvider = deployProvider) {
+    setDeployProvider(provider);
+    setDeployStep("source");
+    setTab("deployments");
+  }
+
   async function createProject() {
     await run("Creating project", async () => {
       const result = await api<{ project: ProjectRecord }>("/api/projects", { method: "POST", csrfToken, body: projectForm });
       setProjectForm({ name: "New Project", description: "" });
       openProject(result.project.id);
       setNotice(`${result.project.name} created.`);
+      await refresh();
+    });
+  }
+
+  async function deleteCurrentProject() {
+    if (!currentProject) return;
+    await run("Deleting project", async () => {
+      await api(`/api/projects/${currentProject.id}/delete`, {
+        method: "POST",
+        csrfToken,
+        body: { confirmation: projectDeleteConfirm }
+      });
+      setProjectDeleteConfirm("");
+      setNotice(`${currentProject.name} was deleted.`);
+      showAllProjects();
       await refresh();
     });
   }
@@ -499,6 +530,15 @@ export function PanelShell() {
   }
 
   async function appAction(appId: string, action: "restart" | "redeploy" | "health" | "delete") {
+    if (action === "delete") {
+      const app = state?.apps.find((item) => item.id === appId);
+      const expected = app?.name || appId;
+      const typed = window.prompt(`Type ${expected} to permanently delete this service, containers, files, and deployment history.`);
+      if (typed !== expected) {
+        setNotice("Delete cancelled. The typed service name did not match.");
+        return;
+      }
+    }
     const label = action === "health" ? "Checking health" : `${action.charAt(0).toUpperCase()}${action.slice(1)} app`;
     await run(label, async () => {
       const result = await api<Record<string, unknown>>(`/api/apps/${appId}/${action}`, { method: "POST", csrfToken });
@@ -540,6 +580,16 @@ export function PanelShell() {
       });
       setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
       setNotice(`Firewall ${firewallRuleForm.action} rule applied.`);
+      await refresh();
+    });
+  }
+
+  async function deleteDeploymentEvent(deploymentId: string) {
+    const deployment = state?.deployments.find((item) => item.id === deploymentId);
+    if (!window.confirm(`Delete deployment record "${deployment?.action || deploymentId}" and its stored logs? This does not stop a running service.`)) return;
+    await run("Deleting deployment", async () => {
+      await api(`/api/deployments/${deploymentId}/delete`, { method: "POST", csrfToken });
+      setNotice("Deployment record deleted.");
       await refresh();
     });
   }
@@ -747,7 +797,7 @@ export function PanelShell() {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button className="svp-button-primary" onClick={() => setTab("deployments")} disabled={Boolean(busy)}>
+                <button className="svp-button-primary" onClick={() => startDeployment()} disabled={Boolean(busy)}>
                   <Play size={15} />
                   New Deployment
                 </button>
@@ -776,7 +826,7 @@ export function PanelShell() {
           <div className="space-y-4">
             <Panel title="Project Actions" icon={Play}>
               <div className="flex flex-wrap items-center gap-2">
-                <button className="svp-button-primary" onClick={() => setTab("deployments")} disabled={Boolean(busy)}>
+                <button className="svp-button-primary" onClick={() => startDeployment()} disabled={Boolean(busy)}>
                   <Play size={15} />
                   New Deployment
                 </button>
@@ -828,7 +878,7 @@ export function PanelShell() {
                       <p>Database: {activeApp.databaseId ? databaseName(databases, activeApp.databaseId) : "No database bound"}</p>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
-                      <button className="svp-button-primary" onClick={() => setTab("deployments")}>
+                      <button className="svp-button-primary" onClick={() => startDeployment()}>
                         <Play size={15} />
                         Deploy
                       </button>
@@ -1072,140 +1122,162 @@ export function PanelShell() {
 
         {tab === "deployments" && (
           <div className="space-y-4">
-            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-              <Panel title="Provider" icon={GitBranch}>
-                <div className="grid gap-3">
-                  <div className="flex flex-wrap gap-2">
-                    <button className={`svp-tab ${gitForm.mode === "node" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "node" })}>Node/Next/Vite</button>
-                    <button className={`svp-tab ${gitForm.mode === "dockerfile" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "dockerfile" })}>Dockerfile</button>
-                    <button className={`svp-tab ${gitForm.mode === "static" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "static" })}>Static</button>
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Select label="Project" value={gitForm.projectId} onChange={(projectId) => setGitForm({ ...gitForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
-                    <Select label="Service role" value={gitForm.serviceRole} onChange={(serviceRole) => setGitForm({ ...gitForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
-                  </div>
-                  <Field label="App name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
-                  <Field label="Repository URL" value={gitForm.repoUrl} onChange={(repoUrl) => { setGitForm({ ...gitForm, repoUrl }); setRepoAnalysis(null); }} placeholder="https://github.com/user/repo.git" />
-                  <Field label="Branch" value={gitForm.branch} onChange={(branch) => { setGitForm({ ...gitForm, branch }); setRepoAnalysis(null); }} />
-                  <Field label="App directory" value={gitForm.appDirectory} onChange={(appDirectory) => { setGitForm({ ...gitForm, appDirectory }); setRepoAnalysis(null); }} placeholder="apps/web or blank for repo root" />
-                  <Select label="Database" value={gitForm.databaseId} onChange={(databaseId) => setGitForm({ ...gitForm, databaseId })} options={[{ value: "", label: "No database" }, ...databases.map((database) => ({ value: database.id, label: `${database.name} (${database.envKey})` }))]} />
-                  <button className="svp-button w-fit" onClick={() => void detectGitStack()} disabled={Boolean(busy) || !gitForm.repoUrl.trim()}>
-                    <Activity size={16} />
-                    Detect Stack
-                  </button>
-                </div>
-              </Panel>
+            <Panel title="New Deployment" icon={Play}>
+              <DeploymentSteps active={deployStep} />
 
-              <Panel title="Build Type" icon={Wrench}>
-                <div className="grid gap-3">
-                  <label className="flex items-center gap-2 text-sm text-zinc-300">
-                    <input type="radio" checked={gitForm.mode === "dockerfile"} onChange={() => setGitForm({ ...gitForm, mode: "dockerfile" })} />
-                    Dockerfile
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-zinc-300">
-                    <input type="radio" checked={gitForm.mode === "node"} onChange={() => setGitForm({ ...gitForm, mode: "node" })} />
-                    Node/Next/Vite generated Dockerfile
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-zinc-300">
-                    <input type="radio" checked={gitForm.mode === "static"} onChange={() => setGitForm({ ...gitForm, mode: "static" })} />
-                    Static build
-                  </label>
-                  <div className="grid gap-3 border-t border-line pt-3 md:grid-cols-2">
-                    <Field label="Build command" value={gitForm.buildCommand} onChange={(buildCommand) => setGitForm({ ...gitForm, buildCommand })} placeholder="auto: npm run build" />
-                    <Field label="Start command" value={gitForm.startCommand} onChange={(startCommand) => setGitForm({ ...gitForm, startCommand })} placeholder="auto: npm run start" />
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="Container port" value={gitForm.containerPort} onChange={(containerPort) => setGitForm({ ...gitForm, containerPort })} placeholder="3000" />
-                    <Field label="Health path" value={gitForm.healthPath} onChange={(healthPath) => setGitForm({ ...gitForm, healthPath })} placeholder="/" />
-                  </div>
-                  {repoAnalysis && <DetectionReview analysis={repoAnalysis} selectedServiceId={selectedDetectionId} onSelect={(service) => applyDetectedService(service, repoAnalysis.branch)} />}
-                  <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
-                    <input className="mt-1" type="checkbox" checked={gitForm.publicPreview} onChange={(event) => setGitForm({ ...gitForm, publicPreview: event.target.checked })} />
-                    <span>
-                      <span className="block font-bold text-ink">Create public port preview</span>
-                      <span className="mt-1 block text-xs text-zinc-500">Publishes the service on a generated high port and opens that port in UFW. Disable this when you want domain-only access through Caddy.</span>
-                    </span>
-                  </label>
-                  <button className="svp-button-primary w-fit" onClick={() => void deployGit()} disabled={Boolean(busy) || !gitForm.repoUrl}>
-                    <GitBranch size={16} />
-                    {repoAnalysis ? "Deploy Confirmed Stack" : "Deploy Git App"}
-                  </button>
+              {deployStep === "source" && (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {[
+                    { id: "git" as DeployProvider, title: "Public Git repo", body: "Auto-detect Node, Next, Vite, static, or Dockerfile apps.", icon: GitBranch },
+                    { id: "image" as DeployProvider, title: "Docker image", body: "Run an existing image from Docker Hub, GHCR, or a registry.", icon: Boxes },
+                    { id: "compose" as DeployProvider, title: "Compose from Git", body: "Clone a repository that already contains docker-compose.yml.", icon: Layers3 },
+                    { id: "compose-yaml" as DeployProvider, title: "Paste Compose YAML", body: "Deploy a small compose stack from pasted YAML.", icon: Terminal }
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.id}
+                        className={`rounded-md border p-4 text-left transition hover:border-action ${deployProvider === item.id ? "border-action bg-action/10" : "border-line bg-panel"}`}
+                        onClick={() => setDeployProvider(item.id)}
+                      >
+                        <Icon size={18} className="text-action" />
+                        <p className="mt-3 font-black text-ink">{item.title}</p>
+                        <p className="mt-1 text-sm text-zinc-500">{item.body}</p>
+                      </button>
+                    );
+                  })}
                 </div>
-              </Panel>
-            </div>
+              )}
 
-            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-              <Panel title="Docker Image" icon={Boxes}>
-                <div className="grid gap-3">
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Select label="Project" value={imageForm.projectId} onChange={(projectId) => setImageForm({ ...imageForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
-                    <Select label="Service role" value={imageForm.serviceRole} onChange={(serviceRole) => setImageForm({ ...imageForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
+              {deployStep === "details" && deployProvider === "git" && (
+                <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+                  <div className="grid gap-3">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Field label="App name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
+                      <Select label="Service role" value={gitForm.serviceRole} onChange={(serviceRole) => setGitForm({ ...gitForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
+                    </div>
+                    <Field label="Repository URL" value={gitForm.repoUrl} onChange={(repoUrl) => { setGitForm({ ...gitForm, repoUrl }); setRepoAnalysis(null); }} placeholder="https://github.com/user/repo.git" />
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Field label="Branch" value={gitForm.branch} onChange={(branch) => { setGitForm({ ...gitForm, branch }); setRepoAnalysis(null); }} />
+                      <Field label="Root directory optional" value={gitForm.appDirectory} onChange={(appDirectory) => { setGitForm({ ...gitForm, appDirectory }); setRepoAnalysis(null); }} placeholder="apps/web or blank" />
+                    </div>
+                    <button className="svp-button-primary w-fit" onClick={() => void detectGitStack()} disabled={Boolean(busy) || !gitForm.repoUrl.trim()}>
+                      <Activity size={16} />
+                      Detect Stack
+                    </button>
                   </div>
+                  <Info title="What happens next" body="Detection clones the repo temporarily, finds deployable services, and fills build/start/port/health defaults. You confirm before deploy." />
+                </div>
+              )}
+
+              {deployStep === "details" && deployProvider === "image" && (
+                <div className="grid gap-3 md:grid-cols-2">
                   <Field label="App name" value={imageForm.name} onChange={(name) => setImageForm({ ...imageForm, name })} />
+                  <Select label="Service role" value={imageForm.serviceRole} onChange={(serviceRole) => setImageForm({ ...imageForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
                   <Field label="Image" value={imageForm.image} onChange={(image) => setImageForm({ ...imageForm, image })} placeholder="nginx:1.27-alpine or ghcr.io/user/app:tag" />
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="Container port" value={imageForm.containerPort} onChange={(containerPort) => setImageForm({ ...imageForm, containerPort })} placeholder="3000" />
-                    <Field label="Health path" value={imageForm.healthPath} onChange={(healthPath) => setImageForm({ ...imageForm, healthPath })} placeholder="/" />
-                  </div>
-                  <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
-                    <input className="mt-1" type="checkbox" checked={imageForm.publicPreview} onChange={(event) => setImageForm({ ...imageForm, publicPreview: event.target.checked })} />
-                    <span>
-                      <span className="block font-bold text-ink">Create public port preview</span>
-                      <span className="mt-1 block text-xs text-zinc-500">Useful for smoke tests. The panel opens the generated port in UFW.</span>
-                    </span>
-                  </label>
-                  <TextArea label="Image env" value={imageForm.envText} onChange={(envText) => setImageForm({ ...imageForm, envText })} />
-                  <button className="svp-button-primary w-fit" onClick={() => void deployImage()} disabled={Boolean(busy) || !imageForm.image.trim()}>
-                    <Boxes size={16} />
-                    Deploy Image
-                  </button>
+                  <Field label="Container port" value={imageForm.containerPort} onChange={(containerPort) => setImageForm({ ...imageForm, containerPort })} placeholder="3000" />
+                  <Field label="Health path" value={imageForm.healthPath} onChange={(healthPath) => setImageForm({ ...imageForm, healthPath })} placeholder="/" />
                 </div>
-              </Panel>
+              )}
 
-              <Panel title="Preview Port" icon={Globe2}>
-                <div className="space-y-3 text-sm text-zinc-400">
-                  <p>Public Git deploys can open a temporary VPS port for quick testing. For production, add a domain and let Caddy serve traffic on 80/443.</p>
-                  <Info title="What the checkbox does" body="It publishes the app on 0.0.0.0 using a generated high port and adds an allow rule in UFW for that port." />
-                  <Info title="Safer default" body="Turn preview off when you only want localhost plus Caddy/domain routing." />
-                  <button className="svp-button w-fit" onClick={() => setTab("advanced")}>
-                    <Shield size={16} />
-                    Manage Firewall
-                  </button>
-                </div>
-              </Panel>
-            </div>
-
-            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-              <Panel title="Compose From Git" icon={Layers3}>
+              {deployStep === "details" && deployProvider === "compose" && (
                 <div className="grid gap-3">
-                  <Select label="Project" value={composeForm.projectId} onChange={(projectId) => setComposeForm({ ...composeForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
                   <Field label="Stack name" value={composeForm.name} onChange={(name) => setComposeForm({ ...composeForm, name })} />
                   <Field label="Repository URL" value={composeForm.repoUrl} onChange={(repoUrl) => setComposeForm({ ...composeForm, repoUrl })} placeholder="https://github.com/user/compose-repo.git" />
                   <Field label="Branch" value={composeForm.branch} onChange={(branch) => setComposeForm({ ...composeForm, branch })} />
-                  <TextArea label="Compose .env" value={composeForm.envText} onChange={(envText) => setComposeForm({ ...composeForm, envText })} />
-                  <button className="svp-button w-fit" onClick={() => void deployCompose()} disabled={Boolean(busy) || !composeForm.repoUrl}>
-                    <Boxes size={16} />
-                    Deploy Compose
-                  </button>
                 </div>
-              </Panel>
+              )}
 
-              <Panel title="Pasted Compose YAML" icon={Layers3}>
+              {deployStep === "details" && deployProvider === "compose-yaml" && (
                 <div className="grid gap-3">
-                  <Select label="Project" value={composeYamlForm.projectId} onChange={(projectId) => setComposeYamlForm({ ...composeYamlForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
                   <Field label="Stack name" value={composeYamlForm.name} onChange={(name) => setComposeYamlForm({ ...composeYamlForm, name })} />
                   <TextArea label="compose.yaml" value={composeYamlForm.composeYaml} onChange={(composeYaml) => setComposeYamlForm({ ...composeYamlForm, composeYaml })} />
-                  <TextArea label="Compose .env" value={composeYamlForm.envText} onChange={(envText) => setComposeYamlForm({ ...composeYamlForm, envText })} />
-                  <button className="svp-button w-fit" onClick={() => void deployComposeYaml()} disabled={Boolean(busy) || !composeYamlForm.composeYaml.trim()}>
-                    <Boxes size={16} />
-                    Deploy Pasted Compose
-                  </button>
                 </div>
-              </Panel>
-            </div>
+              )}
+
+              {deployStep === "build" && deployProvider === "git" && (
+                <div className="grid gap-4 xl:grid-cols-[1fr_1.15fr]">
+                  <div className="grid gap-3">
+                    <p className="text-sm text-zinc-400">Confirm one detected service, then adjust build/runtime settings only here.</p>
+                    {repoAnalysis ? (
+                      <DetectionReview analysis={repoAnalysis} selectedServiceId={selectedDetectionId} onSelect={(service) => applyDetectedService(service, repoAnalysis.branch)} />
+                    ) : (
+                      <Info title="Detection not run yet" body="You can go back and detect the stack, or continue with manual Node/Next/Vite defaults." />
+                    )}
+                  </div>
+                  <div className="grid gap-3">
+                    <div className="flex flex-wrap gap-2">
+                      <button className={`svp-tab ${gitForm.mode === "node" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "node" })}>Generated Dockerfile</button>
+                      <button className={`svp-tab ${gitForm.mode === "dockerfile" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "dockerfile" })}>Repo Dockerfile</button>
+                      <button className={`svp-tab ${gitForm.mode === "static" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "static" })}>Static build</button>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Field label="Build command" value={gitForm.buildCommand} onChange={(buildCommand) => setGitForm({ ...gitForm, buildCommand })} placeholder="auto: npm run build" />
+                      <Field label="Start command" value={gitForm.startCommand} onChange={(startCommand) => setGitForm({ ...gitForm, startCommand })} placeholder="auto: npm run start" />
+                      <Field label="Container port" value={gitForm.containerPort} onChange={(containerPort) => setGitForm({ ...gitForm, containerPort })} placeholder="3000" />
+                      <Field label="Health path" value={gitForm.healthPath} onChange={(healthPath) => setGitForm({ ...gitForm, healthPath })} placeholder="/" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {deployStep === "runtime" && (
+                <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
+                  <div className="grid gap-3">
+                    {deployProvider === "git" && (
+                      <>
+                        <Select label="Database" value={gitForm.databaseId} onChange={(databaseId) => setGitForm({ ...gitForm, databaseId })} options={[{ value: "", label: "No database" }, ...databases.map((database) => ({ value: database.id, label: `${database.name} (${database.envKey})` }))]} />
+                        <TextArea label="Environment variables" value={gitForm.envText} onChange={(envText) => setGitForm({ ...gitForm, envText })} placeholder={"DATABASE_URL=...\nJWT_SECRET=..."} />
+                        <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
+                          <input className="mt-1" type="checkbox" checked={gitForm.publicPreview} onChange={(event) => setGitForm({ ...gitForm, publicPreview: event.target.checked })} />
+                          <span><span className="block font-bold text-ink">Create public port preview</span><span className="mt-1 block text-xs text-zinc-500">Opens a generated high port in UFW. For production, add a domain and use Caddy on 80/443.</span></span>
+                        </label>
+                      </>
+                    )}
+                    {deployProvider === "image" && (
+                      <>
+                        <TextArea label="Image env" value={imageForm.envText} onChange={(envText) => setImageForm({ ...imageForm, envText })} />
+                        <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
+                          <input className="mt-1" type="checkbox" checked={imageForm.publicPreview} onChange={(event) => setImageForm({ ...imageForm, publicPreview: event.target.checked })} />
+                          <span><span className="block font-bold text-ink">Create public port preview</span><span className="mt-1 block text-xs text-zinc-500">Useful for smoke tests. The panel opens the generated port in UFW.</span></span>
+                        </label>
+                      </>
+                    )}
+                    {deployProvider === "compose" && <TextArea label="Compose .env" value={composeForm.envText} onChange={(envText) => setComposeForm({ ...composeForm, envText })} />}
+                    {deployProvider === "compose-yaml" && <TextArea label="Compose .env" value={composeYamlForm.envText} onChange={(envText) => setComposeYamlForm({ ...composeYamlForm, envText })} />}
+                  </div>
+                  <div className="space-y-3">
+                    <Info title="Project" body={`Deploying into ${currentProject.name}. Other projects are hidden while you work here.`} />
+                    <Info title="Firewall" body="Preview ports are explicit. Domains should go through Caddy on ports 80/443." />
+                    <button
+                      className="svp-button-primary w-full justify-center"
+                      onClick={() => {
+                        if (deployProvider === "git") void deployGit();
+                        if (deployProvider === "image") void deployImage();
+                        if (deployProvider === "compose") void deployCompose();
+                        if (deployProvider === "compose-yaml") void deployComposeYaml();
+                      }}
+                      disabled={Boolean(busy)}
+                    >
+                      <Play size={16} />
+                      Deploy
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-5 flex flex-wrap justify-between gap-2 border-t border-line pt-4">
+                <button className="svp-button" onClick={() => setDeployStep(previousDeployStep(deployStep, deployProvider))} disabled={deployStep === "source" || Boolean(busy)}>Back</button>
+                {deployStep !== "runtime" && (
+                  <button className="svp-button-primary" onClick={() => setDeployStep(nextDeployStep(deployStep, deployProvider))} disabled={Boolean(busy) || !canContinueDeploy(deployStep, deployProvider, gitForm, imageForm, composeForm, composeYamlForm)}>
+                    Continue
+                  </button>
+                )}
+              </div>
+            </Panel>
 
             <Panel title="Recent Deployments" icon={Activity}>
-              <DeploymentList deployments={deployments} apps={apps} onLogs={loadDeploymentLogs} />
+              <DeploymentList deployments={deployments} apps={apps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
             </Panel>
           </div>
         )}
@@ -1314,6 +1386,24 @@ export function PanelShell() {
               </Panel>
             </div>
 
+            <Panel title="Danger Zone" icon={Trash2}>
+              <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+                <div>
+                  <p className="text-sm text-zinc-400">
+                    Delete this full project, including its services, deployment records, managed database containers/volumes, stored secrets, Caddy route files, and managed app files.
+                  </p>
+                  <p className="mt-3 text-sm font-bold text-red-300">Type {currentProject.name} to confirm.</p>
+                </div>
+                <div className="grid gap-3">
+                  <Field label="Confirmation" value={projectDeleteConfirm} onChange={setProjectDeleteConfirm} placeholder={currentProject.name} />
+                  <button className="svp-button-danger justify-center" onClick={() => void deleteCurrentProject()} disabled={Boolean(busy) || projectDeleteConfirm !== currentProject.name}>
+                    <Trash2 size={16} />
+                    Delete Full Project
+                  </button>
+                </div>
+              </div>
+            </Panel>
+
             <Panel title="Audit" icon={Activity}>
               <div className="grid gap-2">
                 {(state?.audit ?? []).map((event) => (
@@ -1346,6 +1436,55 @@ function Brand({ compact = false }: { compact?: boolean }) {
       </div>
     </div>
   );
+}
+
+function DeploymentSteps({ active }: { active: DeployStep }) {
+  const items: Array<{ id: DeployStep; label: string }> = [
+    { id: "source", label: "Source" },
+    { id: "details", label: "Details" },
+    { id: "build", label: "Build" },
+    { id: "runtime", label: "Runtime" }
+  ];
+  return (
+    <div className="mb-5 grid gap-2 md:grid-cols-4">
+      {items.map((item, index) => (
+        <div key={item.id} className={`rounded-md border p-3 text-sm ${active === item.id ? "border-action bg-action/10 text-ink" : "border-line bg-panel text-zinc-500"}`}>
+          <span className="svp-badge mr-2">{index + 1}</span>
+          {item.label}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function nextDeployStep(step: DeployStep, provider: DeployProvider): DeployStep {
+  if (step === "source") return "details";
+  if (step === "details") return provider === "git" ? "build" : "runtime";
+  if (step === "build") return "runtime";
+  return "runtime";
+}
+
+function previousDeployStep(step: DeployStep, provider: DeployProvider): DeployStep {
+  if (step === "runtime") return provider === "git" ? "build" : "details";
+  if (step === "build") return "details";
+  if (step === "details") return "source";
+  return "source";
+}
+
+function canContinueDeploy(
+  step: DeployStep,
+  provider: DeployProvider,
+  gitForm: { repoUrl: string },
+  imageForm: { image: string },
+  composeForm: { repoUrl: string },
+  composeYamlForm: { composeYaml: string }
+) {
+  if (step === "source") return true;
+  if (step === "build") return true;
+  if (provider === "git") return Boolean(gitForm.repoUrl.trim());
+  if (provider === "image") return Boolean(imageForm.image.trim());
+  if (provider === "compose") return Boolean(composeForm.repoUrl.trim());
+  return Boolean(composeYamlForm.composeYaml.trim());
 }
 
 function SecurityBanner({ status }: { status: Record<string, unknown> | null }) {
@@ -1580,7 +1719,7 @@ function DetectionReview({
   );
 }
 
-function DeploymentList({ deployments, apps, onLogs }: { deployments: DeploymentEvent[]; apps: ManagedApp[]; onLogs: (id: string) => Promise<void> }) {
+function DeploymentList({ deployments, apps, onLogs, onDelete }: { deployments: DeploymentEvent[]; apps: ManagedApp[]; onLogs: (id: string) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
   if (deployments.length === 0) return <p className="text-sm text-zinc-500">No deployment events yet.</p>;
   return (
     <div className="grid gap-2">
@@ -1599,6 +1738,10 @@ function DeploymentList({ deployments, apps, onLogs }: { deployments: Deployment
               <button className="svp-button" onClick={() => void onLogs(event.id)}>
                 <Terminal size={14} />
                 Logs
+              </button>
+              <button className="svp-button-danger" onClick={() => void onDelete(event.id)}>
+                <Trash2 size={14} />
+                Delete
               </button>
               <StatusPill ok={event.status === "succeeded"} label={event.status} />
             </div>

@@ -12,7 +12,9 @@ import {
   configureDomain,
   createExternalDatabase,
   createManagedPostgres,
+  deleteDeployment,
   createProject,
+  deleteProject,
   deleteApp,
   deleteFirewallRule,
   deployComposeApp,
@@ -124,6 +126,10 @@ const projectSchema = z.object({
   description: z.string().max(280).optional().default("")
 });
 
+const projectDeleteSchema = z.object({
+  confirmation: z.string().min(1).max(80)
+});
+
 const appSettingsSchema = z.object({
   projectId: z.string().optional().default(""),
   serviceRole: z.enum(["frontend", "backend", "worker", "fullstack"]).optional().default("fullstack"),
@@ -177,9 +183,14 @@ async function route(request: Request, context: RouteContext) {
       rateLimit(request, { key: "system-prune", limit: 3, windowMs: 60_000 });
       return ok({ result: await systemPrune() }, 200, requestId);
     }
-    if (segments[0] === "projects" && request.method === "POST") {
+    if (segments[0] === "projects" && segments.length === 1 && request.method === "POST") {
       rateLimit(request, { key: "project-create", limit: 20, windowMs: 60_000 });
       return ok({ project: await createProject(projectSchema.parse(await request.json())) }, 201, requestId);
+    }
+    if (segments[0] === "projects" && segments[1] && segments[2] === "delete" && request.method === "POST") {
+      rateLimit(request, { key: "project-delete", limit: 5, windowMs: 60_000 });
+      const body = projectDeleteSchema.parse(await request.json());
+      return ok(await deleteProject({ projectId: segments[1], confirmation: body.confirmation }), 200, requestId);
     }
     if (segments[0] === "repos" && segments[1] === "detect" && request.method === "POST") {
       rateLimit(request, { key: "repo-detect", limit: 12, windowMs: 60_000 });
@@ -228,6 +239,10 @@ async function route(request: Request, context: RouteContext) {
     }
     if (segments[0] === "deployments" && segments[1] && segments[2] === "logs" && request.method === "GET") {
       return ok({ logs: await readDeploymentLogs(segments[1]) }, 200, requestId);
+    }
+    if (segments[0] === "deployments" && segments[1] && segments[2] === "delete" && request.method === "POST") {
+      rateLimit(request, { key: "deployment-delete", limit: 30, windowMs: 60_000 });
+      return ok(await deleteDeployment(segments[1]), 200, requestId);
     }
     if (segments[0] === "apps" && segments[1] && segments[2] === "domain" && request.method === "POST") {
       const body = domainSchema.parse(await request.json());

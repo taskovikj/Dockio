@@ -99,6 +99,42 @@ export async function createProject(input: { name: string; description?: string 
   return project;
 }
 
+export async function deleteProject(input: { projectId: string; confirmation: string }) {
+  const projectId = assertSafeId(input.projectId, "projectId");
+  const state = readState();
+  const project = state.projects.find((item) => item.id === projectId);
+  if (!project) throw new Error("Project not found.");
+  if (input.confirmation !== project.name) throw new UserFacingError(`Type ${project.name} to confirm project deletion.`, 400);
+
+  const projectApps = state.apps.filter((app) => app.projectId === projectId);
+  const projectDatabases = state.databases.filter((database) => database.projectId === projectId);
+  for (const app of projectApps) {
+    await cleanupAppResources(app);
+  }
+  for (const database of projectDatabases) {
+    await cleanupDatabaseResource(database);
+  }
+
+  updateState((next) => {
+    const appIds = new Set(projectApps.map((app) => app.id));
+    removeDeploymentFiles(next.deployments.filter((deployment) => appIds.has(deployment.appId)));
+    next.deployments = next.deployments.filter((deployment) => !appIds.has(deployment.appId));
+    next.apps = next.apps.filter((app) => app.projectId !== projectId);
+    next.databases = next.databases.filter((database) => database.projectId !== projectId);
+    next.projects = next.projects.filter((item) => item.id !== projectId);
+    if (next.projects.length === 0) {
+      const now = new Date().toISOString();
+      next.projects.push({ id: "default", name: "Default Project", description: "First project workspace", createdAt: now, updatedAt: now });
+    }
+  });
+  audit("project.delete", "Deleted project " + project.name + ".", {
+    projectId,
+    apps: projectApps.length,
+    databases: projectDatabases.length
+  });
+  return { ok: true };
+}
+
 export async function analyzeGitRepo(input: { repoUrl: string; branch?: string; appDirectory?: string }): Promise<RepoAnalysis> {
   const repoUrl = assertSafeGitRepo(input.repoUrl);
   const requestedBranch = assertSafeBranch(input.branch || "main");
@@ -622,6 +658,21 @@ export async function readDeploymentLogs(deploymentId: string) {
   return { ok: true, command: "deployment-log " + id, stdout: redact(text).split(/\r?\n/).slice(-1000).join("\n"), stderr: "" };
 }
 
+export async function deleteDeployment(deploymentId: string) {
+  const id = assertSafeId(deploymentId, "deploymentId");
+  let removed = false;
+  updateState((state) => {
+    const deployment = state.deployments.find((item) => item.id === id);
+    if (!deployment) return;
+    removeDeploymentFiles([deployment]);
+    state.deployments = state.deployments.filter((item) => item.id !== id);
+    removed = true;
+  });
+  if (!removed) throw new Error("Deployment not found.");
+  audit("deployment.delete", "Deleted deployment event.", { deploymentId: id });
+  return { ok: true };
+}
+
 export async function stopApp(appId: string) {
   const id = assertSafeId(appId, "appId");
   const app = readState().apps.find((item) => item.id === id);
@@ -709,14 +760,10 @@ export async function redeployApp(appId: string) {
 
 export async function deleteApp(appId: string) {
   const app = getManagedApp(appId);
-  await stopApp(app.id);
-  if (app.containerName) await safeRun("docker", ["rm", "-f", assertSafeDockerName(app.containerName)]);
-  if (app.imageTag) await safeRun("docker", ["image", "rm", app.imageTag]);
-  if (app.domain) {
-    await safeRun("sudo", ["rm", "-f", path.join("/etc/caddy/conf.d", "svp_" + app.id + ".caddy")]);
-    await safeRun("sudo", ["systemctl", "reload", "caddy"]);
-  }
+  await cleanupAppResources(app);
   updateState((state) => {
+    removeDeploymentFiles(state.deployments.filter((deployment) => deployment.appId === app.id));
+    state.deployments = state.deployments.filter((deployment) => deployment.appId !== app.id);
     state.apps = state.apps.filter((item) => item.id !== app.id);
   });
   audit("app.delete", "Deleted app.", { appId: app.id, name: app.name });
@@ -1128,6 +1175,62 @@ function markApp(appId: string, patch: Partial<ManagedApp>) {
     const app = state.apps.find((item) => item.id === appId);
     if (app) Object.assign(app, patch, { updatedAt: new Date().toISOString() });
   });
+}
+
+async function cleanupAppResources(app: ManagedApp) {
+  try {
+    await stopApp(app.id);
+  } catch {
+    // Deletion should keep going even if the process is already gone.
+  }
+  if (app.strategy === "compose" && app.composeProject && app.rootDir) {
+    const sourceDir = composeSourceDirForApp(app);
+    const composeFile = findComposeFile(sourceDir);
+    if (composeFile) await safeRun("docker", ["compose", "-p", assertSafeDockerName(app.composeProject), "-f", composeFile, "down", "--remove-orphans"], sourceDir);
+  }
+  if (app.containerName) await safeRun("docker", ["rm", "-f", assertSafeDockerName(app.containerName)]);
+  if (app.imageTag) await safeRun("docker", ["image", "rm", assertSafeDockerImage(app.imageTag)]);
+  if (app.domain) {
+    await safeRun("sudo", ["rm", "-f", path.join("/etc/caddy/conf.d", "svp_" + app.id + ".caddy")]);
+    await safeRun("sudo", ["systemctl", "reload", "caddy"]);
+  }
+  if (app.rootDir) {
+    try {
+      fs.rmSync(assertManagedPath(getAppsDir(), app.rootDir), { recursive: true, force: true });
+    } catch {
+      // Managed files are best-effort cleanup; state removal below is authoritative.
+    }
+  }
+}
+
+async function cleanupDatabaseResource(database: DatabaseResource) {
+  if (database.kind === "managed-postgres") {
+    if (database.dockerContainer) await safeRun("docker", ["rm", "-f", assertSupavibeDockerResource(database.dockerContainer)]);
+    if (database.dockerVolume) await safeRun("docker", ["volume", "rm", assertSupavibeDockerResource(database.dockerVolume)]);
+  }
+  if (database.secretPath) {
+    try {
+      fs.rmSync(assertManagedPath(getSecretsDir(), database.secretPath), { force: true });
+    } catch {
+      // Secret cleanup is best effort; the database record is removed below.
+    }
+  }
+}
+
+function removeDeploymentFiles(deployments: Array<{ logsPath?: string }>) {
+  for (const deployment of deployments) {
+    if (!deployment.logsPath) continue;
+    try {
+      fs.rmSync(assertManagedPath(getLogsDir(), deployment.logsPath), { force: true });
+    } catch {
+      // Old or missing log files should not block deletion of state records.
+    }
+  }
+}
+
+function assertSupavibeDockerResource(value: string) {
+  if (!/^svp_[a-z0-9_-]{2,120}$/.test(value)) throw new Error("Managed Docker resource name is invalid.");
+  return value;
 }
 
 async function safeRun(command: string, args: string[], cwd?: string): Promise<CommandOutput> {
