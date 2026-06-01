@@ -55,6 +55,33 @@ export interface CommandOutput {
   code?: number;
 }
 
+export interface DetectedService {
+  id: string;
+  name: string;
+  appDirectory: string;
+  mode: "dockerfile" | "node" | "static";
+  serviceRole: ServiceRole;
+  packageManager: "npm" | "pnpm" | "yarn";
+  framework: string;
+  buildCommand: string;
+  startCommand: string;
+  containerPort: number;
+  healthPath: string;
+  confidence: number;
+  reasons: string[];
+  requiredEnv: string[];
+  hasDockerfile: boolean;
+}
+
+export interface RepoAnalysis {
+  repoUrl: string;
+  branch: string;
+  commitSha?: string;
+  services: DetectedService[];
+  recommendedServiceId?: string;
+  warnings: string[];
+}
+
 export async function createProject(input: { name: string; description?: string }) {
   const name = assertSafeAppName(input.name);
   const now = new Date().toISOString();
@@ -70,6 +97,62 @@ export async function createProject(input: { name: string; description?: string 
   });
   audit("project.create", "Created project " + name + ".", { projectId: project.id });
   return project;
+}
+
+export async function analyzeGitRepo(input: { repoUrl: string; branch?: string; appDirectory?: string }): Promise<RepoAnalysis> {
+  const repoUrl = assertSafeGitRepo(input.repoUrl);
+  const requestedBranch = assertSafeBranch(input.branch || "main");
+  const requestedDirectory = assertSafeRelativePath(input.appDirectory || "", "App directory");
+  const tempRoot = assertManagedPath(getDataDir(), path.join(getDataDir(), "tmp"));
+  fs.mkdirSync(tempRoot, { recursive: true, mode: 0o750 });
+  const cloneDir = assertManagedPath(tempRoot, path.join(tempRoot, "detect-" + crypto.randomBytes(6).toString("hex")));
+  const warnings: string[] = [];
+
+  try {
+    let clone = await safeRun("git", ["clone", "--depth", "1", "--branch", requestedBranch, repoUrl, cloneDir]);
+    if (!clone.ok && requestedBranch === "main") {
+      warnings.push("Branch main was not found, so the repository default branch was analyzed instead.");
+      clone = await safeRun("git", ["clone", "--depth", "1", repoUrl, cloneDir]);
+    }
+    if (!clone.ok) throw new UserFacingError("Could not clone repository for detection: " + (clone.stderr || clone.stdout), 400);
+
+    const branch = await safeRun("git", ["rev-parse", "--abbrev-ref", "HEAD"], cloneDir);
+    const commit = await safeRun("git", ["rev-parse", "--short", "HEAD"], cloneDir);
+    const candidateDirs = requestedDirectory ? [requestedDirectory] : findDetectionCandidates(cloneDir);
+    const services = candidateDirs
+      .map((dir) => detectService(cloneDir, dir, repoUrl))
+      .filter((service): service is DetectedService => Boolean(service))
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 8);
+
+    if (services.length === 0) {
+      throw new UserFacingError("No deployable Node, static, or Dockerfile service was detected. Add a Dockerfile or package.json first.", 400);
+    }
+    if (findComposeFile(cloneDir)) warnings.push("A Compose file was found at the repository root. Use Compose From Git if this project is a multi-container stack.");
+    if (services.some((service) => service.appDirectory && service.packageManager === "pnpm")) {
+      warnings.push("Monorepo pnpm apps may need a repo-level Dockerfile if workspace packages are required during build.");
+    }
+
+    audit("repo.detect", "Detected deploy stack from public Git repository.", {
+      repoUrl,
+      branch: branch.ok ? branch.stdout.trim() : requestedBranch,
+      services: services.map((service) => ({ directory: service.appDirectory, framework: service.framework, mode: service.mode }))
+    });
+    return {
+      repoUrl,
+      branch: branch.ok ? branch.stdout.trim() : requestedBranch,
+      commitSha: commit.ok ? commit.stdout.trim() : undefined,
+      services,
+      recommendedServiceId: services[0]?.id,
+      warnings
+    };
+  } finally {
+    try {
+      fs.rmSync(cloneDir, { recursive: true, force: true });
+    } catch {
+      // Temp cleanup is best effort; managed temp files are under SVP_DATA_DIR/tmp.
+    }
+  }
 }
 
 export async function serverStatus() {
@@ -1281,6 +1364,166 @@ function detectPackageManager(sourceDir: string) {
   if (fs.existsSync(path.join(sourceDir, "pnpm-lock.yaml"))) return "pnpm";
   if (fs.existsSync(path.join(sourceDir, "yarn.lock"))) return "yarn";
   return "npm";
+}
+
+function findDetectionCandidates(repoDir: string) {
+  const candidates = new Set<string>();
+  if (isDeployCandidate(repoDir)) candidates.add("");
+  for (const parent of ["apps", "services", "packages"]) {
+    const parentDir = path.join(repoDir, parent);
+    if (!fs.existsSync(parentDir)) continue;
+    for (const item of fs.readdirSync(parentDir, { withFileTypes: true })) {
+      if (item.isDirectory() && !item.name.startsWith(".") && isDeployCandidate(path.join(parentDir, item.name))) {
+        candidates.add(`${parent}/${item.name}`);
+      }
+    }
+  }
+  for (const name of ["web", "frontend", "client", "api", "backend", "server"]) {
+    const dir = path.join(repoDir, name);
+    if (fs.existsSync(dir) && isDeployCandidate(dir)) candidates.add(name);
+  }
+  return Array.from(candidates);
+}
+
+function isDeployCandidate(dir: string) {
+  return fs.existsSync(path.join(dir, "package.json")) || fs.existsSync(path.join(dir, "Dockerfile"));
+}
+
+function detectService(repoDir: string, relativeDir: string, repoUrl: string): DetectedService | null {
+  const serviceDir = assertManagedPath(repoDir, path.join(repoDir, relativeDir));
+  if (!isDeployCandidate(serviceDir)) return null;
+  const packageJson = readPackageJson(serviceDir);
+  const scripts = (packageJson?.scripts || {}) as Record<string, string>;
+  const deps = {
+    ...((packageJson?.dependencies || {}) as Record<string, string>),
+    ...((packageJson?.devDependencies || {}) as Record<string, string>)
+  };
+  const hasDockerfile = fs.existsSync(path.join(serviceDir, "Dockerfile"));
+  const packageManager = detectPackageManagerForService(repoDir, serviceDir);
+  const reasons: string[] = [];
+  const requiredEnv = detectEnvKeys(serviceDir);
+  const repoName = slug(path.basename(new URL(repoUrl).pathname.replace(/\.git$/, "")));
+  const name = assertSafeAppName((packageJson?.name ? String(packageJson.name).replace(/^@[^/]+\//, "") : "") || path.basename(relativeDir || repoName) || repoName);
+  let mode: DetectedService["mode"] = "node";
+  let serviceRole: ServiceRole = "fullstack";
+  let framework = "Node";
+  let containerPort = detectPortFromFiles(serviceDir, scripts) || 3000;
+  let healthPath = "/";
+  let confidence = packageJson ? 55 : 35;
+
+  if (hasDockerfile) {
+    mode = "dockerfile";
+    framework = "Dockerfile";
+    containerPort = detectExposePort(path.join(serviceDir, "Dockerfile")) || containerPort;
+    reasons.push("Dockerfile found");
+    confidence += 30;
+  }
+
+  if (deps.next || hasAnyFile(serviceDir, ["next.config.js", "next.config.mjs", "next.config.ts"])) {
+    framework = "Next.js";
+    serviceRole = "frontend";
+    containerPort = containerPort || 3000;
+    reasons.push("Next.js dependency/config found");
+    confidence += 24;
+  } else if (deps.vite || deps["@vitejs/plugin-react"] || hasAnyFile(serviceDir, ["vite.config.js", "vite.config.ts", "vite.config.mjs"])) {
+    framework = deps.react ? "Vite React" : "Vite";
+    serviceRole = "frontend";
+    if (!hasDockerfile) {
+      mode = "static";
+      containerPort = 80;
+    }
+    reasons.push("Vite build detected");
+    confidence += 22;
+  } else if (deps.express || deps.fastify || deps["@nestjs/core"] || deps.hono || deps.koa) {
+    framework = deps["@nestjs/core"] ? "NestJS" : deps.fastify ? "Fastify" : deps.hono ? "Hono" : deps.koa ? "Koa" : "Express";
+    serviceRole = "backend";
+    healthPath = "/health";
+    reasons.push(`${framework} backend dependency found`);
+    confidence += 22;
+  } else if (packageJson) {
+    reasons.push("package.json found");
+  }
+
+  if (scripts.build) reasons.push("build script found");
+  if (scripts.start) reasons.push("start script found");
+  if (!scripts.start && scripts.dev && mode === "node") reasons.push("no start script; dev script will be used for preview");
+
+  return {
+    id: slug(`${relativeDir || "root"}-${framework}`),
+    name,
+    appDirectory: relativeDir,
+    mode,
+    serviceRole,
+    packageManager,
+    framework,
+    buildCommand: scripts.build ? runCommand(packageManager, "build") : "",
+    startCommand: mode === "static" ? "" : scripts.start ? runCommand(packageManager, "start") : scripts.dev ? runCommand(packageManager, "dev") : "",
+    containerPort,
+    healthPath,
+    confidence: Math.min(confidence, 100),
+    reasons,
+    requiredEnv,
+    hasDockerfile
+  };
+}
+
+function readPackageJson(dir: string) {
+  const file = path.join(dir, "package.json");
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch {
+    throw new UserFacingError(`package.json in ${path.basename(dir)} is not valid JSON.`, 400);
+  }
+}
+
+function detectPackageManagerForService(repoDir: string, serviceDir: string): "npm" | "pnpm" | "yarn" {
+  if (fs.existsSync(path.join(serviceDir, "pnpm-lock.yaml")) || fs.existsSync(path.join(repoDir, "pnpm-lock.yaml"))) return "pnpm";
+  if (fs.existsSync(path.join(serviceDir, "yarn.lock")) || fs.existsSync(path.join(repoDir, "yarn.lock"))) return "yarn";
+  return "npm";
+}
+
+function runCommand(packageManager: "npm" | "pnpm" | "yarn", script: string) {
+  return packageManager === "npm" ? `npm run ${script}` : `${packageManager} ${script}`;
+}
+
+function hasAnyFile(dir: string, names: string[]) {
+  return names.some((name) => fs.existsSync(path.join(dir, name)));
+}
+
+function detectEnvKeys(serviceDir: string) {
+  const keys = new Set<string>();
+  for (const name of [".env.example", ".env.sample", ".env.local.example"]) {
+    const file = path.join(serviceDir, name);
+    if (!fs.existsSync(file)) continue;
+    for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+      const match = line.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+      if (match?.[1]) keys.add(match[1]);
+    }
+  }
+  return Array.from(keys).slice(0, 40);
+}
+
+function detectPortFromFiles(serviceDir: string, scripts: Record<string, string>) {
+  const scriptText = Object.values(scripts).join(" ");
+  const scriptPort = scriptText.match(/(?:PORT=|--port\s+|-p\s+)(\d{2,5})/i)?.[1];
+  if (scriptPort) return assertNetworkPort(Number(scriptPort));
+  for (const name of [".env.example", ".env.sample", ".env.local.example"]) {
+    const file = path.join(serviceDir, name);
+    if (!fs.existsSync(file)) continue;
+    const match = fs.readFileSync(file, "utf8").match(/^PORT\s*=\s*(\d{2,5})/m);
+    if (match?.[1]) return assertNetworkPort(Number(match[1]));
+  }
+  return 0;
+}
+
+function detectExposePort(dockerfile: string) {
+  try {
+    const match = fs.readFileSync(dockerfile, "utf8").match(/^\s*EXPOSE\s+(\d{2,5})/im);
+    return match?.[1] ? assertNetworkPort(Number(match[1])) : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function findComposeFile(sourceDir: string) {

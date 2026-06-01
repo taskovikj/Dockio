@@ -5,6 +5,7 @@ import { authState, createAdmin, login, logout, requireAuth, requireCsrf } from 
 import { ensureSameOrigin, rateLimit, requireSetupCode, requireTrustedNetwork, securityHeaders } from "../../lib/security";
 import { publicState } from "../../lib/state";
 import {
+  analyzeGitRepo,
   applyFirewallBaseline,
   applyFirewallRule,
   checkAppHealth,
@@ -64,6 +65,12 @@ const gitDeploySchema = z.object({
   corsOrigins: z.array(z.string().max(220)).optional().default([]),
   databaseId: z.string().optional().default(""),
   publicPreview: z.boolean().optional().default(false)
+});
+
+const repoDetectSchema = z.object({
+  repoUrl: z.string().url(),
+  branch: z.string().optional().default("main"),
+  appDirectory: z.string().max(220).optional().default("")
 });
 
 const composeDeploySchema = z.object({
@@ -173,6 +180,10 @@ async function route(request: Request, context: RouteContext) {
     if (segments[0] === "projects" && request.method === "POST") {
       rateLimit(request, { key: "project-create", limit: 20, windowMs: 60_000 });
       return ok({ project: await createProject(projectSchema.parse(await request.json())) }, 201, requestId);
+    }
+    if (segments[0] === "repos" && segments[1] === "detect" && request.method === "POST") {
+      rateLimit(request, { key: "repo-detect", limit: 12, windowMs: 60_000 });
+      return ok({ analysis: await analyzeGitRepo(repoDetectSchema.parse(await request.json())) }, 200, requestId);
     }
     if (segments[0] === "firewall" && segments[1] === "plan" && request.method === "GET") {
       const panelPort = Number(process.env.SVP_PORT || process.env.PORT || 3099);

@@ -130,6 +130,33 @@ interface DeploymentEvent {
   steps?: Array<{ at: string; step: string; status: string; message: string }>;
 }
 
+interface DetectedService {
+  id: string;
+  name: string;
+  appDirectory: string;
+  mode: GitMode;
+  serviceRole: ServiceRole;
+  packageManager: string;
+  framework: string;
+  buildCommand: string;
+  startCommand: string;
+  containerPort: number;
+  healthPath: string;
+  confidence: number;
+  reasons: string[];
+  requiredEnv: string[];
+  hasDockerfile: boolean;
+}
+
+interface RepoAnalysis {
+  repoUrl: string;
+  branch: string;
+  commitSha?: string;
+  services: DetectedService[];
+  recommendedServiceId?: string;
+  warnings: string[];
+}
+
 interface StatePayload {
   setupRequired: boolean;
   projects: ProjectRecord[];
@@ -200,6 +227,8 @@ export function PanelShell() {
   const [managedDbForm, setManagedDbForm] = useState({ projectId: "", name: "Managed Postgres", envKey: "DATABASE_URL" });
   const [corsPresetForm, setCorsPresetForm] = useState({ frontendOrigin: "", backendOrigin: "" });
   const [logs, setLogs] = useState("");
+  const [repoAnalysis, setRepoAnalysis] = useState<RepoAnalysis | null>(null);
+  const [selectedDetectionId, setSelectedDetectionId] = useState("");
 
   useEffect(() => {
     void boot();
@@ -283,6 +312,36 @@ export function PanelShell() {
       setNotice(result.app.publicPreview ? `${result.app.name} deployed. Preview: ${previewUrl(result.app, publicIp(status))}` : `${result.app.name} deployed from ${gitForm.branch}.`);
       await refresh();
     });
+  }
+
+  async function detectGitStack() {
+    await run("Detecting stack", async () => {
+      const result = await api<{ analysis: RepoAnalysis }>("/api/repos/detect", {
+        method: "POST",
+        csrfToken,
+        body: { repoUrl: gitForm.repoUrl, branch: gitForm.branch, appDirectory: gitForm.appDirectory }
+      });
+      setRepoAnalysis(result.analysis);
+      const detected = result.analysis.services.find((service) => service.id === result.analysis.recommendedServiceId) || result.analysis.services[0];
+      if (detected) applyDetectedService(detected, result.analysis.branch);
+      setNotice("Stack detected. Review the settings, then deploy.");
+    });
+  }
+
+  function applyDetectedService(service: DetectedService, branch = repoAnalysis?.branch || gitForm.branch) {
+    setSelectedDetectionId(service.id);
+    setGitForm((form) => ({
+      ...form,
+      name: !form.name.trim() || form.name === "Git App" ? service.name : form.name,
+      branch,
+      appDirectory: service.appDirectory,
+      mode: service.mode,
+      serviceRole: service.serviceRole,
+      buildCommand: service.buildCommand,
+      startCommand: service.startCommand,
+      containerPort: String(service.containerPort),
+      healthPath: service.healthPath
+    }));
   }
 
   async function deployImage() {
@@ -1026,10 +1085,14 @@ export function PanelShell() {
                     <Select label="Service role" value={gitForm.serviceRole} onChange={(serviceRole) => setGitForm({ ...gitForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
                   </div>
                   <Field label="App name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
-                  <Field label="Repository URL" value={gitForm.repoUrl} onChange={(repoUrl) => setGitForm({ ...gitForm, repoUrl })} placeholder="https://github.com/user/repo.git" />
-                  <Field label="Branch" value={gitForm.branch} onChange={(branch) => setGitForm({ ...gitForm, branch })} />
-                  <Field label="App directory" value={gitForm.appDirectory} onChange={(appDirectory) => setGitForm({ ...gitForm, appDirectory })} placeholder="apps/web or blank for repo root" />
+                  <Field label="Repository URL" value={gitForm.repoUrl} onChange={(repoUrl) => { setGitForm({ ...gitForm, repoUrl }); setRepoAnalysis(null); }} placeholder="https://github.com/user/repo.git" />
+                  <Field label="Branch" value={gitForm.branch} onChange={(branch) => { setGitForm({ ...gitForm, branch }); setRepoAnalysis(null); }} />
+                  <Field label="App directory" value={gitForm.appDirectory} onChange={(appDirectory) => { setGitForm({ ...gitForm, appDirectory }); setRepoAnalysis(null); }} placeholder="apps/web or blank for repo root" />
                   <Select label="Database" value={gitForm.databaseId} onChange={(databaseId) => setGitForm({ ...gitForm, databaseId })} options={[{ value: "", label: "No database" }, ...databases.map((database) => ({ value: database.id, label: `${database.name} (${database.envKey})` }))]} />
+                  <button className="svp-button w-fit" onClick={() => void detectGitStack()} disabled={Boolean(busy) || !gitForm.repoUrl.trim()}>
+                    <Activity size={16} />
+                    Detect Stack
+                  </button>
                 </div>
               </Panel>
 
@@ -1055,6 +1118,7 @@ export function PanelShell() {
                     <Field label="Container port" value={gitForm.containerPort} onChange={(containerPort) => setGitForm({ ...gitForm, containerPort })} placeholder="3000" />
                     <Field label="Health path" value={gitForm.healthPath} onChange={(healthPath) => setGitForm({ ...gitForm, healthPath })} placeholder="/" />
                   </div>
+                  {repoAnalysis && <DetectionReview analysis={repoAnalysis} selectedServiceId={selectedDetectionId} onSelect={(service) => applyDetectedService(service, repoAnalysis.branch)} />}
                   <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
                     <input className="mt-1" type="checkbox" checked={gitForm.publicPreview} onChange={(event) => setGitForm({ ...gitForm, publicPreview: event.target.checked })} />
                     <span>
@@ -1064,7 +1128,7 @@ export function PanelShell() {
                   </label>
                   <button className="svp-button-primary w-fit" onClick={() => void deployGit()} disabled={Boolean(busy) || !gitForm.repoUrl}>
                     <GitBranch size={16} />
-                    Deploy Git App
+                    {repoAnalysis ? "Deploy Confirmed Stack" : "Deploy Git App"}
                   </button>
                 </div>
               </Panel>
@@ -1446,6 +1510,72 @@ function AppGrid({
         </article>
         );
       })}
+    </div>
+  );
+}
+
+function DetectionReview({
+  analysis,
+  selectedServiceId,
+  onSelect
+}: {
+  analysis: RepoAnalysis;
+  selectedServiceId: string;
+  onSelect: (service: DetectedService) => void;
+}) {
+  const selected = analysis.services.find((service) => service.id === selectedServiceId) || analysis.services[0];
+  return (
+    <div className="rounded-md border border-action/40 bg-action/10 p-3">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="flex items-center gap-2 font-black text-ink">
+            <CheckCircle2 size={16} className="text-action" />
+            Detected stack
+          </p>
+          <p className="mt-1 text-xs text-zinc-400">
+            {analysis.branch} {analysis.commitSha ? `- commit ${analysis.commitSha}` : ""}. Confirm this service before deploying.
+          </p>
+        </div>
+        <StatusPill ok label={`${selected?.confidence || 0}% confidence`} />
+      </div>
+
+      {analysis.warnings.length > 0 && (
+        <div className="mt-3 grid gap-2">
+          {analysis.warnings.map((warning) => (
+            <p key={warning} className="flex items-start gap-2 rounded-md border border-yellow-900/60 bg-yellow-950/20 p-2 text-xs text-yellow-100">
+              <CircleAlert size={14} className="mt-0.5 shrink-0" />
+              {warning}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 grid gap-2">
+        {analysis.services.map((service) => (
+          <button
+            key={service.id}
+            className={`rounded-md border p-3 text-left transition ${service.id === selectedServiceId ? "border-action bg-action/10" : "border-line bg-[#050505] hover:border-zinc-600"}`}
+            onClick={() => onSelect(service)}
+          >
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="font-bold text-ink">{service.name}</p>
+                <p className="text-xs text-zinc-500">
+                  {service.framework} - {service.mode} - {service.appDirectory || "repo root"} - port {service.containerPort}
+                </p>
+              </div>
+              <span className="svp-badge">{service.serviceRole}</span>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <span className="svp-badge">{service.packageManager}</span>
+              {service.hasDockerfile && <span className="svp-badge">Dockerfile</span>}
+              {service.requiredEnv.length > 0 && <span className="svp-badge">{service.requiredEnv.length} env keys</span>}
+            </div>
+            {service.reasons.length > 0 && <p className="mt-2 text-xs text-zinc-500">{service.reasons.slice(0, 4).join(" - ")}</p>}
+            {service.requiredEnv.length > 0 && <p className="mt-2 break-all text-xs text-zinc-600">Env: {service.requiredEnv.join(", ")}</p>}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
