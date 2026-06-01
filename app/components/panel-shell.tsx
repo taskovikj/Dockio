@@ -54,6 +54,9 @@ interface ManagedApp {
   appDirectory?: string;
   dockerImage?: string;
   sourceType?: string;
+  publicPreview?: boolean;
+  previewUrl?: string;
+  portBind?: "localhost" | "public";
   commitSha?: string;
   deployMode?: GitMode | "compose";
   buildCommand?: string;
@@ -168,7 +171,6 @@ export function PanelShell() {
   const [csrfToken, setCsrfToken] = useState("");
   const [authForm, setAuthForm] = useState({ email: "", name: "", password: "", setupCode: "" });
   const [projectForm, setProjectForm] = useState({ name: "New Project", description: "" });
-  const [sampleForm, setSampleForm] = useState({ name: "Hello API", strategy: "docker" as Strategy, projectId: "", serviceRole: "backend" as ServiceRole });
   const [gitForm, setGitForm] = useState({
     name: "Git App",
     projectId: "",
@@ -183,9 +185,10 @@ export function PanelShell() {
     healthPath: "/",
     envText: "",
     corsOrigins: [] as string[],
-    databaseId: ""
+    databaseId: "",
+    publicPreview: true
   });
-  const [imageForm, setImageForm] = useState({ name: "Docker Image App", projectId: "", serviceRole: "fullstack" as ServiceRole, image: "nginx:1.27-alpine", containerPort: "80", healthPath: "/", envText: "" });
+  const [imageForm, setImageForm] = useState({ name: "Docker Image App", projectId: "", serviceRole: "fullstack" as ServiceRole, image: "nginx:1.27-alpine", containerPort: "80", healthPath: "/", envText: "", publicPreview: false });
   const [composeForm, setComposeForm] = useState({ name: "Compose Stack", projectId: "", repoUrl: "", branch: "main", envText: "" });
   const [composeYamlForm, setComposeYamlForm] = useState({ name: "Pasted Compose Stack", projectId: "", composeYaml: "services:\n  web:\n    image: nginx:1.27-alpine\n    restart: unless-stopped\n", envText: "" });
   const [domainForm, setDomainForm] = useState({ appId: "", domain: "" });
@@ -228,7 +231,6 @@ export function PanelShell() {
     }));
     setGitForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setImageForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
-    setSampleForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setComposeForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setComposeYamlForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setExternalDbForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
@@ -270,19 +272,6 @@ export function PanelShell() {
     });
   }
 
-  async function deploySample() {
-    await run("Deploying sample", async () => {
-      const result = await api<{ app: ManagedApp }>("/api/apps/sample", {
-        method: "POST",
-        csrfToken,
-        body: { ...sampleForm, projectId: selectedProjectId || sampleForm.projectId }
-      });
-      setDomainForm((form) => ({ ...form, appId: result.app.id }));
-      setNotice(`${result.app.name} deployed with ${result.app.strategy}.`);
-      await refresh();
-    });
-  }
-
   async function deployGit() {
     await run("Deploying Git app", async () => {
       const result = await api<{ app: ManagedApp }>("/api/apps/git", {
@@ -291,7 +280,7 @@ export function PanelShell() {
         body: { ...gitForm, projectId: selectedProjectId || gitForm.projectId }
       });
       setDomainForm((form) => ({ ...form, appId: result.app.id }));
-      setNotice(`${result.app.name} deployed from ${gitForm.branch}.`);
+      setNotice(result.app.publicPreview ? `${result.app.name} deployed. Preview: ${previewUrl(result.app, publicIp(status))}` : `${result.app.name} deployed from ${gitForm.branch}.`);
       await refresh();
     });
   }
@@ -304,7 +293,7 @@ export function PanelShell() {
         body: { ...imageForm, projectId: selectedProjectId || imageForm.projectId, containerPort: Number(imageForm.containerPort) }
       });
       setDomainForm((form) => ({ ...form, appId: result.app.id }));
-      setNotice(`${result.app.name} deployed from ${imageForm.image}.`);
+      setNotice(result.app.publicPreview ? `${result.app.name} deployed. Preview: ${previewUrl(result.app, publicIp(status))}` : `${result.app.name} deployed from ${imageForm.image}.`);
       await refresh();
     });
   }
@@ -340,7 +329,6 @@ export function PanelShell() {
     setAppSettingsForm((form) => ({ ...form, projectId, appId: "", databaseId: "" }));
     setGitForm((form) => ({ ...form, projectId, databaseId: "" }));
     setImageForm((form) => ({ ...form, projectId }));
-    setSampleForm((form) => ({ ...form, projectId }));
     setComposeForm((form) => ({ ...form, projectId }));
     setComposeYamlForm((form) => ({ ...form, projectId }));
     setExternalDbForm((form) => ({ ...form, projectId }));
@@ -574,6 +562,7 @@ export function PanelShell() {
   const selectedSettingsApp = apps.find((app) => app.id === appSettingsForm.appId);
   const selectedDomainApp = apps.find((app) => app.id === domainForm.appId) || activeApp;
   const vpsIp = publicIp(status);
+  const activePreviewUrl = activeApp ? previewUrl(activeApp, vpsIp) : "";
 
   if (!currentProject) {
     return (
@@ -703,10 +692,10 @@ export function PanelShell() {
                   <Play size={15} />
                   New Deployment
                 </button>
-                {activeApp?.domain && (
-                  <a className="svp-button" href={`https://${activeApp.domain}`} target="_blank" rel="noreferrer">
+                {(activeApp?.domain || activePreviewUrl) && (
+                  <a className="svp-button" href={activeApp?.domain ? `https://${activeApp.domain}` : activePreviewUrl} target="_blank" rel="noreferrer">
                     <Globe2 size={15} />
-                    Visit
+                    {activeApp?.domain ? "Visit" : "Preview"}
                   </a>
                 )}
                 <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
@@ -775,8 +764,8 @@ export function PanelShell() {
                       <StatusPill ok={activeApp.status === "running"} label={activeApp.status} />
                     </div>
                     <div className="mt-4 grid gap-2 text-sm text-zinc-400">
-                      <p>Source: {activeApp.repoUrl ? `${activeApp.repoUrl} @ ${activeApp.branch || "main"}` : activeApp.source || "sample"}</p>
-                      <p>Route: {activeApp.domain ? activeApp.domain : `127.0.0.1:${activeApp.port}`}</p>
+                      <p>Source: {activeApp.repoUrl ? `${activeApp.repoUrl} @ ${activeApp.branch || "main"}` : activeApp.source || activeApp.sourceType || "manual"}</p>
+                      <p>Route: {activeApp.domain ? activeApp.domain : activePreviewUrl || `${activeApp.portBind === "public" ? "0.0.0.0" : "127.0.0.1"}:${activeApp.port}`}</p>
                       <p>Database: {activeApp.databaseId ? databaseName(databases, activeApp.databaseId) : "No database bound"}</p>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -860,7 +849,7 @@ export function PanelShell() {
         {tab === "services" && (
           <div className="space-y-4">
             <Panel title="Services" icon={Server}>
-              <AppGrid apps={apps} projects={projects} databases={databases} onLogs={loadLogs} onStop={stop} onAction={appAction} />
+              <AppGrid apps={apps} projects={projects} databases={databases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} />
             </Panel>
             <Panel title="Service Roles" icon={Boxes}>
               <div className="grid gap-3 md:grid-cols-4">
@@ -1066,6 +1055,13 @@ export function PanelShell() {
                     <Field label="Container port" value={gitForm.containerPort} onChange={(containerPort) => setGitForm({ ...gitForm, containerPort })} placeholder="3000" />
                     <Field label="Health path" value={gitForm.healthPath} onChange={(healthPath) => setGitForm({ ...gitForm, healthPath })} placeholder="/" />
                   </div>
+                  <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
+                    <input className="mt-1" type="checkbox" checked={gitForm.publicPreview} onChange={(event) => setGitForm({ ...gitForm, publicPreview: event.target.checked })} />
+                    <span>
+                      <span className="block font-bold text-ink">Create public port preview</span>
+                      <span className="mt-1 block text-xs text-zinc-500">Publishes the service on a generated high port and opens that port in UFW. Disable this when you want domain-only access through Caddy.</span>
+                    </span>
+                  </label>
                   <button className="svp-button-primary w-fit" onClick={() => void deployGit()} disabled={Boolean(busy) || !gitForm.repoUrl}>
                     <GitBranch size={16} />
                     Deploy Git App
@@ -1087,6 +1083,13 @@ export function PanelShell() {
                     <Field label="Container port" value={imageForm.containerPort} onChange={(containerPort) => setImageForm({ ...imageForm, containerPort })} placeholder="3000" />
                     <Field label="Health path" value={imageForm.healthPath} onChange={(healthPath) => setImageForm({ ...imageForm, healthPath })} placeholder="/" />
                   </div>
+                  <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
+                    <input className="mt-1" type="checkbox" checked={imageForm.publicPreview} onChange={(event) => setImageForm({ ...imageForm, publicPreview: event.target.checked })} />
+                    <span>
+                      <span className="block font-bold text-ink">Create public port preview</span>
+                      <span className="mt-1 block text-xs text-zinc-500">Useful for smoke tests. The panel opens the generated port in UFW.</span>
+                    </span>
+                  </label>
                   <TextArea label="Image env" value={imageForm.envText} onChange={(envText) => setImageForm({ ...imageForm, envText })} />
                   <button className="svp-button-primary w-fit" onClick={() => void deployImage()} disabled={Boolean(busy) || !imageForm.image.trim()}>
                     <Boxes size={16} />
@@ -1095,24 +1098,14 @@ export function PanelShell() {
                 </div>
               </Panel>
 
-              <Panel title="Sample Deployment" icon={Play}>
-                <div className="grid gap-3">
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Select label="Project" value={sampleForm.projectId} onChange={(projectId) => setSampleForm({ ...sampleForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
-                    <Select label="Service role" value={sampleForm.serviceRole} onChange={(serviceRole) => setSampleForm({ ...sampleForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
-                  </div>
-                  <Field label="App name" value={sampleForm.name} onChange={(name) => setSampleForm({ ...sampleForm, name })} />
-                  <label className="grid gap-1">
-                    <span className="svp-label">Strategy</span>
-                    <select className="svp-input" value={sampleForm.strategy} onChange={(event) => setSampleForm({ ...sampleForm, strategy: event.target.value as Strategy })}>
-                      <option value="docker">Docker container</option>
-                      <option value="systemd">No Docker, systemd Node service</option>
-                      <option value="static">Static files, Caddy file_server</option>
-                    </select>
-                  </label>
-                  <button className="svp-button-primary" onClick={() => void deploySample()} disabled={Boolean(busy)}>
-                    <Play size={16} />
-                    Deploy Sample
+              <Panel title="Preview Port" icon={Globe2}>
+                <div className="space-y-3 text-sm text-zinc-400">
+                  <p>Public Git deploys can open a temporary VPS port for quick testing. For production, add a domain and let Caddy serve traffic on 80/443.</p>
+                  <Info title="What the checkbox does" body="It publishes the app on 0.0.0.0 using a generated high port and adds an allow rule in UFW for that port." />
+                  <Info title="Safer default" body="Turn preview off when you only want localhost plus Caddy/domain routing." />
+                  <button className="svp-button w-fit" onClick={() => setTab("advanced")}>
+                    <Shield size={16} />
+                    Manage Firewall
                   </button>
                 </div>
               </Panel>
@@ -1187,6 +1180,18 @@ export function PanelShell() {
 
         {tab === "advanced" && (
           <div className="space-y-4">
+            <Panel title="Firewall Status" icon={Shield}>
+              <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
+                <pre className="svp-code max-h-80 overflow-auto rounded-md p-3 text-xs">{commandOutputText(status?.ufw) || "UFW status is not available yet. Click Refresh after install."}</pre>
+                <div className="space-y-3 text-sm text-zinc-400">
+                  <Info title="Real VPS firewall" body="These actions call UFW on this server through a restricted sudoers allowlist installed by Supavibe." />
+                  <button className="svp-button w-full justify-center" onClick={() => void refresh()} disabled={Boolean(busy)}>
+                    <RefreshCw size={16} />
+                    Refresh Status
+                  </button>
+                </div>
+              </div>
+            </Panel>
             <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
               <Panel title="Firewall Baseline" icon={Shield}>
                 <div className="grid gap-3">
@@ -1230,14 +1235,14 @@ export function PanelShell() {
                 <div className="grid gap-3 lg:grid-cols-2">
                   <Info title="Panel auth" body="Admin login, CSRF checks, rate limits, secure headers, and same-origin checks are enabled." />
                   <Info title="Public panel" body="If this port is public, keep a strong password and restrict the panel port to your IP or Tailscale CIDR." />
-                  <Info title="App isolation" body="Docker apps run without privileged mode, without host networking, and with localhost-only port publishing." />
+                  <Info title="App isolation" body="Docker apps run without privileged mode or host networking. Git preview ports are exposed only when you enable preview." />
                   <Info title="Secrets" body="Env values and database URLs are not returned in normal state responses. Revealing a DB URL is audited." />
                 </div>
               </Panel>
 
               <Panel title="Management Surface" icon={Shield}>
                 <div className="grid gap-3 lg:grid-cols-2">
-                  <Info title="Docker" body="Builds images, starts labelled containers, and binds app ports only to localhost." />
+                  <Info title="Docker" body="Builds images, starts labelled containers, and binds app ports to localhost or explicit preview ports." />
                   <Info title="No Docker" body="Creates systemd Node services for simple apps without exposing raw shell commands." />
                   <Info title="Static" body="Serves generated static assets through Caddy with rollback-friendly folders." />
                   <Info title="Shell access" body="No web terminal is exposed. Use SSH for shell work and this panel for structured actions." />
@@ -1372,6 +1377,7 @@ function AppGrid({
   apps,
   projects,
   databases,
+  vpsIp,
   onLogs,
   onStop,
   onAction
@@ -1379,20 +1385,23 @@ function AppGrid({
   apps: ManagedApp[];
   projects: ProjectRecord[];
   databases: DatabaseResource[];
+  vpsIp: string;
   onLogs: (id: string) => Promise<void>;
   onStop: (id: string) => Promise<void>;
   onAction: (id: string, action: "restart" | "redeploy" | "health" | "delete") => Promise<void>;
 }) {
-  if (apps.length === 0) return <p className="text-sm text-zinc-500">No apps yet. Deploy a Docker, systemd, or static sample.</p>;
+  if (apps.length === 0) return <p className="text-sm text-zinc-500">No services yet. Deploy a public Git repository from the Deployments tab.</p>;
   return (
     <div className="grid gap-3 lg:grid-cols-2">
-      {apps.map((app) => (
+      {apps.map((app) => {
+        const appPreview = previewUrl(app, vpsIp);
+        return (
         <article key={app.id} className="rounded-md border border-line bg-panel p-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate font-bold text-ink">{app.name}</p>
               <p className="text-xs text-zinc-500">
-                {projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"} - {app.deployMode || app.strategy} {app.sourceType || app.source ? `- ${app.sourceType || app.source}` : ""} {app.port ? `- 127.0.0.1:${app.port}` : ""}
+                {projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"} - {app.deployMode || app.strategy} {app.sourceType || app.source ? `- ${app.sourceType || app.source}` : ""} {app.port ? `- ${app.portBind === "public" ? "0.0.0.0" : "127.0.0.1"}:${app.port}` : ""}
                 {app.containerPort ? ` -> :${app.containerPort}` : ""}
               </p>
               {app.repoUrl && <p className="mt-1 truncate text-xs text-zinc-600">{app.repoUrl} {app.branch ? `@ ${app.branch}` : ""}</p>}
@@ -1400,6 +1409,7 @@ function AppGrid({
               {app.dockerImage && <p className="mt-1 truncate text-xs text-zinc-600">image {app.dockerImage}</p>}
               {app.commitSha && <p className="mt-1 text-xs text-zinc-600">commit {app.commitSha}</p>}
               {app.domain && <a className="mt-1 block break-all text-xs font-bold text-action" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>}
+              {appPreview && <a className="mt-1 block break-all text-xs font-bold text-action" href={appPreview} target="_blank" rel="noreferrer">Preview {appPreview}</a>}
               {app.databaseId && <p className="mt-1 text-xs text-zinc-600">db {databaseName(databases, app.databaseId)}</p>}
             </div>
             <StatusPill ok={app.status === "running"} label={app.status} />
@@ -1434,7 +1444,8 @@ function AppGrid({
             </button>
           </div>
         </article>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -1654,6 +1665,19 @@ function publicIp(status: Record<string, unknown> | null) {
   const publicIpValue = status?.publicIp;
   if (!publicIpValue || typeof publicIpValue !== "object") return "";
   return String((publicIpValue as { ip?: string }).ip || "");
+}
+
+function commandOutputText(value: unknown) {
+  if (!value || typeof value !== "object") return "";
+  const output = value as Partial<CommandOutput> & { output?: string; error?: string };
+  return [output.command, output.stdout || output.output, output.stderr || output.error].filter(Boolean).join("\n\n");
+}
+
+function previewUrl(app: ManagedApp, vpsIp: string) {
+  if (!app.publicPreview || !app.port) return "";
+  if (app.previewUrl && !app.previewUrl.includes("SERVER_IP")) return app.previewUrl;
+  const host = vpsIp || "SERVER_IP";
+  return `http://${host}:${app.port}`;
 }
 
 function roleOptions() {

@@ -79,7 +79,7 @@ export async function serverStatus() {
     safeRun("df", ["-h", "/"]),
     safeRun("docker", ["version", "--format", "{{.Server.Version}}"]),
     safeRun("systemctl", ["is-active", "caddy"]),
-    safeRun("sudo", ["ufw", "status"]),
+    safeRun("sudo", ["ufw", "status", "numbered"]),
     fetchPublicIp()
   ]);
 
@@ -184,6 +184,7 @@ export async function deployGitApp(input: {
   envText?: string;
   corsOrigins?: string[];
   databaseId?: string;
+  publicPreview?: boolean;
 }) {
   const name = assertSafeAppName(input.name);
   const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
@@ -201,6 +202,7 @@ export async function deployGitApp(input: {
   fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
   const now = new Date().toISOString();
   const port = await findOpenPort();
+  const publicPreview = Boolean(input.publicPreview);
   const env = parseEnvText(input.envText || "");
   const envFile = writeEnvFile(appDir, env.env);
   const app: ManagedApp = {
@@ -223,6 +225,9 @@ export async function deployGitApp(input: {
     corsOrigins,
     databaseId: databaseId || undefined,
     port,
+    publicPreview,
+    portBind: publicPreview ? "public" : "localhost",
+    previewUrl: publicPreview ? await previewUrlForPort(port) : undefined,
     status: "created",
     rootDir: appDir,
     createdAt: now,
@@ -253,17 +258,22 @@ export async function deployGitApp(input: {
     const dockerfile = prepareDockerfile(buildDir, appDir, input.mode, app);
     appendDeploymentLog(deploymentId, "building image", `Building ${image}.`);
     await safeRunOrThrow("docker", ["build", "-t", image, "-f", dockerfile, buildDir]);
-    appendDeploymentLog(deploymentId, "starting service", `Starting container on 127.0.0.1:${app.port}.`);
+    appendDeploymentLog(deploymentId, "starting service", `Starting container on ${app.publicPreview ? "0.0.0.0" : "127.0.0.1"}:${app.port}.`);
     await replaceDockerContainer(app, image, envFile);
+    if (app.publicPreview) {
+      await openPreviewFirewallPort(app.port, deploymentId);
+    }
     markApp(app.id, {
       status: "running",
       imageTag: image,
       containerName: "svp_" + app.id,
       commitSha: commit.ok ? commit.stdout.trim() : undefined,
-      lastMessage: `Git ${input.mode} app deployed from ${branch}.`
+      lastMessage: app.publicPreview
+        ? `Git ${input.mode} app deployed from ${branch}. Preview: ${app.previewUrl || `port ${app.port}`}`
+        : `Git ${input.mode} app deployed from ${branch}. Add a domain or enable public preview to expose it.`
     });
-    finishDeployment(deploymentId, "succeeded", `Deployed ${name} from ${branch}.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined, imageTag: image });
-    audit("app.deploy_git", "Git app deployed.", { appId: app.id, name, repoUrl, branch, appDirectory, mode: input.mode, envKeys: env.keys });
+    finishDeployment(deploymentId, "succeeded", app.publicPreview ? `Deployed ${name}. Preview: ${app.previewUrl || `port ${app.port}`}` : `Deployed ${name} from ${branch}.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined, imageTag: image });
+    audit("app.deploy_git", "Git app deployed.", { appId: app.id, name, repoUrl, branch, appDirectory, mode: input.mode, publicPreview, envKeys: env.keys });
     return readState().apps.find((item) => item.id === app.id) || app;
   } catch (error) {
     const message = error instanceof Error ? redact(error.message) : "Deploy failed.";
@@ -402,12 +412,14 @@ export async function deployDockerImageApp(input: {
   containerPort: number;
   envText?: string;
   healthPath?: string;
+  publicPreview?: boolean;
 }) {
   const name = assertSafeAppName(input.name);
   const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
   if (projectId && !readState().projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
   const image = assertSafeDockerImage(input.image);
   const containerPort = assertContainerPort(input.containerPort || 3000);
+  const publicPreview = Boolean(input.publicPreview);
   const env = parseEnvText(input.envText || "");
   const id = slug(name) + "-" + crypto.randomBytes(3).toString("hex");
   const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), id));
@@ -426,11 +438,14 @@ export async function deployDockerImageApp(input: {
     healthPath: cleanHealthPath(input.healthPath || "/"),
     envKeys: env.keys,
     port: await findOpenPort(),
+    publicPreview,
+    portBind: publicPreview ? "public" : "localhost",
     status: "created",
     rootDir: appDir,
     createdAt: now,
     updatedAt: now
   };
+  app.previewUrl = publicPreview ? await previewUrlForPort(app.port) : undefined;
   updateState((state) => {
     state.apps.unshift(app);
   });
@@ -438,11 +453,19 @@ export async function deployDockerImageApp(input: {
   try {
     appendDeploymentLog(deploymentId, "pulling image", image);
     await safeRunOrThrow("docker", ["pull", image]);
-    appendDeploymentLog(deploymentId, "starting service", `Publishing only on 127.0.0.1:${app.port}.`);
+    appendDeploymentLog(deploymentId, "starting service", `Starting container on ${app.publicPreview ? "0.0.0.0" : "127.0.0.1"}:${app.port}.`);
     await replaceDockerContainer(app, image, envFile);
-    markApp(app.id, { status: "running", containerName: "svp_" + app.id, imageTag: image, lastMessage: "Docker image is running." });
-    finishDeployment(deploymentId, "succeeded", `Docker image ${image} deployed.`, { imageTag: image });
-    audit("app.deploy_image", "Docker image deployed.", { appId: app.id, name, image, envKeys: env.keys });
+    if (app.publicPreview) {
+      await openPreviewFirewallPort(app.port, deploymentId);
+    }
+    markApp(app.id, {
+      status: "running",
+      containerName: "svp_" + app.id,
+      imageTag: image,
+      lastMessage: app.publicPreview ? `Docker image is running. Preview: ${app.previewUrl || `port ${app.port}`}` : "Docker image is running on a localhost port."
+    });
+    finishDeployment(deploymentId, "succeeded", app.publicPreview ? `Docker image ${image} deployed. Preview: ${app.previewUrl || `port ${app.port}`}` : `Docker image ${image} deployed.`, { imageTag: image });
+    audit("app.deploy_image", "Docker image deployed.", { appId: app.id, name, image, publicPreview, envKeys: env.keys });
     return readState().apps.find((item) => item.id === app.id) || app;
   } catch (error) {
     const message = error instanceof Error ? redact(error.message) : "Docker image deploy failed.";
@@ -818,6 +841,20 @@ export async function deleteFirewallRule(input: { ruleNumber: number }) {
   return result;
 }
 
+async function openPreviewFirewallPort(port: number, deploymentId?: string) {
+  const safePort = assertNetworkPort(port);
+  const result = await safeRun("sudo", ["ufw", "allow", `${safePort}/tcp`]);
+  if (deploymentId) {
+    appendDeploymentLog(
+      deploymentId,
+      result.ok ? "firewall" : "firewall warning",
+      result.ok ? `Allowed preview port ${safePort}/tcp in UFW.` : `Could not update UFW for preview port ${safePort}/tcp: ${result.stderr || result.stdout}`
+    );
+  }
+  audit("firewall.preview_port", result.ok ? `Allowed preview port ${safePort}/tcp.` : `Preview firewall update failed for ${safePort}/tcp.`, { port: safePort, ok: result.ok });
+  return result;
+}
+
 async function deployDockerSample(app: ManagedApp) {
   const serverJs = sampleNodeServer(app.name, app.port, "0.0.0.0");
   fs.writeFileSync(path.join(app.rootDir!, "server.js"), serverJs, { mode: 0o640 });
@@ -874,6 +911,7 @@ async function deployDockerSample(app: ManagedApp) {
 async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: string) {
   const container = "svp_" + app.id;
   const containerPort = app.deployMode === "static" ? 80 : assertContainerPort(app.containerPort || 3000);
+  const hostBind = app.publicPreview ? "0.0.0.0" : "127.0.0.1";
   await safeRun("docker", ["rm", "-f", container]);
   const args = [
     "run",
@@ -897,7 +935,7 @@ async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: 
     "--label",
     "svp.appId=" + app.id,
     "-p",
-    "127.0.0.1:" + app.port + ":" + containerPort
+    hostBind + ":" + app.port + ":" + containerPort
   ];
   if (envFile) args.push("--env-file", envFile);
   args.push(image);
@@ -1019,6 +1057,12 @@ async function fetchPublicIp() {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "public IP check failed" };
   }
+}
+
+async function previewUrlForPort(port: number) {
+  const publicIp = await fetchPublicIp();
+  const host = publicIp.ok && publicIp.ip ? publicIp.ip.trim() : "SERVER_IP";
+  return `http://${host}:${assertNetworkPort(port)}`;
 }
 
 function memoryStatus() {

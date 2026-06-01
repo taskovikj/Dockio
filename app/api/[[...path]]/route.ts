@@ -18,7 +18,6 @@ import {
   deployComposeYamlApp,
   deployDockerImageApp,
   deployGitApp,
-  deploySampleApp,
   getDatabaseConnection,
   readAppLogs,
   readDeploymentLogs,
@@ -49,13 +48,6 @@ const loginSchema = z.object({
   password: z.string().min(1)
 });
 
-const sampleSchema = z.object({
-  name: z.string().min(1).max(80).regex(/^[^\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+$/, "App name contains invalid characters."),
-  strategy: z.enum(["docker", "systemd", "static"]),
-  projectId: z.string().optional().default(""),
-  serviceRole: z.enum(["frontend", "backend", "worker", "fullstack"]).optional().default("fullstack")
-});
-
 const gitDeploySchema = z.object({
   name: z.string().min(1).max(80),
   projectId: z.string().optional().default(""),
@@ -70,7 +62,8 @@ const gitDeploySchema = z.object({
   healthPath: z.string().max(120).optional().default("/"),
   envText: z.string().max(20_000).optional().default(""),
   corsOrigins: z.array(z.string().max(220)).optional().default([]),
-  databaseId: z.string().optional().default("")
+  databaseId: z.string().optional().default(""),
+  publicPreview: z.boolean().optional().default(false)
 });
 
 const composeDeploySchema = z.object({
@@ -95,7 +88,8 @@ const imageDeploySchema = z.object({
   image: z.string().min(1).max(240),
   containerPort: z.coerce.number().int().min(1).max(65535).optional().default(3000),
   healthPath: z.string().max(120).optional().default("/"),
-  envText: z.string().max(20_000).optional().default("")
+  envText: z.string().max(20_000).optional().default(""),
+  publicPreview: z.boolean().optional().default(false)
 });
 
 const domainSchema = z.object({
@@ -204,10 +198,6 @@ async function route(request: Request, context: RouteContext) {
     if (segments[0] === "firewall" && segments[1] === "delete-rule" && request.method === "POST") {
       rateLimit(request, { key: "firewall-delete-rule", limit: 20, windowMs: 60_000 });
       return ok({ result: await deleteFirewallRule(firewallDeleteSchema.parse(await request.json())) }, 200, requestId);
-    }
-    if (segments[0] === "apps" && segments[1] === "sample" && request.method === "POST") {
-      rateLimit(request, { key: "deploy-sample", limit: 10, windowMs: 60_000 });
-      return ok({ app: await deploySampleApp(sampleSchema.parse(await request.json())) }, 201, requestId);
     }
     if (segments[0] === "apps" && segments[1] === "git" && request.method === "POST") {
       rateLimit(request, { key: "deploy-git", limit: 8, windowMs: 60_000 });

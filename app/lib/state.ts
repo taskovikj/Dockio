@@ -41,6 +41,9 @@ export interface ManagedApp {
   appDirectory?: string;
   dockerImage?: string;
   sourceType?: "sample" | "git-url" | "docker-image" | "compose-yaml";
+  publicPreview?: boolean;
+  previewUrl?: string;
+  portBind?: "localhost" | "public";
   commitSha?: string;
   deployMode?: "dockerfile" | "node" | "static" | "compose";
   buildCommand?: string;
