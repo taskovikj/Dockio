@@ -2,22 +2,29 @@
 
 import {
   Activity,
+  ArrowLeft,
   Boxes,
   CheckCircle2,
   CircleAlert,
+  Copy,
   Database,
+  ExternalLink,
+  Eye,
   Flame,
   Globe2,
   GitBranch,
   HardDrive,
   HeartPulse,
+  Home,
   KeyRound,
   Layers3,
   Lock,
+  PackagePlus,
   Play,
   RefreshCw,
   RotateCcw,
   Server,
+  Settings,
   Shield,
   Square,
   Terminal,
@@ -27,7 +34,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-type Tab = "general" | "services" | "environment" | "database" | "monitoring" | "logs" | "deployments" | "domains" | "advanced";
+type Tab = "general" | "services" | "environment" | "database" | "monitoring" | "logs" | "deployments" | "domains" | "preview" | "advanced";
 type Strategy = "docker" | "systemd" | "static" | "compose";
 type GitMode = "dockerfile" | "node" | "static";
 type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
@@ -71,6 +78,7 @@ interface ManagedApp {
   domain?: string;
   serviceName?: string;
   containerName?: string;
+  composeProject?: string;
   imageTag?: string;
   rootDir?: string;
   createdAt: string;
@@ -179,7 +187,7 @@ interface CommandOutput {
   stderr: string;
 }
 
-const tabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
+const projectTabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
   { id: "general", label: "Overview", icon: Layers3 },
   { id: "services", label: "Services", icon: Boxes },
   { id: "deployments", label: "Deployments", icon: Activity },
@@ -191,12 +199,24 @@ const tabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
   { id: "advanced", label: "Settings", icon: Wrench }
 ];
 
+const serviceTabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
+  { id: "general", label: "General", icon: Settings },
+  { id: "environment", label: "Environment", icon: KeyRound },
+  { id: "domains", label: "Domains", icon: Globe2 },
+  { id: "deployments", label: "Deployments", icon: Activity },
+  { id: "preview", label: "Preview", icon: Eye },
+  { id: "logs", label: "Logs", icon: Terminal },
+  { id: "monitoring", label: "Monitoring", icon: HeartPulse },
+  { id: "advanced", label: "Advanced", icon: Shield }
+];
+
 export function PanelShell() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [state, setState] = useState<StatePayload | null>(null);
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
   const [tab, setTab] = useState<Tab>("general");
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [selectedServiceId, setSelectedServiceId] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -411,6 +431,7 @@ export function PanelShell() {
 
   function openProject(projectId: string) {
     setSelectedProjectId(projectId);
+    setSelectedServiceId("");
     setTab("general");
     setDomainForm((form) => ({ ...form, appId: "" }));
     setAppSettingsForm((form) => ({ ...form, projectId, appId: "", databaseId: "" }));
@@ -427,8 +448,23 @@ export function PanelShell() {
 
   function showAllProjects() {
     setSelectedProjectId("");
+    setSelectedServiceId("");
     setTab("general");
     setLogs("");
+  }
+
+  function openService(app: ManagedApp, nextTab: Tab = "general") {
+    setSelectedServiceId(app.id);
+    setDomainForm((form) => ({ ...form, appId: app.id }));
+    setAppSettingsForm({
+      appId: app.id,
+      projectId: app.projectId || selectedProjectId || "",
+      serviceRole: app.serviceRole || "fullstack",
+      corsText: (app.corsOrigins || []).join("\n"),
+      databaseId: app.databaseId || ""
+    });
+    setAppEnvForm((form) => ({ ...form, appId: app.id, deleteKey: "" }));
+    setTab(nextTab);
   }
 
   function startDeployment(provider: DeployProvider = deployProvider) {
@@ -770,16 +806,20 @@ export function PanelShell() {
   const databases = currentProject ? allDatabases.filter((database) => database.projectId === currentProject.id) : allDatabases;
   const scopedAppIds = new Set(apps.map((app) => app.id));
   const deployments = currentProject ? allDeployments.filter((deployment) => scopedAppIds.has(deployment.appId)) : allDeployments;
+  const selectedService = currentProject ? apps.find((app) => app.id === selectedServiceId) : undefined;
+  const currentTabs = selectedService ? serviceTabs : projectTabs;
   const filteredProjects = allProjects.filter((project) => {
     const query = projectSearch.trim().toLowerCase();
     if (!query) return true;
     return project.name.toLowerCase().includes(query) || project.slug.toLowerCase().includes(query) || (project.description || "").toLowerCase().includes(query);
   });
-  const activeApp = apps.find((app) => app.id === domainForm.appId) || apps[0];
+  const activeApp = selectedService || apps.find((app) => app.id === domainForm.appId) || apps[0];
   const selectedSettingsApp = apps.find((app) => app.id === appSettingsForm.appId);
   const selectedDomainApp = apps.find((app) => app.id === domainForm.appId) || activeApp;
   const vpsIp = publicIp(status);
   const activePreviewUrl = activeApp ? previewUrl(activeApp, vpsIp) : "";
+  const visibleApps = selectedService ? [selectedService] : apps;
+  const visibleDeployments = selectedService ? deployments.filter((deployment) => deployment.appId === selectedService.id) : deployments;
 
   if (!currentProject) {
     return (
@@ -787,15 +827,42 @@ export function PanelShell() {
         <div className="grid min-h-screen lg:grid-cols-[240px_1fr]">
           <aside className="border-b border-line bg-[#050505] p-3 lg:border-b-0 lg:border-r">
             <Brand compact />
-            <div className="mt-5 grid gap-2">
-              <button className="svp-button justify-start bg-[#1b1b1e]" onClick={showAllProjects}>
-                <Layers3 size={15} />
-                Projects
-              </button>
-            </div>
+            <nav className="mt-5 grid gap-4">
+              <SidebarGroup title="Main">
+                <button className="svp-button justify-start bg-[#1b1b1e]" onClick={showAllProjects}>
+                  <Layers3 size={15} />
+                  Projects
+                </button>
+                <button className="svp-button justify-start" onClick={() => setNotice("Open a project to view deployment history.")}>
+                  <Activity size={15} />
+                  Deployments
+                </button>
+                <button className="svp-button justify-start" onClick={() => setNotice("Open a project/service to inspect logs.")}>
+                  <Terminal size={15} />
+                  Logs
+                </button>
+              </SidebarGroup>
+              <SidebarGroup title="Infrastructure">
+                <button className="svp-button justify-start" onClick={() => setNotice("Open a project, then Settings to manage UFW and server status.")}>
+                  <Shield size={15} />
+                  Firewall
+                </button>
+                <button className="svp-button justify-start" onClick={() => setNotice("Open a project, then Storage to create Postgres, Redis, or external DB records.")}>
+                  <Database size={15} />
+                  Storage
+                </button>
+                <ComingSoonItem label="Backups" />
+              </SidebarGroup>
+              <SidebarGroup title="Settings">
+                <ComingSoonItem label="Git Sources" />
+                <ComingSoonItem label="Registry" />
+              </SidebarGroup>
+            </nav>
             <div className="mt-6 border-t border-line pt-4 text-xs text-zinc-500">
               <p>Server IP</p>
               <p className="mt-1 break-all text-zinc-300">{vpsIp || "checking"}</p>
+              <p className="mt-3">Signed in</p>
+              <p className="mt-1 truncate text-zinc-300">{auth.user?.email}</p>
             </div>
           </aside>
 
@@ -833,6 +900,7 @@ export function PanelShell() {
                 <Panel title="New Project" icon={Layers3}>
                   <div className="grid gap-3">
                     <Field label="Project name" value={projectForm.name} onChange={(name) => setProjectForm({ ...projectForm, name })} placeholder="my-product" />
+                    <Field label="Slug preview" value={uiSlug(projectForm.name)} onChange={() => undefined} placeholder="auto-generated" />
                     <TextArea label="What will run here?" value={projectForm.description} onChange={(description) => setProjectForm({ ...projectForm, description })} placeholder="Frontend + API + Postgres, domains, env..." />
                     <button className="svp-button-primary w-fit" onClick={() => void createProject()} disabled={Boolean(busy) || !projectForm.name.trim()}>
                       <Layers3 size={16} />
@@ -873,24 +941,57 @@ export function PanelShell() {
         <aside className="border-b border-line bg-[#050505] p-3 lg:border-b-0 lg:border-r">
           <Brand compact />
           <button className="svp-button mt-5 w-full justify-start" onClick={showAllProjects}>
-            <Layers3 size={15} />
-            All Projects
+            <Home size={15} />
+            Projects Home
           </button>
           <div className="mt-5 rounded-md border border-line bg-panel p-3">
             <p className="svp-label">Current project</p>
             <p className="mt-2 truncate font-black text-ink">{currentProject.name}</p>
             <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{currentProject.description || "Services, deploys, env, domains, storage."}</p>
           </div>
-          <nav className="mt-5 grid gap-1" aria-label="Project navigation">
-            {tabs.map((item) => (
-              <TabButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />
-            ))}
+          {selectedService && (
+            <button className="svp-button mt-3 w-full justify-start" onClick={() => { setSelectedServiceId(""); setTab("services"); }}>
+              <ArrowLeft size={15} />
+              Back to Project
+            </button>
+          )}
+          <nav className="mt-5 grid gap-4" aria-label={selectedService ? "Service navigation" : "Project navigation"}>
+            <SidebarGroup title={selectedService ? "Service" : "Project"}>
+              {currentTabs.filter((item) => ["general", "services", "deployments", "logs", "monitoring", "preview"].includes(item.id)).map((item) => (
+                <TabButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />
+              ))}
+            </SidebarGroup>
+            <SidebarGroup title="Configuration">
+              {currentTabs.filter((item) => ["environment", "domains", "database"].includes(item.id)).map((item) => (
+                <TabButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />
+              ))}
+            </SidebarGroup>
+            <SidebarGroup title="Infrastructure">
+              {!selectedService && <TabButton item={{ id: "advanced", label: "Firewall & Server", icon: Shield }} active={tab === "advanced"} onClick={() => setTab("advanced")} />}
+              {selectedService && <TabButton item={{ id: "advanced", label: "Advanced / Danger", icon: Shield }} active={tab === "advanced"} onClick={() => setTab("advanced")} />}
+            </SidebarGroup>
           </nav>
+          {!selectedService && apps.length > 0 && (
+            <div className="mt-5 border-t border-line pt-4">
+              <p className="svp-label">Services</p>
+              <div className="mt-2 grid gap-1">
+                {apps.slice(0, 6).map((app) => (
+                  <button key={app.id} className="rounded-md px-3 py-2 text-left text-sm font-bold text-zinc-400 hover:bg-panel hover:text-ink" onClick={() => openService(app)}>
+                    <span className="block truncate">{app.name}</span>
+                    <span className="block truncate text-xs font-medium text-zinc-600">{app.serviceRole || "fullstack"} · {app.status}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="mt-6 border-t border-line pt-4 text-xs text-zinc-500">
             <p>Server IP</p>
             <p className="mt-1 break-all text-zinc-300">{vpsIp || "checking"}</p>
             <p className="mt-3">Panel</p>
-            <p className="mt-1 text-zinc-300">Auth protected</p>
+            <p className="mt-1 text-zinc-300">{auth.user?.email || "Auth protected"}</p>
+            <button className="mt-3 text-zinc-400 underline decoration-zinc-700 underline-offset-4 hover:text-ink" onClick={() => void logout()}>
+              Logout
+            </button>
           </div>
         </aside>
 
@@ -898,19 +999,56 @@ export function PanelShell() {
           <header className="border-b border-line bg-[#050505]/95 px-4 py-3 md:px-6">
             <div className="mx-auto flex max-w-7xl flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="min-w-0">
-                <p className="text-xs font-bold text-zinc-500">Projects / {currentProject.name}</p>
-                <h1 className="mt-1 truncate text-2xl font-black tracking-normal text-ink">{currentProject.name}</h1>
-                <p className="mt-1 max-w-3xl text-sm text-zinc-400">
-                  {currentProject.description || "One focused place for this app: services, deploys, env, storage, domains, logs, firewall, and rollbacks."}
+                <p className="text-xs font-bold text-zinc-500">
+                  Projects / {currentProject.name}{selectedService ? ` / ${selectedService.name}` : ""}
                 </p>
+                <h1 className="mt-1 truncate text-2xl font-black tracking-normal text-ink">{selectedService?.name || currentProject.name}</h1>
+                <p className="mt-1 max-w-3xl text-sm text-zinc-400">
+                  {selectedService
+                    ? `${selectedService.serviceRole || "fullstack"} service · ${selectedService.sourceType || selectedService.source || selectedService.strategy} · ${selectedService.slug}`
+                    : currentProject.description || "Project workspace for services, deploys, env, storage, domains, logs, firewall, and rollbacks."}
+                </p>
+                {selectedService && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <StatusPill ok={selectedService.status === "running"} label={selectedService.status} />
+                    <span className="svp-badge">{selectedService.serviceRole || "fullstack"}</span>
+                    <span className="svp-badge">{selectedService.deployMode || selectedService.strategy}</span>
+                    {selectedService.portBind === "public" && <span className="svp-badge">public preview</span>}
+                  </div>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button className="svp-button-primary" onClick={() => startDeployment()} disabled={Boolean(busy)}>
-                  <Play size={15} />
-                  New Deployment
-                </button>
+                {selectedService ? (
+                  <>
+                    {(selectedService.domain || activePreviewUrl) && (
+                      <a className="svp-button-primary" href={selectedService.domain ? `https://${selectedService.domain}` : activePreviewUrl} target="_blank" rel="noreferrer">
+                        <ExternalLink size={15} />
+                        Open URL
+                      </a>
+                    )}
+                    <button className="svp-button" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
+                      <RefreshCw size={15} />
+                      Redeploy
+                    </button>
+                    <button className="svp-button" onClick={() => void appAction(selectedService.id, selectedService.status === "running" ? "restart" : "start")} disabled={Boolean(busy)}>
+                      <RotateCcw size={15} />
+                      {selectedService.status === "running" ? "Restart" : "Start"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button className="svp-button-primary" onClick={() => startDeployment()} disabled={Boolean(busy)}>
+                      <PackagePlus size={15} />
+                      Create Service
+                    </button>
+                    <button className="svp-button" onClick={() => setTab("database")} disabled={Boolean(busy)}>
+                      <Database size={15} />
+                      Create Database
+                    </button>
+                  </>
+                )}
                 {(activeApp?.domain || activePreviewUrl) && (
-                  <a className="svp-button" href={activeApp?.domain ? `https://${activeApp.domain}` : activePreviewUrl} target="_blank" rel="noreferrer">
+                  !selectedService && <a className="svp-button" href={activeApp?.domain ? `https://${activeApp.domain}` : activePreviewUrl} target="_blank" rel="noreferrer">
                     <Globe2 size={15} />
                     {activeApp?.domain ? "Visit" : "Preview"}
                   </a>
@@ -930,37 +1068,105 @@ export function PanelShell() {
           <div className="mx-auto max-w-7xl space-y-4 px-4 py-5 md:px-6">
             {(notice || busy) && <Notice busy={busy} notice={notice} />}
 
-        {tab === "general" && (
+        {tab === "general" && selectedService && (
+          <div className="space-y-4">
+            <Panel title="Deploy Settings" icon={Play}>
+              <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+                <div className="flex flex-wrap gap-2">
+                  <button className="svp-button-primary" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
+                    <Play size={15} />
+                    Redeploy
+                  </button>
+                  <button className="svp-button" onClick={() => selectedService.source === "git" || selectedService.sourceType === "git-url" ? editGitDeployment(selectedService) : setNotice("Edit settings are currently available for public Git services.")}>
+                    <Wrench size={15} />
+                    Edit Build Settings
+                  </button>
+                  <button className="svp-button" onClick={() => void appAction(selectedService.id, "restart")} disabled={Boolean(busy)}>
+                    <RotateCcw size={15} />
+                    Restart
+                  </button>
+                  <button className="svp-button" onClick={() => selectedService.status === "running" ? void stop(selectedService.id) : void appAction(selectedService.id, "start")} disabled={Boolean(busy)}>
+                    <Square size={15} />
+                    {selectedService.status === "running" ? "Stop" : "Start"}
+                  </button>
+                  <button className="svp-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
+                    <Terminal size={15} />
+                    Logs
+                  </button>
+                </div>
+                <Info title="No autodeploy yet" body="Supavibe deploys manually from this panel right now. Webhooks and GitHub account integrations are intentionally hidden until they work." />
+              </div>
+            </Panel>
+
+            <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+              <Panel title="Provider / Source" icon={GitBranch}>
+                <div className="grid gap-3 text-sm">
+                  <Info title="Source type" body={selectedService.sourceType || selectedService.source || selectedService.strategy} />
+                  {selectedService.repoUrl && <Info title="Repository" body={`${selectedService.repoUrl} @ ${selectedService.branch || "main"}`} />}
+                  {selectedService.appDirectory && <Info title="Build path" body={selectedService.appDirectory} />}
+                  {selectedService.dockerImage && <Info title="Docker image" body={selectedService.dockerImage} />}
+                  {selectedService.composeProject && <Info title="Compose project" body={selectedService.composeProject} />}
+                </div>
+              </Panel>
+
+              <Panel title="Build Type" icon={Wrench}>
+                <div className="grid gap-3 text-sm">
+                  <Info title="Build mode" body={selectedService.deployMode || selectedService.strategy} />
+                  <Info title="Build command" body={selectedService.buildCommand || "auto"} />
+                  <Info title="Start command" body={selectedService.startCommand || "auto"} />
+                  <Info title="Internal port" body={selectedService.containerPort ? `Container listens on :${selectedService.containerPort}` : "Not assigned"} />
+                  <Info title="Health path" body={selectedService.healthPath || "/"} />
+                </div>
+              </Panel>
+            </div>
+
+            <Panel title="URLs" icon={Globe2}>
+              <div className="grid gap-3 lg:grid-cols-3">
+                <UrlCard title="Preview port" url={previewUrl(selectedService, vpsIp)} help={selectedService.publicPreview ? "Public quick-test URL opened through UFW." : "Preview port is disabled. Use Edit Build Settings to enable it on redeploy."} />
+                <UrlCard title="Domain" url={selectedService.domain ? `https://${selectedService.domain}` : ""} help="Production URL through Caddy on ports 80/443." />
+                <Info title="Internal route" body={selectedService.port ? `${selectedService.portBind === "public" ? "0.0.0.0" : "127.0.0.1"}:${selectedService.port} -> :${selectedService.containerPort || selectedService.port}` : "No runtime port"} />
+              </div>
+            </Panel>
+          </div>
+        )}
+
+        {tab === "general" && !selectedService && (
           <div className="space-y-4">
             <Panel title="Project Actions" icon={Play}>
               <div className="flex flex-wrap items-center gap-2">
                 <button className="svp-button-primary" onClick={() => startDeployment()} disabled={Boolean(busy)}>
-                  <Play size={15} />
-                  New Deployment
+                  <PackagePlus size={15} />
+                  Create Service
+                </button>
+                <button className="svp-button" onClick={() => setTab("database")} disabled={Boolean(busy)}>
+                  <Database size={15} />
+                  Create Database
                 </button>
                 <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
                   <RefreshCw size={15} />
                   Reload
                 </button>
-                <button className="svp-button" onClick={() => activeApp && void appAction(activeApp.id, "redeploy")} disabled={Boolean(busy) || !(activeApp?.source || activeApp?.sourceType === "docker-image")}>
-                  <Wrench size={15} />
-                  Rebuild
-                </button>
-                <button className="svp-button" onClick={() => activeApp && void appAction(activeApp.id, "restart")} disabled={Boolean(busy) || !activeApp}>
-                  <RotateCcw size={15} />
-                  Restart
-                </button>
                 {activeApp && (
-                  <button className="svp-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
-                    <Terminal size={15} />
-                    Logs
-                  </button>
-                )}
-                {activeApp && (activeApp.source === "git" || activeApp.sourceType === "git-url") && (
-                  <button className="svp-button" onClick={() => editGitDeployment(activeApp)} disabled={Boolean(busy)}>
-                    <Wrench size={15} />
-                    Edit Deploy
-                  </button>
+                  <>
+                    <button className="svp-button" onClick={() => void appAction(activeApp.id, "redeploy")} disabled={Boolean(busy) || !(activeApp.source || activeApp.sourceType === "docker-image")}>
+                      <Wrench size={15} />
+                      Rebuild
+                    </button>
+                    <button className="svp-button" onClick={() => void appAction(activeApp.id, "restart")} disabled={Boolean(busy)}>
+                      <RotateCcw size={15} />
+                      Restart
+                    </button>
+                    <button className="svp-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
+                      <Terminal size={15} />
+                      Logs
+                    </button>
+                    {(activeApp.source === "git" || activeApp.sourceType === "git-url") && (
+                      <button className="svp-button" onClick={() => editGitDeployment(activeApp)} disabled={Boolean(busy)}>
+                        <Wrench size={15} />
+                        Edit Deploy
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             </Panel>
@@ -1078,7 +1284,7 @@ export function PanelShell() {
         {tab === "services" && (
           <div className="space-y-4">
             <Panel title="Services" icon={Server}>
-              <AppGrid apps={apps} projects={projects} databases={databases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} onEdit={editGitDeployment} />
+              <AppGrid apps={apps} projects={projects} databases={databases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} onEdit={editGitDeployment} onOpen={openService} />
             </Panel>
             <Panel title="Service Roles" icon={Boxes}>
               <div className="grid gap-3 md:grid-cols-4">
@@ -1129,7 +1335,7 @@ export function PanelShell() {
                       }}
                     >
                       <option value="">Select app</option>
-                      {apps.map((app) => (
+                      {visibleApps.map((app) => (
                         <option key={app.id} value={app.id}>{app.name}</option>
                       ))}
                     </select>
@@ -1156,7 +1362,7 @@ export function PanelShell() {
                     <span className="svp-label">Service</span>
                     <select className="svp-input" value={appEnvForm.appId} onChange={(event) => setAppEnvForm({ ...appEnvForm, appId: event.target.value })}>
                       <option value="">Select service</option>
-                      {apps.map((app) => (
+                      {visibleApps.map((app) => (
                         <option key={app.id} value={app.id}>{app.name}</option>
                       ))}
                     </select>
@@ -1184,8 +1390,8 @@ export function PanelShell() {
 
             <Panel title="Configured Keys" icon={Lock}>
               <div className="grid gap-2">
-                {apps.length === 0 && <p className="text-sm text-zinc-500">No app environment keys yet.</p>}
-                {apps.map((app) => (
+                {visibleApps.length === 0 && <p className="text-sm text-zinc-500">No app environment keys yet.</p>}
+                {visibleApps.map((app) => (
                   <div key={app.id} className="rounded-md border border-line bg-panel p-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-bold text-ink">{app.name}</p>
@@ -1253,7 +1459,31 @@ export function PanelShell() {
           </div>
         )}
 
-        {tab === "monitoring" && (
+        {tab === "monitoring" && selectedService && (
+          <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+            <Panel title="Service Health" icon={HeartPulse}>
+              <div className="grid gap-3">
+                <Info title="Status" body={selectedService.status} />
+                <Info title="Last message" body={selectedService.lastMessage || "No recent health message."} />
+                <Info title="Health check" body={`${selectedService.healthPath || "/"} on 127.0.0.1:${selectedService.port || "unknown"}`} />
+                <button className="svp-button-primary w-fit" onClick={() => void appAction(selectedService.id, "health")} disabled={Boolean(busy)}>
+                  <HeartPulse size={15} />
+                  Check Health
+                </button>
+              </div>
+            </Panel>
+            <Panel title="Runtime" icon={Server}>
+              <div className="grid gap-3">
+                <Info title="Strategy" body={selectedService.strategy} />
+                <Info title="Runtime resource" body={selectedService.containerName || selectedService.composeProject || selectedService.serviceName || "Not running"} />
+                <Info title="Port binding" body={selectedService.port ? `${selectedService.portBind === "public" ? "0.0.0.0" : "127.0.0.1"}:${selectedService.port}` : "No port"} />
+                <Info title="Database" body={selectedService.databaseId ? databaseName(databases, selectedService.databaseId) : "No database bound"} />
+              </div>
+            </Panel>
+          </div>
+        )}
+
+        {tab === "monitoring" && !selectedService && (
           <div className="grid gap-4 xl:grid-cols-[1fr_1.3fr]">
             <div className="grid gap-3 md:grid-cols-2">
               <Metric label="Apps" value={apps.length} detail="Active records" icon={Boxes} />
@@ -1271,8 +1501,8 @@ export function PanelShell() {
           <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
             <Panel title="Services" icon={Server}>
               <div className="grid gap-2">
-                {apps.length === 0 && <p className="text-sm text-zinc-500">Deploy an app first, then logs appear here.</p>}
-                {apps.map((app) => (
+                {visibleApps.length === 0 && <p className="text-sm text-zinc-500">Deploy an app first, then logs appear here.</p>}
+                {visibleApps.map((app) => (
                   <button key={app.id} className="svp-button justify-start" onClick={() => void loadLogs(app.id)}>
                     <Terminal size={14} />
                     {app.name}
@@ -1281,14 +1511,53 @@ export function PanelShell() {
               </div>
             </Panel>
             <Panel title="Runtime Logs" icon={Terminal}>
+              <div className="mb-3 flex flex-wrap gap-2">
+                {activeApp && (
+                  <button className="svp-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
+                    <RefreshCw size={14} />
+                    Refresh Logs
+                  </button>
+                )}
+                <button className="svp-button" onClick={() => void navigator.clipboard?.writeText(logs)} disabled={!logs}>
+                  <Copy size={14} />
+                  Copy
+                </button>
+                <button className="svp-button" onClick={() => setLogs("")} disabled={!logs}>
+                  Clear
+                </button>
+              </div>
               <pre className="svp-code min-h-96 overflow-auto rounded-md p-4 text-xs">{logs || "Select a service to load recent logs."}</pre>
             </Panel>
           </div>
         )}
 
-        {tab === "deployments" && (
+        {tab === "deployments" && selectedService && (
           <div className="space-y-4">
-            <Panel title={editingAppId ? "Edit & Redeploy Service" : "New Deployment"} icon={editingAppId ? Wrench : Play}>
+            <Panel title="Service Deployments" icon={Activity}>
+              <div className="mb-4 flex flex-wrap gap-2">
+                <button className="svp-button-primary" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
+                  <RefreshCw size={15} />
+                  Redeploy Latest
+                </button>
+                {(selectedService.source === "git" || selectedService.sourceType === "git-url") && (
+                  <button className="svp-button" onClick={() => editGitDeployment(selectedService)} disabled={Boolean(busy)}>
+                    <Wrench size={15} />
+                    Edit Source & Build
+                  </button>
+                )}
+                <button className="svp-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
+                  <Terminal size={15} />
+                  Runtime Logs
+                </button>
+              </div>
+              <DeploymentList deployments={visibleDeployments} apps={apps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
+            </Panel>
+          </div>
+        )}
+
+        {tab === "deployments" && !selectedService && (
+          <div className="space-y-4">
+            <Panel title={editingAppId ? "Edit & Redeploy Service" : "Create Service"} icon={editingAppId ? Wrench : PackagePlus}>
               {editingAppId && (
                 <div className="mb-4 rounded-md border border-action/40 bg-action/10 p-3 text-sm text-zinc-300">
                   Editing <span className="font-bold text-ink">{apps.find((app) => app.id === editingAppId)?.name || "service"}</span>. The existing service, preview port, logs, env keys, and history stay attached to the same service record.
@@ -1299,9 +1568,9 @@ export function PanelShell() {
               {deployStep === "source" && (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   {[
-                    { id: "git" as DeployProvider, title: "Public Git repo", body: "Auto-detect Node, Next, Vite, static, or Dockerfile apps.", icon: GitBranch },
-                    { id: "image" as DeployProvider, title: "Docker image", body: "Run an existing image from Docker Hub, GHCR, or a registry.", icon: Boxes },
-                    { id: "compose" as DeployProvider, title: "Compose from Git", body: "Clone a repository that already contains docker-compose.yml.", icon: Layers3 },
+                    { id: "git" as DeployProvider, title: "Application", body: "Deploy a public Git repository with Node, Next, Vite, static, or Dockerfile settings.", icon: GitBranch },
+                    { id: "image" as DeployProvider, title: "Docker Image", body: "Run an existing image from Docker Hub, GHCR, or another registry.", icon: Boxes },
+                    { id: "compose" as DeployProvider, title: "Docker Compose", body: "Clone a public repo that contains docker-compose.yml or compose.yaml.", icon: Layers3 },
                     { id: "compose-yaml" as DeployProvider, title: "Paste Compose YAML", body: "Deploy a small compose stack from pasted YAML.", icon: Terminal }
                   ].map((item) => {
                     const Icon = item.icon;
@@ -1453,7 +1722,36 @@ export function PanelShell() {
             </Panel>
 
             <Panel title="Recent Deployments" icon={Activity}>
-              <DeploymentList deployments={deployments} apps={apps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
+              <DeploymentList deployments={visibleDeployments} apps={apps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
+            </Panel>
+          </div>
+        )}
+
+        {tab === "preview" && selectedService && (
+          <div className="space-y-4">
+            <Panel title="Preview Port" icon={Eye}>
+              <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+                <div className="grid gap-3">
+                  <UrlCard
+                    title="Preview URL"
+                    url={previewUrl(selectedService, vpsIp)}
+                    help={selectedService.publicPreview ? "This is a quick public test URL on a generated VPS port." : "Preview is disabled. Use Edit Build Settings and enable public preview, then redeploy."}
+                  />
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Info title="Internal container port" body={selectedService.containerPort ? `:${selectedService.containerPort}` : "Not configured"} />
+                    <Info title="Assigned VPS port" body={selectedService.port ? `${selectedService.portBind === "public" ? "public" : "localhost"} :${selectedService.port}` : "Not assigned"} />
+                    <Info title="Health path" body={selectedService.healthPath || "/"} />
+                  </div>
+                </div>
+                <div className="grid content-start gap-3">
+                  <Info title="Preview vs domain" body="Preview ports are for quick testing. Production traffic should use Domains so Caddy handles HTTPS on 80/443." />
+                  <Info title="Firewall" body={selectedService.publicPreview ? "Supavibe attempts to allow this port in UFW during deploy." : "No public preview port is currently exposed."} />
+                  <button className="svp-button" onClick={() => editGitDeployment(selectedService)} disabled={selectedService.source !== "git" && selectedService.sourceType !== "git-url"}>
+                    <Wrench size={15} />
+                    Change Preview Setting
+                  </button>
+                </div>
+              </div>
             </Panel>
           </div>
         )}
@@ -1466,7 +1764,7 @@ export function PanelShell() {
                   <span className="svp-label">App</span>
                   <select className="svp-input" value={domainForm.appId} onChange={(event) => setDomainForm({ ...domainForm, appId: event.target.value })}>
                     <option value="">Select app</option>
-                    {apps.map((app) => (
+                    {visibleApps.map((app) => (
                       <option key={app.id} value={app.id}>
                         {app.name}
                       </option>
@@ -1490,7 +1788,35 @@ export function PanelShell() {
           </div>
         )}
 
-        {tab === "advanced" && (
+        {tab === "advanced" && selectedService && (
+          <div className="space-y-4">
+            <Panel title="Advanced Service Settings" icon={Shield}>
+              <div className="grid gap-3 md:grid-cols-2">
+                <Info title="Container" body={selectedService.containerName || selectedService.composeProject || selectedService.serviceName || "Not created yet"} />
+                <Info title="Image / release" body={selectedService.imageTag || selectedService.dockerImage || "Not available"} />
+                <Info title="Root directory" body={selectedService.rootDir || "Managed by Supavibe"} />
+                <Info title="Public exposure" body={selectedService.publicPreview ? `Preview port ${selectedService.port} is public` : selectedService.domain ? "Public only through Caddy domain" : "No public route configured"} />
+              </div>
+            </Panel>
+
+            <Panel title="Danger Zone" icon={Trash2}>
+              <div className="grid gap-3 rounded-md border border-red-900/60 bg-red-950/20 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                <div>
+                  <p className="font-black text-red-100">Delete this service</p>
+                  <p className="mt-1 text-sm text-red-200/75">
+                    Removes runtime resources for this service. Deployment history stays in the project. Type-confirmation is required.
+                  </p>
+                </div>
+                <button className="svp-button-danger" onClick={() => void appAction(selectedService.id, "delete")} disabled={Boolean(busy)}>
+                  <Trash2 size={15} />
+                  Delete Service
+                </button>
+              </div>
+            </Panel>
+          </div>
+        )}
+
+        {tab === "advanced" && !selectedService && (
           <div className="space-y-4">
             <Panel title="Firewall Status" icon={Shield}>
               <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
@@ -1618,6 +1944,50 @@ function Brand({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function SidebarGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-1">
+      <p className="px-2 text-[0.68rem] font-black uppercase tracking-wide text-zinc-600">{title}</p>
+      {children}
+    </div>
+  );
+}
+
+function ComingSoonItem({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-between rounded-md border border-line bg-[#080809] px-3 py-2 text-sm text-zinc-600">
+      <span>{label}</span>
+      <span className="text-[0.65rem] font-black uppercase">Soon</span>
+    </div>
+  );
+}
+
+function UrlCard({ title, url, help }: { title: string; url: string; help: string }) {
+  return (
+    <div className="rounded-md border border-line bg-panel p-3">
+      <p className="font-black text-ink">{title}</p>
+      {url ? (
+        <>
+          <a className="mt-2 block break-all text-sm font-bold text-action" href={url} target="_blank" rel="noreferrer">{url}</a>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <a className="svp-button" href={url} target="_blank" rel="noreferrer">
+              <ExternalLink size={14} />
+              Open
+            </a>
+            <button className="svp-button" onClick={() => void navigator.clipboard?.writeText(url)}>
+              <Copy size={14} />
+              Copy
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="mt-2 text-sm text-zinc-500">Not configured</p>
+      )}
+      <p className="mt-3 text-xs text-zinc-500">{help}</p>
+    </div>
+  );
+}
+
 function DeploymentSteps({ active }: { active: DeployStep }) {
   const items: Array<{ id: DeployStep; label: string }> = [
     { id: "source", label: "Source" },
@@ -1721,10 +2091,12 @@ function ProjectCards({
               <span className="svp-badge">{projectApps.filter((app) => app.serviceRole === "frontend").length} frontend</span>
               <span className="svp-badge">{projectApps.filter((app) => app.serviceRole === "backend").length} backend</span>
               <span className="svp-badge">{projectDbs.length} db</span>
+              <span className="svp-badge">slug {project.slug}</span>
             </div>
-            <p className="mt-4 text-xs text-zinc-500">
-              {lastDeployment ? `${lastDeployment.action}: ${lastDeployment.message}` : "Open project to manage its services, storage, domains, and logs."}
-            </p>
+            <div className="mt-4 grid gap-1 text-xs text-zinc-500">
+              <p>{lastDeployment ? `${lastDeployment.action}: ${lastDeployment.message}` : "Open project to manage its services, storage, domains, and logs."}</p>
+              <p>Created {new Date(project.createdAt).toLocaleDateString()} · Updated {new Date(project.updatedAt).toLocaleDateString()}</p>
+            </div>
           </button>
         );
       })}
@@ -1764,7 +2136,8 @@ function AppGrid({
   onLogs,
   onStop,
   onAction,
-  onEdit
+  onEdit,
+  onOpen
 }: {
   apps: ManagedApp[];
   projects: ProjectRecord[];
@@ -1774,6 +2147,7 @@ function AppGrid({
   onStop: (id: string) => Promise<void>;
   onAction: (id: string, action: "start" | "restart" | "redeploy" | "health" | "delete") => Promise<void>;
   onEdit: (app: ManagedApp) => void;
+  onOpen: (app: ManagedApp) => void;
 }) {
   if (apps.length === 0) return <p className="text-sm text-zinc-500">No services yet. Deploy a public Git repository from the Deployments tab.</p>;
   return (
@@ -1781,10 +2155,10 @@ function AppGrid({
       {apps.map((app) => {
         const appPreview = previewUrl(app, vpsIp);
         return (
-        <article key={app.id} className="rounded-md border border-line bg-panel p-3">
+        <article key={app.id} className="rounded-md border border-line bg-panel p-3 transition hover:border-zinc-600">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="truncate font-bold text-ink">{app.name}</p>
+              <button className="truncate text-left font-bold text-ink hover:underline" onClick={() => onOpen(app)}>{app.name}</button>
               <p className="text-xs text-zinc-500">
                 {projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"} - {app.deployMode || app.strategy} {app.sourceType || app.source ? `- ${app.sourceType || app.source}` : ""} {app.port ? `- ${app.portBind === "public" ? "0.0.0.0" : "127.0.0.1"}:${app.port}` : ""}
                 {app.containerPort ? ` -> :${app.containerPort}` : ""}
@@ -1804,6 +2178,10 @@ function AppGrid({
             <button className="svp-button" onClick={() => void onLogs(app.id)}>
               <Terminal size={14} />
               Logs
+            </button>
+            <button className="svp-button" onClick={() => onOpen(app)}>
+              <Settings size={14} />
+              Manage
             </button>
             <button className="svp-button" onClick={() => void onAction(app.id, "health")}>
               <HeartPulse size={14} />
@@ -1924,6 +2302,10 @@ function DeploymentList({ deployments, apps, onLogs, onDelete }: { deployments: 
               <p className="text-zinc-400">{event.message}</p>
               <p className="text-xs text-zinc-600">
                 {[event.sourceType, event.strategy, event.branch ? `branch ${event.branch}` : "", event.commitSha ? `commit ${event.commitSha}` : ""].filter(Boolean).join(" - ")}
+              </p>
+              <p className="text-xs text-zinc-600">
+                Started {new Date(event.startedAt || event.createdAt).toLocaleString()}
+                {event.finishedAt ? ` · Finished ${new Date(event.finishedAt).toLocaleString()}` : ""}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -2191,6 +2573,10 @@ function databaseName(databases: DatabaseResource[], databaseId?: string) {
 
 function splitLines(value: string) {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function uiSlug(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "project";
 }
 
 function mergeEnvText(existing: string, additions: string[]) {
