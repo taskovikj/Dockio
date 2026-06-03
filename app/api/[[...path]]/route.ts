@@ -36,6 +36,7 @@ import {
   stopApp,
   systemPrune,
   testDatabase,
+  updateGitAppDeployment,
   updateAppSettings
 } from "../../lib/system";
 import { redact, UserFacingError } from "../../lib/validate";
@@ -254,6 +255,10 @@ async function route(request: Request, context: RouteContext) {
     if (segments[0] === "apps" && segments[1] === "git" && request.method === "POST") {
       rateLimit(request, { key: "deploy-git", limit: 8, windowMs: 60_000 });
       return ok({ app: await deployGitApp(gitDeploySchema.parse(await request.json())) }, 201, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "git" && request.method === "POST") {
+      rateLimit(request, { key: "update-git-deploy", limit: 10, windowMs: 60_000 });
+      return ok({ app: await updateGitAppDeployment(segments[1], gitDeploySchema.parse(await request.json())) }, 200, requestId);
     }
     if (segments[0] === "apps" && segments[1] === "compose" && request.method === "POST") {
       rateLimit(request, { key: "deploy-compose", limit: 5, windowMs: 60_000 });

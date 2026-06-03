@@ -240,6 +240,7 @@ export function PanelShell() {
   const [logs, setLogs] = useState("");
   const [repoAnalysis, setRepoAnalysis] = useState<RepoAnalysis | null>(null);
   const [selectedDetectionId, setSelectedDetectionId] = useState("");
+  const [editingAppId, setEditingAppId] = useState("");
 
   useEffect(() => {
     void boot();
@@ -292,6 +293,11 @@ export function PanelShell() {
       setNotice(error instanceof Error ? error.message : "Request failed");
     } finally {
       setBusy("");
+      if (auth?.user) {
+        await refresh().catch(() => {
+          // Best effort: keep the original action error visible if refresh also fails.
+        });
+      }
     }
   }
 
@@ -319,13 +325,14 @@ export function PanelShell() {
 
   async function deployGit() {
     await run("Deploying Git app", async () => {
-      const result = await api<{ app: ManagedApp }>("/api/apps/git", {
+      const result = await api<{ app: ManagedApp }>(editingAppId ? `/api/apps/${editingAppId}/git` : "/api/apps/git", {
         method: "POST",
         csrfToken,
         body: { ...gitForm, projectId: selectedProjectId || gitForm.projectId }
       });
       setDomainForm((form) => ({ ...form, appId: result.app.id }));
-      setNotice(result.app.publicPreview ? `${result.app.name} deployed. Preview: ${previewUrl(result.app, publicIp(status))}` : `${result.app.name} deployed from ${gitForm.branch}.`);
+      setNotice(result.app.publicPreview ? `${result.app.name} ${editingAppId ? "redeployed" : "deployed"}. Preview: ${previewUrl(result.app, publicIp(status))}` : `${result.app.name} ${editingAppId ? "redeployed" : "deployed"} from ${gitForm.branch}.`);
+      setEditingAppId("");
       await refresh();
       setDeployStep("runtime");
     });
@@ -425,9 +432,44 @@ export function PanelShell() {
   }
 
   function startDeployment(provider: DeployProvider = deployProvider) {
+    setEditingAppId("");
+    setRepoAnalysis(null);
+    setSelectedDetectionId("");
     setDeployProvider(provider);
     setDeployStep("source");
     setTab("deployments");
+  }
+
+  function editGitDeployment(app: ManagedApp) {
+    if (app.source !== "git" && app.sourceType !== "git-url") {
+      setNotice("Only public Git services can be edited in the deploy wizard right now.");
+      return;
+    }
+    setEditingAppId(app.id);
+    setRepoAnalysis(null);
+    setSelectedDetectionId("");
+    setDeployProvider("git");
+    setDeployStep("details");
+    setTab("deployments");
+    setGitForm((form) => ({
+      ...form,
+      name: app.name,
+      projectId: app.projectId || selectedProjectId || form.projectId,
+      serviceRole: app.serviceRole || "fullstack",
+      repoUrl: app.repoUrl || "",
+      branch: app.branch || "main",
+      appDirectory: app.appDirectory || "",
+      mode: (app.deployMode === "dockerfile" || app.deployMode === "static" || app.deployMode === "node") ? app.deployMode : "node",
+      buildCommand: app.buildCommand || "",
+      startCommand: app.startCommand || "",
+      containerPort: String(app.containerPort || 3000),
+      healthPath: app.healthPath || "/",
+      envText: "",
+      corsOrigins: app.corsOrigins || [],
+      databaseId: app.databaseId || "",
+      publicPreview: Boolean(app.publicPreview)
+    }));
+    setNotice(`Editing ${app.name}. Existing saved env is preserved unless you paste replacement env values.`);
   }
 
   async function createProject() {
@@ -914,6 +956,12 @@ export function PanelShell() {
                     Logs
                   </button>
                 )}
+                {activeApp && (activeApp.source === "git" || activeApp.sourceType === "git-url") && (
+                  <button className="svp-button" onClick={() => editGitDeployment(activeApp)} disabled={Boolean(busy)}>
+                    <Wrench size={15} />
+                    Edit Deploy
+                  </button>
+                )}
               </div>
             </Panel>
 
@@ -960,6 +1008,12 @@ export function PanelShell() {
                         <button className="svp-button" onClick={() => void appAction(activeApp.id, "redeploy")}>
                           <GitBranch size={15} />
                           Redeploy
+                        </button>
+                      )}
+                      {(activeApp.source === "git" || activeApp.sourceType === "git-url") && (
+                        <button className="svp-button" onClick={() => editGitDeployment(activeApp)}>
+                          <Wrench size={15} />
+                          Edit & Redeploy
                         </button>
                       )}
                     </div>
@@ -1024,7 +1078,7 @@ export function PanelShell() {
         {tab === "services" && (
           <div className="space-y-4">
             <Panel title="Services" icon={Server}>
-              <AppGrid apps={apps} projects={projects} databases={databases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} />
+              <AppGrid apps={apps} projects={projects} databases={databases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} onEdit={editGitDeployment} />
             </Panel>
             <Panel title="Service Roles" icon={Boxes}>
               <div className="grid gap-3 md:grid-cols-4">
@@ -1234,7 +1288,12 @@ export function PanelShell() {
 
         {tab === "deployments" && (
           <div className="space-y-4">
-            <Panel title="New Deployment" icon={Play}>
+            <Panel title={editingAppId ? "Edit & Redeploy Service" : "New Deployment"} icon={editingAppId ? Wrench : Play}>
+              {editingAppId && (
+                <div className="mb-4 rounded-md border border-action/40 bg-action/10 p-3 text-sm text-zinc-300">
+                  Editing <span className="font-bold text-ink">{apps.find((app) => app.id === editingAppId)?.name || "service"}</span>. The existing service, preview port, logs, env keys, and history stay attached to the same service record.
+                </div>
+              )}
               <DeploymentSteps active={deployStep} />
 
               {deployStep === "source" && (
@@ -1372,7 +1431,7 @@ export function PanelShell() {
                       disabled={Boolean(busy)}
                     >
                       <Play size={16} />
-                      Deploy
+                      {editingAppId ? "Save & Redeploy" : "Deploy"}
                     </button>
                   </div>
                 </div>
@@ -1383,6 +1442,11 @@ export function PanelShell() {
                 {deployStep !== "runtime" && (
                   <button className="svp-button-primary" onClick={() => setDeployStep(nextDeployStep(deployStep, deployProvider))} disabled={Boolean(busy) || !canContinueDeploy(deployStep, deployProvider, gitForm, imageForm, composeForm, composeYamlForm)}>
                     Continue
+                  </button>
+                )}
+                {editingAppId && (
+                  <button className="svp-button" onClick={() => { setEditingAppId(""); setRepoAnalysis(null); setSelectedDetectionId(""); }} disabled={Boolean(busy)}>
+                    Cancel Edit
                   </button>
                 )}
               </div>
@@ -1699,7 +1763,8 @@ function AppGrid({
   vpsIp,
   onLogs,
   onStop,
-  onAction
+  onAction,
+  onEdit
 }: {
   apps: ManagedApp[];
   projects: ProjectRecord[];
@@ -1708,6 +1773,7 @@ function AppGrid({
   onLogs: (id: string) => Promise<void>;
   onStop: (id: string) => Promise<void>;
   onAction: (id: string, action: "start" | "restart" | "redeploy" | "health" | "delete") => Promise<void>;
+  onEdit: (app: ManagedApp) => void;
 }) {
   if (apps.length === 0) return <p className="text-sm text-zinc-500">No services yet. Deploy a public Git repository from the Deployments tab.</p>;
   return (
@@ -1755,6 +1821,12 @@ function AppGrid({
               <button className="svp-button" onClick={() => void onAction(app.id, "redeploy")}>
                 <GitBranch size={14} />
                 Redeploy
+              </button>
+            )}
+            {(app.source === "git" || app.sourceType === "git-url") && (
+              <button className="svp-button" onClick={() => onEdit(app)}>
+                <Wrench size={14} />
+                Edit
               </button>
             )}
             <button className="svp-button" onClick={() => void onStop(app.id)}>

@@ -328,7 +328,6 @@ export async function deployGitApp(input: {
   const appDirectory = assertSafeRelativePath(input.appDirectory || "", "App directory");
   const id = appSlug + "-" + crypto.randomBytes(3).toString("hex");
   const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), projectSlug, appSlug));
-  const sourceDir = assertManagedPath(getAppsDir(), path.join(appDir, "source"));
   fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
   const now = new Date().toISOString();
   const port = await findOpenPort();
@@ -367,28 +366,146 @@ export async function deployGitApp(input: {
     state.apps.unshift(app);
   });
 
-  const deploymentId = startDeployment({
+  return executeGitDeployment({
     appId: app.id,
     action: "deploy",
-    message: `Deploying ${name} from ${branch}.`,
+    env,
+    auditMessage: "Git app deployed."
+  });
+}
+
+export async function updateGitAppDeployment(appId: string, input: {
+  name: string;
+  projectId?: string;
+  serviceRole?: ServiceRole;
+  repoUrl: string;
+  branch?: string;
+  appDirectory?: string;
+  mode: "dockerfile" | "node" | "static";
+  buildCommand?: string;
+  startCommand?: string;
+  containerPort?: number;
+  healthPath?: string;
+  envText?: string;
+  corsOrigins?: string[];
+  databaseId?: string;
+  publicPreview?: boolean;
+}) {
+  const existing = getManagedApp(appId);
+  if (existing.source !== "git" && existing.sourceType !== "git-url") {
+    throw new Error("Only public Git services can be edited and redeployed with this action.");
+  }
+  const name = assertSafeAppName(input.name);
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : existing.projectId || "";
+  const databaseId = input.databaseId ? assertSafeId(input.databaseId, "databaseId") : "";
+  const corsOrigins = (input.corsOrigins || []).map(assertSafeOrigin).filter(Boolean).slice(0, 20);
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  if (databaseId && !state.databases.some((database) => database.id === databaseId)) throw new Error("Database not found.");
+  const repoUrl = assertSafeGitRepo(input.repoUrl);
+  const branch = assertSafeBranch(input.branch || existing.branch || "main");
+  const appDirectory = assertSafeRelativePath(input.appDirectory || "", "App directory");
+  const mode = input.mode;
+  const publicPreview = Boolean(input.publicPreview);
+  const env = parseEnvText(input.envText?.trim() ? input.envText : userEnvText(existing));
+  const project = projectId ? state.projects.find((item) => item.id === projectId) : undefined;
+  const appDir = existing.rootDir
+    ? assertManagedPath(getAppsDir(), existing.rootDir)
+    : assertManagedPath(getAppsDir(), path.join(getAppsDir(), project?.slug || "default", existing.slug || slug(existing.name)));
+
+  fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
+  updateState((next) => {
+    const app = next.apps.find((item) => item.id === existing.id);
+    if (!app) throw new Error("App not found.");
+    Object.assign(app, {
+      name,
+      projectId: projectId || undefined,
+      serviceRole: input.serviceRole || app.serviceRole || "fullstack",
+      strategy: "docker",
+      source: "git",
+      sourceType: "git-url",
+      repoUrl,
+      branch,
+      appDirectory,
+      deployMode: mode,
+      buildCommand: cleanCommand(input.buildCommand || ""),
+      startCommand: cleanCommand(input.startCommand || ""),
+      containerPort: mode === "static" ? 80 : assertContainerPort(input.containerPort || app.containerPort || 3000),
+      healthPath: cleanHealthPath(input.healthPath || app.healthPath || "/"),
+      envKeys: uniqueStrings([...env.keys, ...(databaseId ? [state.databases.find((database) => database.id === databaseId)?.envKey || "DATABASE_URL"] : [])]),
+      corsOrigins,
+      databaseId: databaseId || undefined,
+      port: app.port || 0,
+      publicPreview,
+      portBind: publicPreview ? "public" : "localhost",
+      previewUrl: publicPreview ? app.previewUrl : undefined,
+      rootDir: appDir,
+      status: "created",
+      lastMessage: "Redeploy queued with updated settings.",
+      updatedAt: new Date().toISOString()
+    });
+  });
+
+  let updated = getManagedApp(existing.id);
+  if (!updated.port) {
+    const port = await findOpenPort();
+    const previewUrl = updated.publicPreview ? await previewUrlForPort(port) : undefined;
+    markApp(updated.id, { port, previewUrl });
+    updated = getManagedApp(updated.id);
+  } else if (updated.publicPreview && !updated.previewUrl) {
+    markApp(updated.id, { previewUrl: await previewUrlForPort(updated.port) });
+    updated = getManagedApp(updated.id);
+  }
+
+  return executeGitDeployment({
+    appId: updated.id,
+    action: "redeploy",
+    env,
+    auditMessage: "Git app updated and redeployed."
+  });
+}
+
+async function executeGitDeployment(input: {
+  appId: string;
+  action: "deploy" | "redeploy";
+  env: ReturnType<typeof parseEnvText>;
+  auditMessage: string;
+}) {
+  const app = getManagedApp(input.appId);
+  if (!app.repoUrl || !app.branch || !app.deployMode || app.deployMode === "compose") throw new Error("Git deployment settings are incomplete.");
+  const repoUrl = assertSafeGitRepo(app.repoUrl);
+  const branch = assertSafeBranch(app.branch);
+  const appDirectory = assertSafeRelativePath(app.appDirectory || "", "App directory");
+  const appDir = app.rootDir ? assertManagedPath(getAppsDir(), app.rootDir) : assertManagedPath(getAppsDir(), path.join(getAppsDir(), app.slug || slug(app.name)));
+  const sourceDir = assertManagedPath(getAppsDir(), path.join(appDir, "source"));
+  fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
+
+  const deploymentId = startDeployment({
+    appId: app.id,
+    action: input.action,
+    message: `${input.action === "redeploy" ? "Redeploying" : "Deploying"} ${app.name} from ${branch}.`,
     sourceType: "git-url",
-    strategy: input.mode,
+    strategy: app.deployMode,
     branch
   });
   try {
-    const envFile = writeAppEnvFile(app, env.env, deploymentId);
+    const envFile = writeAppEnvFile(app, input.env.env, deploymentId);
     appendDeploymentLog(deploymentId, "preparing workspace", `Workspace ready for ${app.id}.`);
+    if (fs.existsSync(sourceDir)) {
+      appendDeploymentLog(deploymentId, "cleaning workspace", "Removing the previous managed source checkout.");
+      fs.rmSync(assertManagedPath(appDir, sourceDir), { recursive: true, force: true });
+    }
     appendDeploymentLog(deploymentId, "cloning repository", `${repoUrl} @ ${branch}`);
-    await safeRunOrThrow("git", ["clone", "--depth", "1", "--branch", branch, repoUrl, sourceDir]);
+    await safeRunForDeployment(deploymentId, "git clone", "git", ["clone", "--depth", "1", "--branch", branch, repoUrl, sourceDir]);
     appendDeploymentLog(deploymentId, "checking branch", "Repository cloned.");
     const commit = await safeRun("git", ["rev-parse", "--short", "HEAD"], sourceDir);
     const image = "svp_" + app.id + ":" + Date.now();
     const buildDir = appDirectory ? assertManagedPath(sourceDir, path.join(sourceDir, appDirectory)) : sourceDir;
     if (!fs.existsSync(buildDir)) throw new Error(`App directory ${appDirectory} was not found in the repository.`);
     appendDeploymentLog(deploymentId, "detecting app", appDirectory ? `Using app directory ${appDirectory}.` : "Using repository root.");
-    const dockerfile = prepareDockerfile(buildDir, appDir, input.mode, app);
+    const dockerfile = prepareDockerfile(buildDir, appDir, app.deployMode, app);
     appendDeploymentLog(deploymentId, "building image", `Building ${image}.`);
-    await safeRunOrThrow("docker", ["build", "-t", image, "-f", dockerfile, buildDir]);
+    await safeRunForDeployment(deploymentId, "docker build", "docker", ["build", "-t", image, "-f", dockerfile, buildDir]);
     appendDeploymentLog(deploymentId, "starting service", `Starting container on ${app.publicPreview ? "0.0.0.0" : "127.0.0.1"}:${app.port}.`);
     await replaceDockerContainer(app, image, envFile);
     await waitForAppHealth(app, deploymentId);
@@ -401,11 +518,11 @@ export async function deployGitApp(input: {
       containerName: "svp_" + app.id,
       commitSha: commit.ok ? commit.stdout.trim() : undefined,
       lastMessage: app.publicPreview
-        ? `Git ${input.mode} app deployed from ${branch}. Preview: ${app.previewUrl || `port ${app.port}`}`
-        : `Git ${input.mode} app deployed from ${branch}. Add a domain or enable public preview to expose it.`
+        ? `Git ${app.deployMode} app deployed from ${branch}. Preview: ${app.previewUrl || `port ${app.port}`}`
+        : `Git ${app.deployMode} app deployed from ${branch}. Add a domain or enable public preview to expose it.`
     });
-    finishDeployment(deploymentId, "succeeded", app.publicPreview ? `Deployed ${name}. Preview: ${app.previewUrl || `port ${app.port}`}` : `Deployed ${name} from ${branch}.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined, imageTag: image });
-    audit("app.deploy_git", "Git app deployed.", { appId: app.id, name, repoUrl, branch, appDirectory, mode: input.mode, publicPreview, envKeys: env.keys });
+    finishDeployment(deploymentId, "succeeded", app.publicPreview ? `Deployed ${app.name}. Preview: ${app.previewUrl || `port ${app.port}`}` : `Deployed ${app.name} from ${branch}.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined, imageTag: image });
+    audit("app.deploy_git", input.auditMessage, { appId: app.id, name: app.name, repoUrl, branch, appDirectory, mode: app.deployMode, publicPreview: app.publicPreview, envKeys: input.env.keys });
     return readState().apps.find((item) => item.id === app.id) || app;
   } catch (error) {
     const message = error instanceof Error ? redact(error.message) : "Deploy failed.";
@@ -668,6 +785,10 @@ export async function readAppLogs(appId: string) {
   if (app.serviceName) {
     return safeRun("journalctl", ["-u", assertSafeSystemdService(app.serviceName), "-n", "200", "--no-pager"]);
   }
+  const latestDeployment = readState().deployments.find((item) => item.appId === id);
+  if (latestDeployment) {
+    return readDeploymentLogs(latestDeployment.id);
+  }
   return { ok: true, command: "static", stdout: "Static app is served by Caddy after a domain is configured.", stderr: "" };
 }
 
@@ -762,8 +883,7 @@ export async function redeployApp(appId: string) {
   const app = getManagedApp(appId);
   const envText = userEnvText(app);
   if (app.source === "git" && app.repoUrl && app.deployMode && app.deployMode !== "compose") {
-    await stopApp(app.id);
-    return deployGitApp({
+    return updateGitAppDeployment(app.id, {
       name: app.name,
       projectId: app.projectId,
       serviceRole: app.serviceRole,
@@ -1488,6 +1608,22 @@ async function safeRunOrThrow(command: string, args: string[], cwd?: string) {
     throw new UserFacingError(result.command + " failed: " + (result.stderr || result.stdout), 500);
   }
   return result;
+}
+
+async function safeRunForDeployment(deploymentId: string, step: string, command: string, args: string[], cwd?: string) {
+  const result = await safeRun(command, args, cwd);
+  appendDeploymentLog(deploymentId, step, deploymentCommandLog(result));
+  if (!result.ok) {
+    throw new UserFacingError(result.command + " failed: " + (result.stderr || result.stdout), 500);
+  }
+  return result;
+}
+
+function deploymentCommandLog(result: CommandOutput) {
+  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+  if (!output) return result.ok ? `${result.command} completed.` : `${result.command} failed.`;
+  const lines = output.split(/\r?\n/).slice(-80).join("\n");
+  return lines.length > 12_000 ? lines.slice(-12_000) : lines;
 }
 
 async function safeRead(file: string) {
