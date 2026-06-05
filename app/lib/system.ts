@@ -1461,7 +1461,8 @@ async function ensurePreviewDomain(appId: string, deploymentId?: string) {
     if (deploymentId) appendDeploymentLog(deploymentId, "preview domain", `Preview domain active: https://${hostname}`);
   } catch (error) {
     const app = getManagedApp(initial.id);
-    const message = error instanceof Error ? redact(error.message) : "Preview domain failed.";
+    const rawMessage = error instanceof Error ? redact(error.message) : "Preview domain failed.";
+    const message = humanPreviewDomainError(rawMessage);
     const fallbackUrl = app.publicPreview ? await previewUrlForPort(getPublicPreviewPort(app)) : undefined;
     markApp(app.id, {
       previewUrl: fallbackUrl,
@@ -1473,6 +1474,16 @@ async function ensurePreviewDomain(appId: string, deploymentId?: string) {
     if (deploymentId) appendDeploymentLog(deploymentId, "preview domain warning", `Preview domain failed but deploy will stay successful: ${message}`);
   }
   return getManagedApp(initial.id);
+}
+
+function humanPreviewDomainError(message: string) {
+  if (message.includes("no new privileges") || message.includes("NoNewPrivileges")) {
+    return [
+      "The panel service is blocking sudo with NoNewPrivileges=true, so it cannot write/reload Caddy preview routes.",
+      "Update/re-run the installer, or set NoNewPrivileges=false in /etc/systemd/system/supavibe-panel.service and restart the panel."
+    ].join(" ");
+  }
+  return message;
 }
 
 async function waitForAppHealth(app: ManagedApp, deploymentId: string) {

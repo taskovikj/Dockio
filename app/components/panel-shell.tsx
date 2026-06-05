@@ -2603,7 +2603,7 @@ function Info({ title, body }: { title: string; body: string }) {
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
   const Icon = ok ? CheckCircle2 : CircleAlert;
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-bold ${ok ? "border-emerald-900 bg-emerald-950/40 text-emerald-300" : "border-yellow-900 bg-yellow-950/40 text-yellow-300"}`}>
+    <span className={`inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[0.7rem] font-bold uppercase ${ok ? "border-emerald-900 bg-emerald-950/40 text-emerald-300" : "border-yellow-900 bg-yellow-950/40 text-yellow-300"}`}>
       <Icon size={13} />
       {label}
     </span>

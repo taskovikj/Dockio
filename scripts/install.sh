@@ -87,7 +87,9 @@ EnvironmentFile=$ENV_DIR/panel.env
 ExecStart=$(command -v pnpm) start --hostname \${SVP_BIND_HOST} --port \${SVP_PORT}
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=true
+# The panel uses a narrow sudoers allowlist for Caddy, UFW, and systemd actions.
+# NoNewPrivileges=true blocks sudo completely, so keep this false for managed VPS actions.
+NoNewPrivileges=false
 PrivateTmp=true
 ReadWritePaths=$DATA_DIR /etc/caddy/conf.d /etc/caddy/supavibe/sites /etc/systemd/system
 
