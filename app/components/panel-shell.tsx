@@ -342,6 +342,7 @@ export function PanelShell() {
   const [appEnvForm, setAppEnvForm] = useState({ appId: "", envText: "", replace: false, deleteKey: "" });
   const [corsPresetForm, setCorsPresetForm] = useState({ frontendOrigin: "", backendOrigin: "" });
   const [logs, setLogs] = useState("");
+  const [logsAppId, setLogsAppId] = useState("");
   const [repoAnalysis, setRepoAnalysis] = useState<RepoAnalysis | null>(null);
   const [selectedDetectionId, setSelectedDetectionId] = useState("");
   const [editingAppId, setEditingAppId] = useState("");
@@ -393,6 +394,11 @@ export function PanelShell() {
       }
     }
   }, [state, selectedProjectId, selectedServiceId]);
+
+  useEffect(() => {
+    if (!auth?.user || tab !== "logs" || !selectedServiceId || logsAppId === selectedServiceId || busy) return;
+    void loadLogs(selectedServiceId);
+  }, [auth?.user, tab, selectedServiceId, logsAppId, busy]);
 
   async function boot() {
     const nextAuth = await api<AuthState>("/api/auth/state");
@@ -598,21 +604,21 @@ export function PanelShell() {
     setSelectedServiceId("");
     setTab("general");
     syncProjectForms(projectId);
-    setLogs("");
+    clearLogs();
   }
 
   function openGlobalTab(nextTab: Tab) {
     setSelectedProjectId("");
     setSelectedServiceId("");
     setTab(globalTabs.has(nextTab) ? nextTab : "dashboard");
-    setLogs("");
+    clearLogs();
   }
 
   function showAllProjects(nextTab: Tab = "dashboard") {
     setSelectedProjectId("");
     setSelectedServiceId("");
     setTab(globalTabs.has(nextTab) ? nextTab : "dashboard");
-    setLogs("");
+    clearLogs();
   }
 
   function syncServiceForms(app: ManagedApp, projectId: string = app.projectId || selectedProjectId || "") {
@@ -630,9 +636,15 @@ export function PanelShell() {
   function openService(app: ManagedApp, nextTab: Tab = "general") {
     const projectId = app.projectId || selectedProjectId || "";
     if (projectId && projectId !== selectedProjectId) setSelectedProjectId(projectId);
+    if (app.id !== selectedServiceId) clearLogs();
     setSelectedServiceId(app.id);
     syncServiceForms(app, projectId);
     setTab(nextTab);
+  }
+
+  function clearLogs() {
+    setLogs("");
+    setLogsAppId("");
   }
 
   function startDeployment(provider: DeployProvider = deployProvider) {
@@ -777,6 +789,7 @@ export function PanelShell() {
       const result = await api<Record<string, { ok?: boolean; message?: string; envKey?: string; value?: string }>>(`/api/databases/${databaseId}/${action}`, { method: "POST", csrfToken });
       const payload = result.result || result.connection;
       if (action === "connection" && payload?.value) {
+        setLogsAppId("");
         setLogs(`${payload.envKey || "DATABASE_URL"}=${payload.value}`);
         setTab("logs");
         setNotice("Connection URL loaded into Logs. Treat it like a password.");
@@ -871,6 +884,7 @@ export function PanelShell() {
   }
 
   async function loadLogs(appId: string) {
+    setLogsAppId(appId);
     await run("Loading logs", async () => {
       const result = await api<{ logs: CommandOutput }>(`/api/apps/${appId}/logs`);
       setLogs([result.logs.command, result.logs.stdout, result.logs.stderr].filter(Boolean).join("\n\n"));
@@ -914,6 +928,7 @@ export function PanelShell() {
         csrfToken,
         body: { panelPort: Number(firewallForm.panelPort), trustedCidr: firewallForm.trustedCidr }
       });
+      setLogsAppId("");
       setLogs(result.results.map((item) => `$ ${item.command}\n${item.stdout || item.stderr || (item.ok ? "ok" : "failed")}`).join("\n\n"));
       setNotice("Firewall baseline applied.");
     });
@@ -922,6 +937,7 @@ export function PanelShell() {
   async function loadDeploymentLogs(deploymentId: string) {
     await run("Loading deployment log", async () => {
       const result = await api<{ logs: CommandOutput }>(`/api/deployments/${deploymentId}/logs`);
+      setLogsAppId("");
       setLogs([result.logs.command, result.logs.stdout, result.logs.stderr].filter(Boolean).join("\n\n"));
       setTab("logs");
     });
@@ -934,6 +950,7 @@ export function PanelShell() {
         csrfToken,
         body: { ...firewallRuleForm, port: Number(firewallRuleForm.port) }
       });
+      setLogsAppId("");
       setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
       setNotice(`Firewall ${firewallRuleForm.action} rule applied.`);
       await refresh();
@@ -957,6 +974,7 @@ export function PanelShell() {
         csrfToken,
         body: { ruleNumber: Number(firewallDeleteForm.ruleNumber) }
       });
+      setLogsAppId("");
       setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
       setNotice(`Firewall rule #${firewallDeleteForm.ruleNumber} deleted.`);
       await refresh();
@@ -966,6 +984,7 @@ export function PanelShell() {
   async function pruneSystem() {
     await run("Pruning Docker", async () => {
       const result = await api<{ result: CommandOutput }>("/api/system/prune", { method: "POST", csrfToken });
+      setLogsAppId("");
       setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
       setTab("logs");
       setNotice("Docker prune completed.");
@@ -1183,7 +1202,7 @@ export function PanelShell() {
                     <div className="grid gap-2">
                       {allApps.length === 0 && <EmptyState title="No services yet" body="Deploy an app first, then runtime logs will be available here." actionLabel="Deploy App" onAction={() => startGlobalDeployment()} icon={Terminal} />}
                       {allApps.map((app) => (
-                        <button key={app.id} className="dio-button justify-start" onClick={() => void loadLogs(app.id)}>
+                        <button key={app.id} className={`dio-button justify-start ${logsAppId === app.id ? "border-action bg-action/10 text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
                           <Terminal size={14} />
                           <span className="truncate">{projectName(allProjects, app.projectId)} / {app.name}</span>
                         </button>
@@ -1202,7 +1221,7 @@ export function PanelShell() {
                         <Copy size={14} />
                         Copy
                       </button>
-                      <button className="dio-button" onClick={() => setLogs("")} disabled={!logs}>
+                      <button className="dio-button" onClick={clearLogs} disabled={!logs}>
                         Clear
                       </button>
                     </div>
@@ -2003,7 +2022,7 @@ export function PanelShell() {
               <div className="grid gap-2">
                 {visibleApps.length === 0 && <p className="text-sm text-zinc-500">Deploy an app first, then logs appear here.</p>}
                 {visibleApps.map((app) => (
-                  <button key={app.id} className="dio-button justify-start" onClick={() => void loadLogs(app.id)}>
+                  <button key={app.id} className={`dio-button justify-start ${logsAppId === app.id ? "border-action bg-action/10 text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
                     <Terminal size={14} />
                     {app.name}
                   </button>
@@ -2022,11 +2041,11 @@ export function PanelShell() {
                   <Copy size={14} />
                   Copy
                 </button>
-                <button className="dio-button" onClick={() => setLogs("")} disabled={!logs}>
+                <button className="dio-button" onClick={clearLogs} disabled={!logs}>
                   Clear
                 </button>
               </div>
-              <pre className="dio-code min-h-96 overflow-auto rounded-md p-4 text-xs">{logs || "Select a service to load recent logs."}</pre>
+              <pre className="dio-code min-h-96 overflow-auto rounded-md p-4 text-xs">{logs || (selectedService ? "Loading recent logs for this service..." : "Select a service to load recent logs.")}</pre>
             </Panel>
           </div>
         )}
