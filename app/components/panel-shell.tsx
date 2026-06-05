@@ -32,7 +32,7 @@ import {
   Wrench,
   type LucideIcon
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Tab = "general" | "services" | "environment" | "database" | "monitoring" | "logs" | "deployments" | "domains" | "preview" | "advanced";
 type Strategy = "docker" | "systemd" | "static" | "compose";
@@ -233,6 +233,10 @@ const serviceTabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
   { id: "advanced", label: "Advanced", icon: Shield }
 ];
 
+const routeTabs = new Set<Tab>([...projectTabs, ...serviceTabs].map((item) => item.id));
+const deployProviders = new Set<DeployProvider>(["git", "image", "compose", "compose-yaml"]);
+const deploySteps = new Set<DeployStep>(["source", "details", "build", "runtime"]);
+
 export function PanelShell() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [state, setState] = useState<StatePayload | null>(null);
@@ -246,6 +250,8 @@ export function PanelShell() {
   const [csrfToken, setCsrfToken] = useState("");
   const [deployProvider, setDeployProvider] = useState<DeployProvider>("git");
   const [deployStep, setDeployStep] = useState<DeployStep>("source");
+  const [routeHydrated, setRouteHydrated] = useState(false);
+  const routeWriteCount = useRef(0);
   const [authForm, setAuthForm] = useState({ email: "", name: "", password: "", setupCode: "" });
   const [projectForm, setProjectForm] = useState({ name: "New Project", description: "" });
   const [projectDeleteConfirm, setProjectDeleteConfirm] = useState("");
@@ -300,6 +306,50 @@ export function PanelShell() {
     void boot();
   }, []);
 
+  useEffect(() => {
+    if (!auth?.user || !state || routeHydrated) return;
+    applyRouteFromLocation(state);
+    setRouteHydrated(true);
+  }, [auth?.user, state, routeHydrated]);
+
+  useEffect(() => {
+    if (!routeHydrated || !auth?.user || !state) return;
+    const handleRouteChange = () => applyRouteFromLocation(state);
+    window.addEventListener("popstate", handleRouteChange);
+    window.addEventListener("hashchange", handleRouteChange);
+    return () => {
+      window.removeEventListener("popstate", handleRouteChange);
+      window.removeEventListener("hashchange", handleRouteChange);
+    };
+  }, [routeHydrated, auth?.user, state]);
+
+  useEffect(() => {
+    if (!routeHydrated || !auth?.user || !state) return;
+    const nextHash = buildPanelRouteHash({ selectedProjectId, selectedServiceId, tab, deployProvider, deployStep });
+    if (window.location.hash === nextHash) return;
+    const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
+    const write = routeWriteCount.current === 0 ? window.history.replaceState : window.history.pushState;
+    write.call(window.history, { supavibePanel: true }, "", nextUrl);
+    routeWriteCount.current += 1;
+  }, [routeHydrated, auth?.user, state, selectedProjectId, selectedServiceId, tab, deployProvider, deployStep]);
+
+  useEffect(() => {
+    if (!state) return;
+    if (selectedProjectId && !state.projects.some((project) => project.id === selectedProjectId)) {
+      setSelectedProjectId("");
+      setSelectedServiceId("");
+      setTab("general");
+      return;
+    }
+    if (selectedServiceId) {
+      const service = state.apps.find((app) => app.id === selectedServiceId);
+      if (!service || (selectedProjectId && service.projectId && service.projectId !== selectedProjectId)) {
+        setSelectedServiceId("");
+        setTab((current) => normalizeRouteTab(current, false));
+      }
+    }
+  }, [state, selectedProjectId, selectedServiceId]);
+
   async function boot() {
     const nextAuth = await api<AuthState>("/api/auth/state");
     setAuth(nextAuth);
@@ -337,6 +387,26 @@ export function PanelShell() {
     setManagedDbForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setManagedRedisForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setSelectedProjectId((projectId) => (projectId && !nextState.projects.some((project) => project.id === projectId) ? "" : projectId));
+  }
+
+  function applyRouteFromLocation(nextState: StatePayload) {
+    const route = parsePanelRouteHash(window.location.hash);
+    let nextProjectId = route.projectId && nextState.projects.some((project) => project.id === route.projectId) ? route.projectId : "";
+    const routeService = route.serviceId ? nextState.apps.find((app) => app.id === route.serviceId) : undefined;
+    if (routeService) {
+      const routeServiceProjectId = routeService.projectId || nextProjectId;
+      if (routeServiceProjectId && nextState.projects.some((project) => project.id === routeServiceProjectId)) {
+        nextProjectId = routeServiceProjectId;
+      }
+    }
+    const nextServiceId = routeService && (!routeService.projectId || routeService.projectId === nextProjectId) ? routeService.id : "";
+    setSelectedProjectId(nextProjectId);
+    setSelectedServiceId(nextServiceId);
+    setTab(normalizeRouteTab(route.tab, Boolean(nextServiceId)));
+    if (route.deployProvider) setDeployProvider(route.deployProvider);
+    if (route.deployStep) setDeployStep(route.deployStep);
+    if (nextProjectId && nextProjectId !== selectedProjectId) syncProjectForms(nextProjectId);
+    if (routeService && nextServiceId) syncServiceForms(routeService, nextProjectId);
   }
 
   async function run(label: string, action: () => Promise<void>) {
@@ -466,10 +536,7 @@ export function PanelShell() {
     });
   }
 
-  function openProject(projectId: string) {
-    setSelectedProjectId(projectId);
-    setSelectedServiceId("");
-    setTab("general");
+  function syncProjectForms(projectId: string) {
     setDomainForm((form) => ({ ...form, appId: "" }));
     setAppSettingsForm((form) => ({ ...form, projectId, appId: "", databaseId: "" }));
     setAppEnvForm((form) => ({ ...form, appId: "", envText: "", deleteKey: "" }));
@@ -480,6 +547,13 @@ export function PanelShell() {
     setExternalDbForm((form) => ({ ...form, projectId }));
     setManagedDbForm((form) => ({ ...form, projectId }));
     setManagedRedisForm((form) => ({ ...form, projectId }));
+  }
+
+  function openProject(projectId: string) {
+    setSelectedProjectId(projectId);
+    setSelectedServiceId("");
+    setTab("general");
+    syncProjectForms(projectId);
     setLogs("");
   }
 
@@ -490,17 +564,23 @@ export function PanelShell() {
     setLogs("");
   }
 
-  function openService(app: ManagedApp, nextTab: Tab = "general") {
-    setSelectedServiceId(app.id);
+  function syncServiceForms(app: ManagedApp, projectId: string = app.projectId || selectedProjectId || "") {
     setDomainForm((form) => ({ ...form, appId: app.id }));
     setAppSettingsForm({
       appId: app.id,
-      projectId: app.projectId || selectedProjectId || "",
+      projectId,
       serviceRole: app.serviceRole || "fullstack",
       corsText: (app.corsOrigins || []).join("\n"),
       databaseId: app.databaseId || ""
     });
     setAppEnvForm((form) => ({ ...form, appId: app.id, deleteKey: "" }));
+  }
+
+  function openService(app: ManagedApp, nextTab: Tab = "general") {
+    const projectId = app.projectId || selectedProjectId || "";
+    if (projectId && projectId !== selectedProjectId) setSelectedProjectId(projectId);
+    setSelectedServiceId(app.id);
+    syncServiceForms(app, projectId);
     setTab(nextTab);
   }
 
@@ -2787,4 +2867,59 @@ function mergeEnvText(existing: string, additions: string[]) {
   const next = additions.filter(Boolean).join("\n");
   if (!current) return next;
   return `${current}\n${next}`;
+}
+
+function buildPanelRouteHash(route: {
+  selectedProjectId: string;
+  selectedServiceId: string;
+  tab: Tab;
+  deployProvider: DeployProvider;
+  deployStep: DeployStep;
+}) {
+  const params = new URLSearchParams();
+  if (route.selectedProjectId) params.set("project", route.selectedProjectId);
+  if (route.selectedServiceId) params.set("service", route.selectedServiceId);
+  if (route.tab !== "general") params.set("tab", route.tab);
+  if (route.tab === "deployments") {
+    params.set("provider", route.deployProvider);
+    params.set("step", route.deployStep);
+  }
+  const serialized = params.toString();
+  return serialized ? `#${serialized}` : "";
+}
+
+function parsePanelRouteHash(hash: string) {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  const params = new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw);
+  const tab = safeTab(params.get("tab"));
+  return {
+    projectId: cleanRouteId(params.get("project")),
+    serviceId: cleanRouteId(params.get("service")),
+    tab,
+    deployProvider: safeDeployProvider(params.get("provider")),
+    deployStep: safeDeployStep(params.get("step"))
+  };
+}
+
+function normalizeRouteTab(tab: Tab | undefined, serviceSelected: boolean): Tab {
+  if (!tab) return "general";
+  const allowedTabs = serviceSelected ? serviceTabs : projectTabs;
+  return allowedTabs.some((item) => item.id === tab) ? tab : "general";
+}
+
+function cleanRouteId(value: string | null) {
+  if (!value) return "";
+  return /^[a-zA-Z0-9_.:-]{1,120}$/.test(value) ? value : "";
+}
+
+function safeTab(value: string | null): Tab | undefined {
+  return value && routeTabs.has(value as Tab) ? value as Tab : undefined;
+}
+
+function safeDeployProvider(value: string | null): DeployProvider | undefined {
+  return value && deployProviders.has(value as DeployProvider) ? value as DeployProvider : undefined;
+}
+
+function safeDeployStep(value: string | null): DeployStep | undefined {
+  return value && deploySteps.has(value as DeployStep) ? value as DeployStep : undefined;
 }
