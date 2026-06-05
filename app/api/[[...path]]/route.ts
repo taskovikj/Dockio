@@ -26,7 +26,12 @@ import {
   deployComposeYamlApp,
   deployDockerImageApp,
   deployGitApp,
+  deployGitHubApp,
   getDatabaseConnection,
+  getGitHubBranches,
+  gitIntegrationStatus,
+  handleGitHubWebhook,
+  analyzeGitHubRepository,
   readAppLogs,
   readDeploymentLogs,
   redeployApp,
@@ -34,10 +39,16 @@ import {
   restartApp,
   setAppEnvironment,
   serverStatus,
+  setGitHubAutoDeploy,
+  saveGitHubConnection,
+  syncGitHubInstallations,
+  syncGitHubRepositories,
+  disconnectGitHubConnection,
   startApp,
   stopApp,
   systemPrune,
   testDatabase,
+  updateGitHubAppDeployment,
   updateGitAppDeployment,
   updateAppSettings,
   updatePreviewSettings
@@ -120,8 +131,46 @@ const previewSettingsSchema = z.object({
   autoPreviewDomainsEnabled: z.boolean().optional().default(true),
   caddySitesDir: z.string().max(220).optional().default("/etc/caddy/dockio/sites"),
   caddyMainConfig: z.string().max(220).optional().default("/etc/caddy/Caddyfile"),
+  publicDockioUrl: z.string().max(240).optional().default(""),
   localProxyPortRangeStart: z.coerce.number().int().min(1024).max(65535).optional().default(31000),
   localProxyPortRangeEnd: z.coerce.number().int().min(1024).max(65535).optional().default(39999)
+});
+
+const githubConnectionSchema = z.object({
+  id: z.string().optional().default(""),
+  name: z.string().min(1).max(80),
+  appId: z.string().min(1).max(40),
+  clientId: z.string().max(120).optional().default(""),
+  clientSecret: z.string().max(500).optional().default(""),
+  appSlug: z.string().max(120).optional().default(""),
+  appUrl: z.string().max(240).optional().default(""),
+  installUrl: z.string().max(240).optional().default(""),
+  privateKey: z.string().min(40).max(20_000),
+  webhookSecret: z.string().min(12).max(240),
+  publicDockioUrl: z.string().max(240).optional().default("")
+});
+
+const githubDeploySchema = gitDeploySchema.omit({ repoUrl: true }).extend({
+  gitInstallationId: z.string().min(1).max(120),
+  gitRepositoryId: z.string().min(1).max(120),
+  autoDeployEnabled: z.boolean().optional().default(false)
+});
+
+const githubRepoDetectSchema = z.object({
+  installationId: z.string().min(1).max(120),
+  repositoryId: z.string().min(1).max(120),
+  branch: z.string().optional().default("main"),
+  appDirectory: z.string().max(220).optional().default("")
+});
+
+const githubBranchesSchema = z.object({
+  installationId: z.string().min(1).max(120),
+  repositoryId: z.string().min(1).max(120)
+});
+
+const githubAutoDeploySchema = z.object({
+  enabled: z.boolean(),
+  branch: z.string().max(120).optional().default("")
 });
 
 const domainSchema = z.object({
@@ -209,9 +258,13 @@ export async function POST(request: Request, context: RouteContext) {
 async function route(request: Request, context: RouteContext) {
   const requestId = cryptoRandomId();
   try {
+    const segments = (await context.params).path || [];
+    if (segments[0] === "webhooks" && segments[1] === "github" && request.method === "POST") {
+      rateLimit(request, { key: "github-webhook", limit: 120, windowMs: 60_000 });
+      return ok(await handleGitHubWebhook(request), 202, requestId);
+    }
     requireTrustedNetwork(request);
     ensureSameOrigin(request);
-    const segments = (await context.params).path || [];
 
     if (segments[0] === "auth") return await authRoute(request, segments, requestId);
 
@@ -229,6 +282,34 @@ async function route(request: Request, context: RouteContext) {
     if (segments[0] === "settings" && segments[1] === "preview" && request.method === "POST") {
       rateLimit(request, { key: "preview-settings", limit: 10, windowMs: 60_000 });
       return ok({ settings: await updatePreviewSettings(previewSettingsSchema.parse(await request.json())) }, 200, requestId);
+    }
+    if (segments[0] === "git" && segments[1] === "status" && request.method === "GET") {
+      return ok(gitIntegrationStatus(), 200, requestId);
+    }
+    if (segments[0] === "git" && segments[1] === "github" && segments[2] === "connections" && request.method === "POST") {
+      rateLimit(request, { key: "github-connection", limit: 8, windowMs: 60_000 });
+      const body = githubConnectionSchema.parse(await request.json());
+      return ok({ connection: await saveGitHubConnection({ ...body, id: body.id || undefined }) }, 201, requestId);
+    }
+    if (segments[0] === "git" && segments[1] === "github" && segments[2] === "connections" && segments[3] && segments[4] === "disconnect" && request.method === "POST") {
+      rateLimit(request, { key: "github-disconnect", limit: 8, windowMs: 60_000 });
+      return ok(await disconnectGitHubConnection(segments[3]), 200, requestId);
+    }
+    if (segments[0] === "git" && segments[1] === "github" && segments[2] === "connections" && segments[3] && segments[4] === "sync-installations" && request.method === "POST") {
+      rateLimit(request, { key: "github-sync-installations", limit: 20, windowMs: 60_000 });
+      return ok({ installations: await syncGitHubInstallations(segments[3]) }, 200, requestId);
+    }
+    if (segments[0] === "git" && segments[1] === "github" && segments[2] === "installations" && segments[3] && segments[4] === "sync-repositories" && request.method === "POST") {
+      rateLimit(request, { key: "github-sync-repos", limit: 30, windowMs: 60_000 });
+      return ok({ repositories: await syncGitHubRepositories(segments[3]) }, 200, requestId);
+    }
+    if (segments[0] === "git" && segments[1] === "github" && segments[2] === "branches" && request.method === "POST") {
+      rateLimit(request, { key: "github-branches", limit: 40, windowMs: 60_000 });
+      return ok({ branches: await getGitHubBranches(githubBranchesSchema.parse(await request.json())) }, 200, requestId);
+    }
+    if (segments[0] === "git" && segments[1] === "github" && segments[2] === "detect" && request.method === "POST") {
+      rateLimit(request, { key: "github-detect", limit: 12, windowMs: 60_000 });
+      return ok({ analysis: await analyzeGitHubRepository(githubRepoDetectSchema.parse(await request.json())) }, 200, requestId);
     }
     if (segments[0] === "system" && segments[1] === "prune" && request.method === "POST") {
       rateLimit(request, { key: "system-prune", limit: 3, windowMs: 60_000 });
@@ -276,9 +357,17 @@ async function route(request: Request, context: RouteContext) {
       rateLimit(request, { key: "deploy-git", limit: 8, windowMs: 60_000 });
       return ok({ app: await deployGitApp(gitDeploySchema.parse(await request.json())) }, 201, requestId);
     }
+    if (segments[0] === "apps" && segments[1] === "github" && request.method === "POST") {
+      rateLimit(request, { key: "deploy-github-app", limit: 8, windowMs: 60_000 });
+      return ok({ app: await deployGitHubApp(githubDeploySchema.parse(await request.json())) }, 201, requestId);
+    }
     if (segments[0] === "apps" && segments[1] && segments[2] === "git" && request.method === "POST") {
       rateLimit(request, { key: "update-git-deploy", limit: 10, windowMs: 60_000 });
       return ok({ app: await updateGitAppDeployment(segments[1], gitDeploySchema.parse(await request.json())) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "github" && request.method === "POST") {
+      rateLimit(request, { key: "update-github-deploy", limit: 10, windowMs: 60_000 });
+      return ok({ app: await updateGitHubAppDeployment(segments[1], githubDeploySchema.parse(await request.json())) }, 200, requestId);
     }
     if (segments[0] === "apps" && segments[1] === "compose" && request.method === "POST") {
       rateLimit(request, { key: "deploy-compose", limit: 5, windowMs: 60_000 });
@@ -337,6 +426,9 @@ async function route(request: Request, context: RouteContext) {
     }
     if (segments[0] === "apps" && segments[1] && segments[2] === "redeploy" && request.method === "POST") {
       return ok({ app: await redeployApp(segments[1]) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "autodeploy" && request.method === "POST") {
+      return ok({ app: await setGitHubAutoDeploy({ appId: segments[1], ...githubAutoDeploySchema.parse(await request.json()) }) }, 200, requestId);
     }
     if (segments[0] === "apps" && segments[1] && segments[2] === "health" && request.method === "POST") {
       return ok({ health: await checkAppHealth(segments[1]) }, 200, requestId);

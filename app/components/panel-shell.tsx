@@ -12,6 +12,7 @@ import {
   Eye,
   Flame,
   Globe2,
+  Github,
   GitBranch,
   HardDrive,
   HeartPulse,
@@ -47,16 +48,18 @@ type Tab =
   | "domains"
   | "advanced"
   | "docker"
+  | "git"
   | "settings";
 type Strategy = "docker" | "systemd" | "static" | "compose";
 type GitMode = "dockerfile" | "node" | "static";
 type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
-type DeployProvider = "git" | "image" | "compose" | "compose-yaml";
+type DeployProvider = "git" | "github" | "image" | "compose" | "compose-yaml";
 type DeployStep = "source" | "details" | "build" | "runtime";
 type PreviewDomainMode = "sslip" | "custom" | "disabled";
 
 interface PanelSettings {
   publicServerIp?: string;
+  publicDockioUrl?: string;
   previewDomainMode: PreviewDomainMode;
   previewBaseDomain?: string;
   autoPreviewDomainsEnabled: boolean;
@@ -89,6 +92,16 @@ interface ManagedApp {
   appDirectory?: string;
   dockerImage?: string;
   sourceType?: string;
+  gitProviderConnectionId?: string;
+  gitInstallationId?: string;
+  gitRepositoryId?: string;
+  repoFullName?: string;
+  githubRepoId?: number;
+  autoDeployEnabled?: boolean;
+  autoDeployBranch?: string;
+  lastWebhookAt?: string;
+  lastWebhookStatus?: "accepted" | "ignored" | "failed";
+  lastWebhookMessage?: string;
   publicPreview?: boolean;
   previewUrl?: string;
   portBind?: "localhost" | "public";
@@ -172,10 +185,80 @@ interface DeploymentEvent {
   finishedAt?: string;
   sourceType?: string;
   strategy?: string;
+  trigger?: string;
+  provider?: string;
   branch?: string;
   commitSha?: string;
+  commitMessage?: string;
+  pusher?: string;
+  webhookDeliveryId?: string;
+  repositoryFullName?: string;
   imageTag?: string;
   steps?: Array<{ at: string; step: string; status: string; message: string }>;
+}
+
+interface GitProviderConnection {
+  id: string;
+  provider: "github";
+  name: string;
+  appId: string;
+  clientId?: string;
+  appSlug?: string;
+  appUrl?: string;
+  installUrl?: string;
+  status: "connected" | "needs_setup" | "error";
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  privateKeyConfigured?: boolean;
+  webhookSecretConfigured?: boolean;
+  clientSecretConfigured?: boolean;
+}
+
+interface GitInstallation {
+  id: string;
+  providerConnectionId: string;
+  installationId: number;
+  accountLogin: string;
+  accountType: string;
+  accountAvatarUrl?: string;
+  repositorySelection?: string;
+  permissions?: Record<string, unknown>;
+  events?: string[];
+  status: string;
+  lastSyncedAt?: string;
+}
+
+interface GitRepository {
+  id: string;
+  installationId: string;
+  githubRepoId: number;
+  fullName: string;
+  owner: string;
+  name: string;
+  private: boolean;
+  defaultBranch: string;
+  cloneUrl: string;
+  htmlUrl: string;
+  archived: boolean;
+  disabled: boolean;
+  pushedAt?: string;
+  updatedAt?: string;
+  lastSyncedAt?: string;
+}
+
+interface GitWebhookEvent {
+  id: string;
+  providerConnectionId?: string;
+  installationId?: number;
+  repositoryFullName?: string;
+  githubRepoId?: number;
+  branch?: string;
+  deliveryId?: string;
+  event: string;
+  status: "accepted" | "ignored" | "failed";
+  message: string;
+  createdAt: string;
 }
 
 interface DetectedService {
@@ -213,6 +296,10 @@ interface StatePayload {
   databases: DatabaseResource[];
   audit: AuditEvent[];
   deployments: DeploymentEvent[];
+  gitConnections: GitProviderConnection[];
+  gitInstallations: GitInstallation[];
+  gitRepositories: GitRepository[];
+  gitWebhookEvents: GitWebhookEvent[];
   dataDir: string;
 }
 
@@ -266,6 +353,12 @@ const globalSidebarGroups: Array<{ title: string; items: Array<{ id: Tab; label:
     ]
   },
   {
+    title: "Integrations",
+    items: [
+      { id: "git", label: "Git", icon: Github }
+    ]
+  },
+  {
     title: "Server",
     items: [
       { id: "monitoring", label: "Server Status", icon: Server },
@@ -276,7 +369,7 @@ const globalSidebarGroups: Array<{ title: string; items: Array<{ id: Tab; label:
 
 const globalTabs = new Set<Tab>(globalSidebarGroups.flatMap((group) => group.items.map((item) => item.id)));
 const routeTabs = new Set<Tab>([...globalTabs, ...projectTabs.map((item) => item.id), ...serviceTabs.map((item) => item.id)]);
-const deployProviders = new Set<DeployProvider>(["git", "image", "compose", "compose-yaml"]);
+const deployProviders = new Set<DeployProvider>(["git", "github", "image", "compose", "compose-yaml"]);
 const deploySteps = new Set<DeployStep>(["source", "details", "build", "runtime"]);
 
 export function PanelShell() {
@@ -318,11 +411,33 @@ export function PanelShell() {
     previewDomainEnabled: true,
     publicPreview: false
   });
+  const [githubForm, setGithubForm] = useState({
+    connectionId: "",
+    installationId: "",
+    repositoryId: "",
+    repoSearch: "",
+    branches: [] as Array<{ name: string; sha?: string; protected?: boolean }>,
+    autoDeployEnabled: false
+  });
+  const [githubConnectionForm, setGithubConnectionForm] = useState({
+    id: "",
+    name: "GitHub",
+    appId: "",
+    clientId: "",
+    clientSecret: "",
+    appSlug: "",
+    appUrl: "",
+    installUrl: "",
+    privateKey: "",
+    webhookSecret: "",
+    publicDockioUrl: ""
+  });
   const [imageForm, setImageForm] = useState({ name: "Docker Image App", projectId: "", serviceRole: "fullstack" as ServiceRole, image: "nginx:1.27-alpine", containerPort: "80", healthPath: "/", envText: "", previewDomainEnabled: true, publicPreview: false });
   const [composeForm, setComposeForm] = useState({ name: "Compose Stack", projectId: "", repoUrl: "", branch: "main", envText: "" });
   const [composeYamlForm, setComposeYamlForm] = useState({ name: "Pasted Compose Stack", projectId: "", composeYaml: "services:\n  web:\n    image: nginx:1.27-alpine\n    restart: unless-stopped\n", envText: "" });
   const [previewSettingsForm, setPreviewSettingsForm] = useState<PanelSettings>({
     publicServerIp: "",
+    publicDockioUrl: "",
     previewDomainMode: "sslip",
     previewBaseDomain: "",
     autoPreviewDomainsEnabled: true,
@@ -416,6 +531,7 @@ export function PanelShell() {
     setState(nextState);
     setStatus(nextStatus);
     setPreviewSettingsForm(nextState.settings);
+    setGithubConnectionForm((form) => ({ ...form, publicDockioUrl: form.publicDockioUrl || nextState.settings.publicDockioUrl || "" }));
     const defaultApp = selectedProjectId ? nextState.apps.find((app) => app.projectId === selectedProjectId) : nextState.apps[0];
     setDomainForm((form) => ({
       ...form,
@@ -431,6 +547,12 @@ export function PanelShell() {
       appId: form.appId && nextState.apps.some((app) => app.id === form.appId && (!selectedProjectId || app.projectId === selectedProjectId)) ? form.appId : defaultApp?.id || ""
     }));
     setGitForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
+    setGithubForm((form) => ({
+      ...form,
+      connectionId: form.connectionId || nextState.gitConnections[0]?.id || "",
+      installationId: form.installationId || nextState.gitInstallations[0]?.id || "",
+      repositoryId: form.repositoryId || nextState.gitRepositories[0]?.id || ""
+    }));
     setImageForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setComposeForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
     setComposeYamlForm((form) => ({ ...form, projectId: form.projectId || nextState.projects[0]?.id || "" }));
@@ -527,6 +649,135 @@ export function PanelShell() {
       if (detected) applyDetectedService(detected, result.analysis.branch);
       setDeployStep("build");
       setNotice("Stack detected. Confirm the service and build settings, then continue.");
+    });
+  }
+
+  async function saveGitHubConnection() {
+    await run("Saving GitHub App", async () => {
+      const result = await api<{ connection: GitProviderConnection }>("/api/git/github/connections", {
+        method: "POST",
+        csrfToken,
+        body: githubConnectionForm
+      });
+      setGithubConnectionForm((form) => ({
+        ...form,
+        id: result.connection.id,
+        privateKey: "",
+        clientSecret: "",
+        webhookSecret: "",
+        publicDockioUrl: form.publicDockioUrl || state?.settings.publicDockioUrl || ""
+      }));
+      setGithubForm((form) => ({ ...form, connectionId: result.connection.id }));
+      setNotice("GitHub App connection saved. Refresh installations next.");
+      await refresh();
+    });
+  }
+
+  async function disconnectGitHub(connectionId: string) {
+    if (!window.confirm("Disconnect this GitHub App connection from Dockio? Existing services stay, but private redeploys will fail until reconnected.")) return;
+    await run("Disconnecting GitHub", async () => {
+      await api(`/api/git/github/connections/${connectionId}/disconnect`, { method: "POST", csrfToken });
+      setGithubForm((form) => ({ ...form, connectionId: "", installationId: "", repositoryId: "", branches: [] }));
+      setNotice("GitHub connection removed.");
+      await refresh();
+    });
+  }
+
+  async function syncGitHubInstallations(connectionId = githubForm.connectionId) {
+    if (!connectionId) return;
+    await run("Refreshing GitHub installations", async () => {
+      const result = await api<{ installations: GitInstallation[] }>(`/api/git/github/connections/${connectionId}/sync-installations`, { method: "POST", csrfToken });
+      const first = result.installations[0];
+      setGithubForm((form) => ({ ...form, connectionId, installationId: first?.id || form.installationId }));
+      setNotice(result.installations.length ? `Found ${result.installations.length} GitHub installation(s). Refresh repositories next.` : "No GitHub installations found. Install the app on at least one repository.");
+      await refresh();
+    });
+  }
+
+  async function syncGitHubRepositories(installationId = githubForm.installationId) {
+    if (!installationId) return;
+    await run("Refreshing GitHub repositories", async () => {
+      const result = await api<{ repositories: GitRepository[] }>(`/api/git/github/installations/${installationId}/sync-repositories`, { method: "POST", csrfToken });
+      const first = result.repositories[0];
+      setGithubForm((form) => ({ ...form, installationId, repositoryId: first?.id || form.repositoryId }));
+      setNotice(result.repositories.length ? `Synced ${result.repositories.length} repositories.` : "No repositories are available to this GitHub App installation.");
+      await refresh();
+    });
+  }
+
+  async function loadGitHubBranches(repositoryId = githubForm.repositoryId) {
+    const repo = state?.gitRepositories.find((item) => item.id === repositoryId);
+    const installationId = githubForm.installationId || repo?.installationId || "";
+    if (!installationId || !repositoryId) return;
+    await run("Loading branches", async () => {
+      const result = await api<{ branches: Array<{ name: string; sha?: string; protected?: boolean }> }>("/api/git/github/branches", {
+        method: "POST",
+        csrfToken,
+        body: { installationId, repositoryId }
+      });
+      setGithubForm((form) => ({ ...form, installationId, repositoryId, branches: result.branches }));
+      setGitForm((form) => ({ ...form, branch: repo?.defaultBranch || result.branches[0]?.name || form.branch }));
+      setNotice(`Loaded ${result.branches.length} branches.`);
+    });
+  }
+
+  async function detectGitHubStack() {
+    const repo = state?.gitRepositories.find((item) => item.id === githubForm.repositoryId);
+    const installationId = githubForm.installationId || repo?.installationId || "";
+    if (!installationId || !githubForm.repositoryId) return;
+    await run("Detecting GitHub stack", async () => {
+      const result = await api<{ analysis: RepoAnalysis }>("/api/git/github/detect", {
+        method: "POST",
+        csrfToken,
+        body: {
+          installationId,
+          repositoryId: githubForm.repositoryId,
+          branch: gitForm.branch,
+          appDirectory: gitForm.appDirectory
+        }
+      });
+      setGithubForm((form) => ({ ...form, installationId }));
+      setRepoAnalysis(result.analysis);
+      const detected = result.analysis.services.find((service) => service.id === result.analysis.recommendedServiceId) || result.analysis.services[0];
+      if (detected) applyDetectedService(detected, result.analysis.branch);
+      setDeployStep("build");
+      setNotice("Private repository stack detected. Confirm build settings, then deploy.");
+    });
+  }
+
+  async function deployGitHub() {
+    const repo = state?.gitRepositories.find((item) => item.id === githubForm.repositoryId);
+    const installationId = githubForm.installationId || repo?.installationId || "";
+    await run(editingAppId ? "Redeploying GitHub App service" : "Deploying GitHub App service", async () => {
+      const result = await api<{ app: ManagedApp }>(editingAppId ? `/api/apps/${editingAppId}/github` : "/api/apps/github", {
+        method: "POST",
+        csrfToken,
+        body: {
+          ...gitForm,
+          projectId: selectedProjectId || gitForm.projectId,
+          gitInstallationId: installationId,
+          gitRepositoryId: githubForm.repositoryId,
+          autoDeployEnabled: githubForm.autoDeployEnabled
+        }
+      });
+      setDomainForm((form) => ({ ...form, appId: result.app.id }));
+      const url = previewUrl(result.app, publicIp(status));
+      setNotice(url ? `${result.app.name} deployed from GitHub App. Preview: ${url}` : `${result.app.name} deployed from GitHub App.`);
+      setEditingAppId("");
+      await refresh();
+      setDeployStep("runtime");
+    });
+  }
+
+  async function saveAutoDeploy(app: ManagedApp, enabled: boolean) {
+    await run(enabled ? "Enabling auto-deploy" : "Disabling auto-deploy", async () => {
+      const result = await api<{ app: ManagedApp }>(`/api/apps/${app.id}/autodeploy`, {
+        method: "POST",
+        csrfToken,
+        body: { enabled, branch: app.autoDeployBranch || app.branch || "main" }
+      });
+      setNotice(result.app?.lastMessage || "Auto-deploy setting saved.");
+      await refresh();
     });
   }
 
@@ -695,8 +946,8 @@ export function PanelShell() {
   }
 
   function editGitDeployment(app: ManagedApp) {
-    if (app.source !== "git" && app.sourceType !== "git-url") {
-      setNotice("Only public Git services can be edited in the deploy wizard right now.");
+    if (app.source !== "git" && !["git-url", "github-app"].includes(app.sourceType || "")) {
+      setNotice("Only Git services can be edited in the deploy wizard right now.");
       return;
     }
     const projectId = app.projectId || selectedProjectId || gitForm.projectId || "";
@@ -709,7 +960,7 @@ export function PanelShell() {
     setEditingAppId(app.id);
     setRepoAnalysis(null);
     setSelectedDetectionId("");
-    setDeployProvider("git");
+    setDeployProvider(app.sourceType === "github-app" ? "github" : "git");
     setDeployStep("details");
     setTab("deployments");
     setGitForm((form) => ({
@@ -731,6 +982,15 @@ export function PanelShell() {
       previewDomainEnabled: app.previewDomainEnabled !== false,
       publicPreview: Boolean(app.publicPreview)
     }));
+    if (app.sourceType === "github-app") {
+      setGithubForm((form) => ({
+        ...form,
+        connectionId: app.gitProviderConnectionId || form.connectionId,
+        installationId: app.gitInstallationId || form.installationId,
+        repositoryId: app.gitRepositoryId || form.repositoryId,
+        autoDeployEnabled: Boolean(app.autoDeployEnabled)
+      }));
+    }
     setNotice(`Editing ${app.name}. Existing saved env is preserved unless you paste replacement env values.`);
   }
 
@@ -1073,6 +1333,19 @@ export function PanelShell() {
   const allProjects = state?.projects ?? [];
   const allDatabases = state?.databases ?? [];
   const allDeployments = state?.deployments ?? [];
+  const gitConnections = state?.gitConnections ?? [];
+  const gitInstallations = state?.gitInstallations ?? [];
+  const gitRepositories = state?.gitRepositories ?? [];
+  const gitWebhookEvents = state?.gitWebhookEvents ?? [];
+  const selectedGitConnection = gitConnections.find((connection) => connection.id === githubForm.connectionId) || gitConnections[0];
+  const selectedGitInstallation = gitInstallations.find((installation) => installation.id === githubForm.installationId) || gitInstallations.find((installation) => installation.providerConnectionId === selectedGitConnection?.id);
+  const installationRepos = gitRepositories.filter((repo) => !selectedGitInstallation || repo.installationId === selectedGitInstallation.id);
+  const filteredGitRepositories = installationRepos.filter((repo) => {
+    const query = githubForm.repoSearch.trim().toLowerCase();
+    return !query || repo.fullName.toLowerCase().includes(query);
+  });
+  const selectedGitRepository = gitRepositories.find((repo) => repo.id === githubForm.repositoryId);
+  const webhookUrl = webhookUrlFromSettings(state?.settings.publicDockioUrl || "");
   const currentProject = allProjects.find((project) => project.id === selectedProjectId);
   const apps = currentProject ? allApps.filter((app) => app.projectId === currentProject.id) : allApps;
   const projects = currentProject ? [currentProject] : allProjects;
@@ -1156,10 +1429,10 @@ export function PanelShell() {
                         </p>
                         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                           <ActionCard title="Deploy from Public Git" body="Paste a repo URL and let Dockio detect the stack." icon={GitBranch} onClick={() => startGlobalDeployment("git")} />
+                          <ActionCard title="Deploy from GitHub App" body="Pick a connected private or public GitHub repo." icon={Github} onClick={() => startGlobalDeployment("github")} />
                           <ActionCard title="Create Project" body="Group a frontend, API, databases, domains, and logs." icon={Layers3} onClick={openCreateProject} />
                           <ActionCard title="Add Database" body="Create Postgres/Redis or save an external URL." icon={Database} onClick={() => openGlobalTab("database")} />
                           <ActionCard title="Add Domain" body="Route a custom domain through Caddy HTTPS." icon={Globe2} onClick={() => openGlobalTab("domains")} />
-                          <ActionCard title="View Logs" body="Load runtime or deployment logs for a service." icon={Terminal} onClick={() => openGlobalTab("logs")} />
                         </div>
                       </div>
                       <ServerSnapshot status={status} vpsIp={vpsIp} dataDir={state?.dataDir || ""} />
@@ -1189,6 +1462,175 @@ export function PanelShell() {
                     ) : (
                       <EmptyState title="No projects yet" body="Create one project to hold your app services, env vars, databases, domains, and deployment history." actionLabel="Create Project" onAction={openCreateProject} icon={Layers3} />
                     )}
+                  </Panel>
+                </div>
+              )}
+
+              {tab === "git" && (
+                <div className="space-y-5">
+                  <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+                    <Panel title="GitHub App Connection" icon={Github}>
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <div className="grid gap-3">
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <Field label="Connection name" value={githubConnectionForm.name} onChange={(name) => setGithubConnectionForm({ ...githubConnectionForm, name })} />
+                            <Field label="GitHub App ID" value={githubConnectionForm.appId} onChange={(appId) => setGithubConnectionForm({ ...githubConnectionForm, appId })} placeholder="123456" />
+                            <Field label="Client ID optional" value={githubConnectionForm.clientId} onChange={(clientId) => setGithubConnectionForm({ ...githubConnectionForm, clientId })} placeholder="Iv1..." />
+                            <Field label="App slug optional" value={githubConnectionForm.appSlug} onChange={(appSlug) => setGithubConnectionForm({ ...githubConnectionForm, appSlug })} placeholder="dockio-panel" />
+                            <Field label="App URL optional" value={githubConnectionForm.appUrl} onChange={(appUrl) => setGithubConnectionForm({ ...githubConnectionForm, appUrl })} placeholder="https://github.com/apps/your-app" />
+                            <Field label="Install URL optional" value={githubConnectionForm.installUrl} onChange={(installUrl) => setGithubConnectionForm({ ...githubConnectionForm, installUrl })} placeholder="https://github.com/apps/your-app/installations/new" />
+                          </div>
+                          <Field label="Public Dockio URL for webhooks" value={githubConnectionForm.publicDockioUrl || state?.settings.publicDockioUrl || ""} onChange={(publicDockioUrl) => setGithubConnectionForm({ ...githubConnectionForm, publicDockioUrl })} placeholder="https://panel.example.com" />
+                          <TextArea label="Private key PEM" value={githubConnectionForm.privateKey} onChange={(privateKey) => setGithubConnectionForm({ ...githubConnectionForm, privateKey })} placeholder={"-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"} />
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <Field label="Webhook secret" value={githubConnectionForm.webhookSecret} onChange={(webhookSecret) => setGithubConnectionForm({ ...githubConnectionForm, webhookSecret })} placeholder="long random secret" />
+                            <Field label="Client secret optional" value={githubConnectionForm.clientSecret} onChange={(clientSecret) => setGithubConnectionForm({ ...githubConnectionForm, clientSecret })} type="password" />
+                          </div>
+                          <button className="dio-button-primary w-fit" onClick={() => void saveGitHubConnection()} disabled={Boolean(busy) || !githubConnectionForm.appId.trim() || !githubConnectionForm.privateKey.trim() || !githubConnectionForm.webhookSecret.trim()}>
+                            <KeyRound size={16} />
+                            Save GitHub App
+                          </button>
+                        </div>
+                        <div className="grid content-start gap-3">
+                          <Info title="GitHub App permissions" body="Set Repository Contents read-only, Metadata read-only, and subscribe to Push events. Webhooks must point to the Dockio URL below." />
+                          <Info title="Webhook URL" body={webhookUrl || "Set a public HTTPS Dockio URL to show the webhook endpoint."} />
+                          {webhookUrl && (
+                            <button className="dio-button w-fit" onClick={() => void navigator.clipboard?.writeText(webhookUrl)}>
+                              <Copy size={14} />
+                              Copy Webhook URL
+                            </button>
+                          )}
+                          <Info title="Security" body="Private keys and webhook secrets are encrypted locally. Installation tokens are generated only when syncing, detecting, or deploying." />
+                        </div>
+                      </div>
+                    </Panel>
+                    <Panel title="Connected GitHub" icon={Github}>
+                      <div className="grid gap-3">
+                        {gitConnections.length === 0 && <p className="text-sm text-zinc-500">No GitHub App connection yet. Save the manual setup form first.</p>}
+                        {gitConnections.map((connection) => (
+                          <div key={connection.id} className="rounded-md border border-line bg-panel p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate font-bold text-ink">{connection.name}</p>
+                                <p className="text-xs text-zinc-500">App ID {connection.appId} - {connection.status}</p>
+                                <p className="text-xs text-zinc-600">Secrets configured: {connection.privateKeyConfigured && connection.webhookSecretConfigured ? "yes" : "needs setup"}</p>
+                              </div>
+                              <StatusPill ok={connection.status === "connected"} label={connection.status} />
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button className="dio-button" onClick={() => setGithubForm((form) => ({ ...form, connectionId: connection.id }))}>Select</button>
+                              {connection.installUrl && (
+                                <a className="dio-button" href={connection.installUrl} target="_blank" rel="noreferrer">
+                                  <ExternalLink size={14} />
+                                  Install App
+                                </a>
+                              )}
+                              {connection.appUrl && (
+                                <a className="dio-button" href={connection.appUrl} target="_blank" rel="noreferrer">
+                                  <Settings size={14} />
+                                  Configure
+                                </a>
+                              )}
+                              <button className="dio-button" onClick={() => void syncGitHubInstallations(connection.id)} disabled={Boolean(busy)}>
+                                <RefreshCw size={14} />
+                                Refresh Installations
+                              </button>
+                              <button className="dio-button-danger" onClick={() => void disconnectGitHub(connection.id)} disabled={Boolean(busy)}>
+                                <Trash2 size={14} />
+                                Disconnect
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </Panel>
+                  </div>
+
+                  <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+                    <Panel title="Installations" icon={Layers3}>
+                      <div className="grid gap-2">
+                        {gitInstallations.length === 0 && <p className="text-sm text-zinc-500">Refresh installations after saving a GitHub App connection.</p>}
+                        {gitInstallations.filter((installation) => !selectedGitConnection || installation.providerConnectionId === selectedGitConnection.id).map((installation) => (
+                          <button key={installation.id} className={`rounded-md border p-3 text-left ${githubForm.installationId === installation.id ? "border-action bg-action/10" : "border-line bg-panel"}`} onClick={() => setGithubForm((form) => ({ ...form, installationId: installation.id, repositoryId: "" }))}>
+                            <p className="font-bold text-ink">{installation.accountLogin}</p>
+                            <p className="text-xs text-zinc-500">{installation.accountType} - repositories {installation.repositorySelection || "selected"}</p>
+                            <p className="text-xs text-zinc-600">Last sync {installation.lastSyncedAt ? new Date(installation.lastSyncedAt).toLocaleString() : "never"}</p>
+                          </button>
+                        ))}
+                        {selectedGitInstallation && (
+                          <button className="dio-button-primary mt-2" onClick={() => void syncGitHubRepositories(selectedGitInstallation.id)} disabled={Boolean(busy)}>
+                            <RefreshCw size={14} />
+                            Refresh Repositories
+                          </button>
+                        )}
+                      </div>
+                    </Panel>
+                    <Panel title="Repositories" icon={GitBranch}>
+                      <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center">
+                        <input className="dio-input md:max-w-md" value={githubForm.repoSearch} onChange={(event) => setGithubForm({ ...githubForm, repoSearch: event.target.value })} placeholder="Search repositories..." />
+                        <span className="dio-badge">{filteredGitRepositories.length} shown</span>
+                      </div>
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        {filteredGitRepositories.length === 0 && <p className="text-sm text-zinc-500">No repositories synced yet, or none match the search.</p>}
+                        {filteredGitRepositories.map((repo) => (
+                          <article key={repo.id} className="rounded-md border border-line bg-panel p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate font-bold text-ink">{repo.fullName}</p>
+                                <p className="text-xs text-zinc-500">{repo.private ? "private" : "public"} - default branch {repo.defaultBranch}</p>
+                                {repo.archived || repo.disabled ? <p className="mt-1 text-xs text-yellow-300">Archived or disabled repositories cannot deploy.</p> : null}
+                              </div>
+                              <span className="dio-badge">{repo.private ? "private" : "public"}</span>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <a className="dio-button" href={repo.htmlUrl} target="_blank" rel="noreferrer">
+                                <ExternalLink size={14} />
+                                GitHub
+                              </a>
+                              <button className="dio-button" onClick={() => void loadGitHubBranches(repo.id)} disabled={Boolean(busy) || repo.archived || repo.disabled}>
+                                <GitBranch size={14} />
+                                Branches
+                              </button>
+                              <button
+                                className="dio-button-primary"
+                                onClick={() => {
+                                  const installation = gitInstallations.find((item) => item.id === repo.installationId);
+                                  setGithubForm((form) => ({ ...form, installationId: installation?.id || form.installationId, repositoryId: repo.id }));
+                                  setGitForm((form) => ({ ...form, repoUrl: repo.cloneUrl, branch: repo.defaultBranch || "main", name: repo.name }));
+                                  startGlobalDeployment("github");
+                                }}
+                                disabled={repo.archived || repo.disabled}
+                              >
+                                <PackagePlus size={14} />
+                                Deploy
+                              </button>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </Panel>
+                  </div>
+
+                  <Panel title="Webhook Health" icon={Shield}>
+                    <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
+                      <div className="grid gap-2">
+                        <Info title="Public URL" body={state?.settings.publicDockioUrl || "Not configured. Manual deploy works; auto-deploy needs a public HTTPS panel URL."} />
+                        <Info title="Webhook URL" body={webhookUrl || "Configure public Dockio URL in Git or Settings."} />
+                      </div>
+                      <div className="grid max-h-64 gap-2 overflow-auto pr-1">
+                        {gitWebhookEvents.length === 0 && <p className="text-sm text-zinc-500">No GitHub webhooks received yet.</p>}
+                        {gitWebhookEvents.map((event) => (
+                          <div key={event.id} className="rounded-md border border-line bg-panel p-3 text-sm">
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="font-bold text-ink">{event.repositoryFullName || event.event}</p>
+                              <StatusPill ok={event.status === "accepted"} label={event.status} />
+                            </div>
+                            <p className="mt-1 text-xs text-zinc-500">{event.branch || "no branch"} - {new Date(event.createdAt).toLocaleString()}</p>
+                            <p className="mt-1 text-xs text-zinc-400">{event.message}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </Panel>
                 </div>
               )}
@@ -1244,6 +1686,10 @@ export function PanelShell() {
                     <button className="dio-button-primary" onClick={() => startGlobalDeployment("git")} disabled={Boolean(busy)}>
                       <GitBranch size={15} />
                       Deploy from Public Git
+                    </button>
+                    <button className="dio-button" onClick={() => startGlobalDeployment("github")} disabled={Boolean(busy)}>
+                      <Github size={15} />
+                      Deploy GitHub App Repo
                     </button>
                     <button className="dio-button" onClick={() => startGlobalDeployment("image")} disabled={Boolean(busy)}>
                       <Boxes size={15} />
@@ -1660,7 +2106,7 @@ export function PanelShell() {
                     <Play size={15} />
                     Redeploy
                   </button>
-                  <button className="dio-button" onClick={() => selectedService.source === "git" || selectedService.sourceType === "git-url" ? editGitDeployment(selectedService) : setNotice("Edit settings are currently available for public Git services.")}>
+                  <button className="dio-button" onClick={() => isGitManagedService(selectedService) ? editGitDeployment(selectedService) : setNotice("Edit settings are currently available for Git services.")}>
                     <Wrench size={15} />
                     Edit Build Settings
                   </button>
@@ -1677,7 +2123,17 @@ export function PanelShell() {
                     Logs
                   </button>
                 </div>
-                <Info title="No autodeploy yet" body="Dockio deploys manually from this panel right now. Webhooks and GitHub account integrations are intentionally hidden until they work." />
+                {selectedService.sourceType === "github-app" ? (
+                  <AutoDeployCard
+                    app={selectedService}
+                    webhookUrl={webhookUrl}
+                    publicDockioUrl={state?.settings.publicDockioUrl || ""}
+                    busy={busy}
+                    onToggle={saveAutoDeploy}
+                  />
+                ) : (
+                  <Info title="Manual deploy" body="Use Redeploy when you want latest source. Connect a GitHub App on the Git page to enable verified push-to-deploy for a service." />
+                )}
               </div>
             </Panel>
 
@@ -1785,7 +2241,7 @@ export function PanelShell() {
                       <Terminal size={15} />
                       Logs
                     </button>
-                    {(activeApp.source === "git" || activeApp.sourceType === "git-url") && (
+                    {isGitManagedService(activeApp) && (
                       <button className="dio-button" onClick={() => editGitDeployment(activeApp)} disabled={Boolean(busy)}>
                         <Wrench size={15} />
                         Edit Deploy
@@ -1841,7 +2297,7 @@ export function PanelShell() {
                           Redeploy
                         </button>
                       )}
-                      {(activeApp.source === "git" || activeApp.sourceType === "git-url") && (
+                      {isGitManagedService(activeApp) && (
                         <button className="dio-button" onClick={() => editGitDeployment(activeApp)}>
                           <Wrench size={15} />
                           Edit & Redeploy
@@ -2172,7 +2628,7 @@ export function PanelShell() {
                   <RefreshCw size={15} />
                   Redeploy Latest
                 </button>
-                {(selectedService.source === "git" || selectedService.sourceType === "git-url") && (
+                {isGitManagedService(selectedService) && (
                   <button className="dio-button" onClick={() => editGitDeployment(selectedService)} disabled={Boolean(busy)}>
                     <Wrench size={15} />
                     Edit Source & Build
@@ -2184,6 +2640,17 @@ export function PanelShell() {
                 </button>
               </div>
               <DeploymentList deployments={visibleDeployments} apps={apps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
+              {selectedService.sourceType === "github-app" && (
+                <div className="mt-4">
+                  <AutoDeployCard
+                    app={selectedService}
+                    webhookUrl={webhookUrl}
+                    publicDockioUrl={state?.settings.publicDockioUrl || ""}
+                    busy={busy}
+                    onToggle={saveAutoDeploy}
+                  />
+                </div>
+              )}
             </Panel>
           </div>
         )}
@@ -2201,7 +2668,8 @@ export function PanelShell() {
               {deployStep === "source" && (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   {[
-                    { id: "git" as DeployProvider, title: "Application", body: "Deploy a public Git repository with Node, Next, Vite, static, or Dockerfile settings.", icon: GitBranch },
+                    { id: "git" as DeployProvider, title: "Public Git URL", body: "Deploy a public Git repository with Node, Next, Vite, static, or Dockerfile settings.", icon: GitBranch },
+                    { id: "github" as DeployProvider, title: "GitHub App", body: "Deploy a selected public or private repository from a connected GitHub App.", icon: Github },
                     { id: "image" as DeployProvider, title: "Docker Image", body: "Run an existing image from Docker Hub, GHCR, or another registry.", icon: Boxes },
                     { id: "compose" as DeployProvider, title: "Docker Compose", body: "Clone a public repo that contains docker-compose.yml or compose.yaml.", icon: Layers3 },
                     { id: "compose-yaml" as DeployProvider, title: "Paste Compose YAML", body: "Deploy a small compose stack from pasted YAML.", icon: Terminal }
@@ -2243,6 +2711,77 @@ export function PanelShell() {
                 </div>
               )}
 
+              {deployStep === "details" && deployProvider === "github" && (
+                <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+                  <div className="grid gap-3">
+                    {gitConnections.length === 0 ? (
+                      <div className="rounded-md border border-yellow-900/70 bg-yellow-950/20 p-4 text-sm text-yellow-100">
+                        <p className="font-bold">GitHub App is not connected yet.</p>
+                        <p className="mt-1 text-yellow-200/80">Open the Git page, save a GitHub App connection, then refresh installations and repositories.</p>
+                        <button className="dio-button mt-3" onClick={() => openGlobalTab("git")}>Open Git Settings</button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <Select label="Connection" value={githubForm.connectionId} onChange={(connectionId) => setGithubForm({ ...githubForm, connectionId, installationId: "", repositoryId: "" })} options={gitConnections.map((connection) => ({ value: connection.id, label: `${connection.name} (${connection.status})` }))} />
+                          <Select label="Installation / account" value={githubForm.installationId} onChange={(installationId) => setGithubForm({ ...githubForm, installationId, repositoryId: "" })} options={gitInstallations.filter((installation) => !githubForm.connectionId || installation.providerConnectionId === githubForm.connectionId).map((installation) => ({ value: installation.id, label: installation.accountLogin }))} />
+                        </div>
+                        {githubForm.installationId && (
+                          <button className="dio-button w-fit" onClick={() => void syncGitHubRepositories(githubForm.installationId)} disabled={Boolean(busy)}>
+                            <RefreshCw size={14} />
+                            Refresh Repositories
+                          </button>
+                        )}
+                        <input className="dio-input" value={githubForm.repoSearch} onChange={(event) => setGithubForm({ ...githubForm, repoSearch: event.target.value })} placeholder="Search synced repositories..." />
+                        <div className="grid max-h-64 gap-2 overflow-auto pr-1">
+                          {filteredGitRepositories.map((repo) => (
+                            <button
+                              key={repo.id}
+                              className={`rounded-md border p-3 text-left ${githubForm.repositoryId === repo.id ? "border-action bg-action/10" : "border-line bg-panel"}`}
+                              onClick={() => {
+                                setGithubForm({ ...githubForm, repositoryId: repo.id });
+                                setGitForm({ ...gitForm, repoUrl: repo.cloneUrl, branch: repo.defaultBranch, name: gitForm.name === "Git App" ? repo.name : gitForm.name });
+                              }}
+                              disabled={repo.archived || repo.disabled}
+                            >
+                              <p className="truncate font-bold text-ink">{repo.fullName}</p>
+                              <p className="text-xs text-zinc-500">{repo.private ? "private" : "public"} - default {repo.defaultBranch}</p>
+                            </button>
+                          ))}
+                          {filteredGitRepositories.length === 0 && <p className="text-sm text-zinc-500">No repositories. Refresh repositories on the Git page or above.</p>}
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <Field label="App name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
+                          <Select label="Service role" value={gitForm.serviceRole} onChange={(serviceRole) => setGitForm({ ...gitForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
+                          <label className="grid gap-1">
+                            <span className="dio-label">Branch</span>
+                            <input className="dio-input" list="github-branches" value={gitForm.branch} onChange={(event) => setGitForm({ ...gitForm, branch: event.target.value })} />
+                            <datalist id="github-branches">
+                              {githubForm.branches.map((branch) => <option key={branch.name} value={branch.name} />)}
+                            </datalist>
+                          </label>
+                          <Field label="Root directory optional" value={gitForm.appDirectory} onChange={(appDirectory) => { setGitForm({ ...gitForm, appDirectory }); setRepoAnalysis(null); }} placeholder="apps/web or blank" />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button className="dio-button" onClick={() => void loadGitHubBranches()} disabled={Boolean(busy) || !githubForm.repositoryId}>
+                            <GitBranch size={14} />
+                            Load Branches
+                          </button>
+                          <button className="dio-button-primary" onClick={() => void detectGitHubStack()} disabled={Boolean(busy) || !githubForm.repositoryId}>
+                            <Activity size={16} />
+                            Detect Stack
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div className="grid content-start gap-3">
+                    <Info title="Selected repository" body={selectedGitRepository ? `${selectedGitRepository.fullName} (${selectedGitRepository.private ? "private" : "public"})` : "Choose a synced GitHub repository."} />
+                    <Info title="Private clone" body="Dockio generates a short-lived installation token during deploy and feeds it to Git through a temporary askpass helper." />
+                  </div>
+                </div>
+              )}
+
               {deployStep === "details" && deployProvider === "image" && (
                 <div className="grid gap-3 md:grid-cols-2">
                   <Field label="App name" value={imageForm.name} onChange={(name) => setImageForm({ ...imageForm, name })} />
@@ -2268,7 +2807,7 @@ export function PanelShell() {
                 </div>
               )}
 
-              {deployStep === "build" && deployProvider === "git" && (
+              {deployStep === "build" && (deployProvider === "git" || deployProvider === "github") && (
                 <div className="grid gap-4 xl:grid-cols-[1fr_1.15fr]">
                   <div className="grid gap-3">
                     <p className="text-sm text-zinc-400">Confirm one detected service, then adjust build/runtime settings only here.</p>
@@ -2297,7 +2836,7 @@ export function PanelShell() {
               {deployStep === "runtime" && (
                 <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
                   <div className="grid gap-3">
-                    {deployProvider === "git" && (
+                    {(deployProvider === "git" || deployProvider === "github") && (
                       <>
                         <Select label="Database" value={gitForm.databaseId} onChange={(databaseId) => setGitForm({ ...gitForm, databaseId })} options={[{ value: "", label: "No database" }, ...databases.map((database) => ({ value: database.id, label: `${database.name} (${database.envKey})` }))]} />
                         <TextArea label="Environment variables" value={gitForm.envText} onChange={(envText) => setGitForm({ ...gitForm, envText })} placeholder={"DATABASE_URL=...\nJWT_SECRET=..."} />
@@ -2309,6 +2848,12 @@ export function PanelShell() {
                           <input className="mt-1" type="checkbox" checked={gitForm.publicPreview} onChange={(event) => setGitForm({ ...gitForm, publicPreview: event.target.checked })} />
                           <span><span className="block font-bold text-ink">Also open public debug port</span><span className="mt-1 block text-xs text-zinc-500">Fallback only. This opens a generated high port in UFW; leave off for Caddy/domain-only access.</span></span>
                         </label>
+                        {deployProvider === "github" && (
+                          <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
+                            <input className="mt-1" type="checkbox" checked={githubForm.autoDeployEnabled} onChange={(event) => setGithubForm({ ...githubForm, autoDeployEnabled: event.target.checked })} />
+                            <span><span className="block font-bold text-ink">Auto-deploy on push</span><span className="mt-1 block text-xs text-zinc-500">Requires a public HTTPS Dockio URL configured in Git settings and the GitHub App push webhook.</span></span>
+                          </label>
+                        )}
                       </>
                     )}
                     {deployProvider === "image" && (
@@ -2334,6 +2879,7 @@ export function PanelShell() {
                       className="dio-button-primary w-full justify-center"
                       onClick={() => {
                         if (deployProvider === "git") void deployGit();
+                        if (deployProvider === "github") void deployGitHub();
                         if (deployProvider === "image") void deployImage();
                         if (deployProvider === "compose") void deployCompose();
                         if (deployProvider === "compose-yaml") void deployComposeYaml();
@@ -2350,7 +2896,7 @@ export function PanelShell() {
               <div className="mt-5 flex flex-wrap justify-between gap-2 border-t border-line pt-4">
                 <button className="dio-button" onClick={() => setDeployStep(previousDeployStep(deployStep, deployProvider))} disabled={deployStep === "source" || Boolean(busy)}>Back</button>
                 {deployStep !== "runtime" && (
-                  <button className="dio-button-primary" onClick={() => setDeployStep(nextDeployStep(deployStep, deployProvider))} disabled={Boolean(busy) || !canContinueDeploy(deployStep, deployProvider, gitForm, imageForm, composeForm, composeYamlForm)}>
+                  <button className="dio-button-primary" onClick={() => setDeployStep(nextDeployStep(deployStep, deployProvider))} disabled={Boolean(busy) || !canContinueDeploy(deployStep, deployProvider, gitForm, githubForm, imageForm, composeForm, composeYamlForm)}>
                     Continue
                   </button>
                 )}
@@ -2870,13 +3416,13 @@ function DeploymentSteps({ active }: { active: DeployStep }) {
 
 function nextDeployStep(step: DeployStep, provider: DeployProvider): DeployStep {
   if (step === "source") return "details";
-  if (step === "details") return provider === "git" ? "build" : "runtime";
+  if (step === "details") return isGitBuildProvider(provider) ? "build" : "runtime";
   if (step === "build") return "runtime";
   return "runtime";
 }
 
 function previousDeployStep(step: DeployStep, provider: DeployProvider): DeployStep {
-  if (step === "runtime") return provider === "git" ? "build" : "details";
+  if (step === "runtime") return isGitBuildProvider(provider) ? "build" : "details";
   if (step === "build") return "details";
   if (step === "details") return "source";
   return "source";
@@ -2886,6 +3432,7 @@ function canContinueDeploy(
   step: DeployStep,
   provider: DeployProvider,
   gitForm: { repoUrl: string },
+  githubForm: { repositoryId: string },
   imageForm: { image: string },
   composeForm: { repoUrl: string },
   composeYamlForm: { composeYaml: string }
@@ -2893,9 +3440,78 @@ function canContinueDeploy(
   if (step === "source") return true;
   if (step === "build") return true;
   if (provider === "git") return Boolean(gitForm.repoUrl.trim());
+  if (provider === "github") return Boolean(githubForm.repositoryId.trim());
   if (provider === "image") return Boolean(imageForm.image.trim());
   if (provider === "compose") return Boolean(composeForm.repoUrl.trim());
   return Boolean(composeYamlForm.composeYaml.trim());
+}
+
+function isGitBuildProvider(provider: DeployProvider) {
+  return provider === "git" || provider === "github";
+}
+
+function isGitManagedService(app?: ManagedApp) {
+  if (!app) return false;
+  return app.source === "git" || ["git-url", "public_git", "github-app"].includes(app.sourceType || "");
+}
+
+function webhookUrlFromSettings(publicDockioUrl: string) {
+  const value = publicDockioUrl.trim().replace(/\/+$/, "");
+  if (!value) return "";
+  try {
+    const parsed = new URL(value);
+    if (!["http:", "https:"].includes(parsed.protocol)) return "";
+    return `${value}/api/webhooks/github`;
+  } catch {
+    return "";
+  }
+}
+
+function AutoDeployCard({
+  app,
+  webhookUrl,
+  publicDockioUrl,
+  busy,
+  onToggle
+}: {
+  app: ManagedApp;
+  webhookUrl: string;
+  publicDockioUrl: string;
+  busy: string;
+  onToggle: (app: ManagedApp, enabled: boolean) => Promise<void>;
+}) {
+  const enabled = Boolean(app.autoDeployEnabled);
+  const publicUrlReady = Boolean(publicDockioUrl && publicDockioUrl.startsWith("https://") && webhookUrl);
+  return (
+    <div className="rounded-md border border-line bg-panel p-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <p className="font-black text-ink">GitHub Auto Deploy</p>
+          <p className="mt-1 text-sm text-zinc-500">
+            {app.repoFullName || app.repoUrl || "GitHub repository"} on branch {app.autoDeployBranch || app.branch || "main"}.
+          </p>
+          <div className="mt-3 grid gap-2 text-xs text-zinc-500">
+            <p className="break-all">Webhook: {webhookUrl || "Configure a public Dockio URL first."}</p>
+            <p>Last webhook: {app.lastWebhookAt ? `${new Date(app.lastWebhookAt).toLocaleString()} - ${app.lastWebhookStatus || "received"}` : "none received yet"}</p>
+            {app.lastWebhookMessage && <p className="break-words">{app.lastWebhookMessage}</p>}
+            {!publicUrlReady && <p className="text-yellow-300">Auto-deploy needs a public HTTPS Dockio URL on the Git page. Manual deploy still works.</p>}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 lg:justify-end">
+          {webhookUrl && (
+            <button className="dio-button" onClick={() => void navigator.clipboard?.writeText(webhookUrl)}>
+              <Copy size={14} />
+              Copy Webhook
+            </button>
+          )}
+          <button className={enabled ? "dio-button-danger" : "dio-button-primary"} onClick={() => void onToggle(app, !enabled)} disabled={Boolean(busy) || (!enabled && !publicUrlReady)}>
+            <RefreshCw size={14} />
+            {enabled ? "Disable Auto Deploy" : "Enable Auto Deploy"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SecurityBanner({ status }: { status: Record<string, unknown> | null }) {
@@ -3147,7 +3763,7 @@ function AppGrid({
                 Redeploy
               </button>
             )}
-            {(app.source === "git" || app.sourceType === "git-url") && (
+            {isGitManagedService(app) && (
               <button className="dio-button" onClick={() => onEdit(app)}>
                 <Wrench size={14} />
                 Edit
@@ -3587,6 +4203,7 @@ function globalPageMeta(tab: Tab) {
   if (tab === "domains") return { title: "Domains", subtitle: "Manage custom domains and automatic preview URLs served by Caddy on this VPS." };
   if (tab === "advanced") return { title: "Firewall", subtitle: "Review UFW, apply a safe baseline, expose or block ports, and configure preview-domain routing." };
   if (tab === "docker") return { title: "Docker", subtitle: "Inspect Dockio-managed containers, images, database volumes, and run safe cleanup." };
+  if (tab === "git") return { title: "Git", subtitle: "Connect a GitHub App, sync installations, pick repositories, and enable verified push-to-deploy." };
   if (tab === "monitoring") return { title: "Server Status", subtitle: "Docker, Caddy, firewall, preview routing, and raw VPS status checks." };
   if (tab === "settings") return { title: "Settings", subtitle: "Panel runtime, security defaults, install paths, and preview URL defaults." };
   return { title: "Dashboard", subtitle: "Manage apps, databases, domains, deployments, logs, and firewall settings on this VPS." };

@@ -19,11 +19,25 @@ import {
   startDeployment,
   updateState,
   type DatabaseResource,
+  type GitProviderConnection,
+  type GitRepository,
   type ManagedApp,
   type PanelSettings,
   type PreviewDomainMode,
   type ServiceRole
 } from "./state";
+import {
+  branchFromGitHubRef,
+  getInstallationAccessToken,
+  githubWebhookUrl,
+  listInstallationRepositories,
+  listInstallations,
+  listRepositoryBranches,
+  normalizeGitHubRepoFullName,
+  normalizePrivateKey,
+  verifyGitHubSignature
+} from "./github";
+import { decryptSecret, encryptSecret, secretStorageStatus } from "./secrets";
 import {
   assertManagedPath,
   assertSafeAppName,
@@ -273,6 +287,538 @@ export async function updateAppSettings(input: {
   return readState().apps.find((item) => item.id === appId);
 }
 
+export async function saveGitHubConnection(input: {
+  id?: string;
+  name: string;
+  appId: string;
+  clientId?: string;
+  clientSecret?: string;
+  appSlug?: string;
+  appUrl?: string;
+  installUrl?: string;
+  privateKey: string;
+  webhookSecret: string;
+  publicDockioUrl?: string;
+}) {
+  const name = assertSafeAppName(input.name || "GitHub");
+  const appId = String(input.appId || "").trim();
+  if (!/^\d{1,20}$/.test(appId)) throw new UserFacingError("GitHub App ID must be numeric.", 400);
+  const privateKey = normalizePrivateKey(input.privateKey);
+  const webhookSecret = input.webhookSecret.trim();
+  if (webhookSecret.length < 12 || webhookSecret.length > 240) throw new UserFacingError("Webhook secret must be 12-240 characters.", 400);
+  const publicDockioUrl = input.publicDockioUrl ? cleanPublicUrl(input.publicDockioUrl) : undefined;
+  const now = new Date().toISOString();
+  const id = input.id ? assertSafeId(input.id, "connectionId") : "github-" + crypto.randomBytes(5).toString("hex");
+  updateState((state) => {
+    const existing = state.gitConnections.find((connection) => connection.id === id);
+    const next: GitProviderConnection = {
+      id,
+      provider: "github",
+      name,
+      appId,
+      clientId: cleanOptionalText(input.clientId, 120),
+      appSlug: cleanOptionalText(input.appSlug, 120),
+      appUrl: cleanOptionalUrl(input.appUrl),
+      installUrl: cleanOptionalUrl(input.installUrl),
+      privateKeyEncrypted: encryptSecret(privateKey),
+      webhookSecretEncrypted: encryptSecret(webhookSecret),
+      clientSecretEncrypted: input.clientSecret?.trim() ? encryptSecret(input.clientSecret.trim()) : existing?.clientSecretEncrypted,
+      status: "connected",
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    if (existing) Object.assign(existing, next);
+    else state.gitConnections.unshift(next);
+    if (publicDockioUrl !== undefined) state.settings.publicDockioUrl = publicDockioUrl;
+  });
+  audit("git.github.save", "Saved GitHub App connection.", { connectionId: id, appId, name, publicDockioUrl });
+  return readState().gitConnections.find((connection) => connection.id === id);
+}
+
+export async function disconnectGitHubConnection(connectionId: string) {
+  const id = assertSafeId(connectionId, "connectionId");
+  updateState((state) => {
+    state.gitConnections = state.gitConnections.filter((connection) => connection.id !== id);
+    const installationIds = new Set(state.gitInstallations.filter((installation) => installation.providerConnectionId === id).map((installation) => installation.id));
+    state.gitInstallations = state.gitInstallations.filter((installation) => installation.providerConnectionId !== id);
+    state.gitRepositories = state.gitRepositories.filter((repository) => !installationIds.has(repository.installationId));
+  });
+  audit("git.github.disconnect", "Disconnected GitHub App connection.", { connectionId: id });
+  return { ok: true };
+}
+
+export async function syncGitHubInstallations(connectionId: string) {
+  const connection = getGitHubConnection(connectionId);
+  const auth = githubAuthForConnection(connection);
+  const installations = await listInstallations(auth);
+  const now = new Date().toISOString();
+  updateState((state) => {
+    for (const installation of installations) {
+      const id = `ghinst-${connection.id}-${installation.installationId}`;
+      const existing = state.gitInstallations.find((item) => item.id === id);
+      const next = {
+        id,
+        providerConnectionId: connection.id,
+        installationId: installation.installationId,
+        accountLogin: installation.accountLogin,
+        accountType: installation.accountType,
+        accountAvatarUrl: installation.accountAvatarUrl,
+        targetType: installation.targetType,
+        repositorySelection: installation.repositorySelection,
+        permissions: installation.permissions,
+        events: installation.events,
+        status: "active" as const,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+        lastSyncedAt: now
+      };
+      if (existing) Object.assign(existing, next);
+      else state.gitInstallations.unshift(next);
+    }
+  });
+  audit("git.github.sync_installations", "Synced GitHub App installations.", { connectionId: connection.id, count: installations.length });
+  return readState().gitInstallations.filter((installation) => installation.providerConnectionId === connection.id);
+}
+
+export async function syncGitHubRepositories(installationRecordId: string) {
+  const installation = getGitHubInstallation(installationRecordId);
+  const connection = getGitHubConnection(installation.providerConnectionId);
+  const token = await getInstallationTokenForRecord(connection, installation.installationId);
+  const repos = await listInstallationRepositories(token.token);
+  const now = new Date().toISOString();
+  updateState((state) => {
+    const seen = new Set<number>();
+    for (const repo of repos) {
+      seen.add(repo.githubRepoId);
+      const id = `ghrepo-${repo.githubRepoId}`;
+      const existing = state.gitRepositories.find((item) => item.id === id);
+      const next: GitRepository = {
+        id,
+        installationId: installation.id,
+        provider: "github",
+        githubRepoId: repo.githubRepoId,
+        fullName: repo.fullName,
+        owner: repo.owner,
+        name: repo.name,
+        private: repo.private,
+        defaultBranch: repo.defaultBranch,
+        cloneUrl: repo.cloneUrl,
+        htmlUrl: repo.htmlUrl,
+        archived: repo.archived,
+        disabled: repo.disabled,
+        pushedAt: repo.pushedAt,
+        updatedAt: repo.updatedAt,
+        lastSyncedAt: now
+      };
+      if (existing) Object.assign(existing, next);
+      else state.gitRepositories.unshift(next);
+    }
+    state.gitRepositories = state.gitRepositories.filter((repo) => repo.installationId !== installation.id || seen.has(repo.githubRepoId));
+  });
+  audit("git.github.sync_repositories", "Synced GitHub repositories.", { installationId: installation.installationId, count: repos.length });
+  return readState().gitRepositories.filter((repo) => repo.installationId === installation.id);
+}
+
+export async function getGitHubBranches(input: { installationId: string; repositoryId: string }) {
+  const installation = getGitHubInstallation(input.installationId);
+  const repository = getGitHubRepository(input.repositoryId);
+  if (repository.installationId !== installation.id) throw new Error("Repository does not belong to this GitHub installation.");
+  const connection = getGitHubConnection(installation.providerConnectionId);
+  const token = await getInstallationTokenForRecord(connection, installation.installationId);
+  return listRepositoryBranches(token.token, repository.fullName);
+}
+
+export async function analyzeGitHubRepository(input: { installationId: string; repositoryId: string; branch?: string; appDirectory?: string }): Promise<RepoAnalysis> {
+  const installation = getGitHubInstallation(input.installationId);
+  const repository = getGitHubRepository(input.repositoryId);
+  if (repository.installationId !== installation.id) throw new Error("Repository does not belong to this GitHub installation.");
+  const connection = getGitHubConnection(installation.providerConnectionId);
+  const token = await getInstallationTokenForRecord(connection, installation.installationId);
+  const gitAuth = createGitAskPass(token.token);
+  const branch = assertSafeBranch(input.branch || repository.defaultBranch || "main");
+  const appDirectory = assertSafeRelativePath(input.appDirectory || "", "App directory");
+  const tempRoot = assertManagedPath(getDataDir(), path.join(getDataDir(), "tmp"));
+  fs.mkdirSync(tempRoot, { recursive: true, mode: 0o750 });
+  const cloneDir = assertManagedPath(tempRoot, path.join(tempRoot, "detect-" + crypto.randomBytes(6).toString("hex")));
+  const warnings: string[] = [];
+  try {
+    const clone = await safeRun("git", ["clone", "--depth", "1", "--branch", branch, repository.cloneUrl, cloneDir], undefined, gitAuth.env);
+    if (!clone.ok) throw new UserFacingError("Could not clone GitHub App repository for detection: " + (clone.stderr || clone.stdout), 400);
+    const currentBranch = await safeRun("git", ["rev-parse", "--abbrev-ref", "HEAD"], cloneDir);
+    const commit = await safeRun("git", ["rev-parse", "--short", "HEAD"], cloneDir);
+    const candidateDirs = appDirectory ? [appDirectory] : findDetectionCandidates(cloneDir);
+    const services = candidateDirs
+      .map((dir) => detectService(cloneDir, dir, repository.cloneUrl))
+      .filter((service): service is DetectedService => Boolean(service))
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 8);
+    if (services.length === 0) throw new UserFacingError("No deployable Node, static, or Dockerfile service was detected in this GitHub repository.", 400);
+    if (findComposeFile(cloneDir)) warnings.push("A Compose file was found at the repository root. Use Compose From Git if this project is a multi-container stack.");
+    audit("repo.detect_github", "Detected deploy stack from GitHub App repository.", { repository: repository.fullName, branch, services: services.length });
+    return {
+      repoUrl: repository.cloneUrl,
+      branch: currentBranch.ok ? currentBranch.stdout.trim() : branch,
+      commitSha: commit.ok ? commit.stdout.trim() : undefined,
+      services,
+      recommendedServiceId: services[0]?.id,
+      warnings
+    };
+  } finally {
+    gitAuth.cleanup();
+    try {
+      fs.rmSync(cloneDir, { recursive: true, force: true });
+    } catch {
+      // Managed temp cleanup is best effort.
+    }
+  }
+}
+
+export async function deployGitHubApp(input: {
+  name: string;
+  projectId?: string;
+  serviceRole?: ServiceRole;
+  gitInstallationId: string;
+  gitRepositoryId: string;
+  branch?: string;
+  appDirectory?: string;
+  mode: "dockerfile" | "node" | "static";
+  buildCommand?: string;
+  startCommand?: string;
+  containerPort?: number;
+  healthPath?: string;
+  envText?: string;
+  corsOrigins?: string[];
+  databaseId?: string;
+  publicPreview?: boolean;
+  previewDomainEnabled?: boolean;
+  autoDeployEnabled?: boolean;
+}) {
+  const name = assertSafeAppName(input.name);
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
+  const databaseId = input.databaseId ? assertSafeId(input.databaseId, "databaseId") : "";
+  const installation = getGitHubInstallation(input.gitInstallationId);
+  const repository = getGitHubRepository(input.gitRepositoryId);
+  if (repository.installationId !== installation.id) throw new Error("Repository does not belong to this GitHub installation.");
+  if (repository.archived || repository.disabled) throw new UserFacingError("This GitHub repository is archived or disabled and cannot be deployed.", 400);
+  const connection = getGitHubConnection(installation.providerConnectionId);
+  const corsOrigins = (input.corsOrigins || []).map(assertSafeOrigin).filter(Boolean).slice(0, 20);
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  if (databaseId && !state.databases.some((database) => database.id === databaseId)) throw new Error("Database not found.");
+  const project = projectId ? state.projects.find((item) => item.id === projectId) : undefined;
+  const database = databaseId ? state.databases.find((item) => item.id === databaseId) : undefined;
+  const appSlug = uniqueSlug(state.apps.filter((app) => app.projectId === projectId).map((app) => app.slug || app.id), slug(name));
+  const id = appSlug + "-" + crypto.randomBytes(3).toString("hex");
+  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), project?.slug || "default", appSlug));
+  fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
+  const branch = assertSafeBranch(input.branch || repository.defaultBranch || "main");
+  const appDirectory = assertSafeRelativePath(input.appDirectory || "", "App directory");
+  const internalPort = input.mode === "static" ? 80 : assertContainerPort(input.containerPort || 3000);
+  const localProxyPort = await findOpenProxyPort(state.settings);
+  const publicPreview = Boolean(input.publicPreview);
+  const publicPreviewPort = publicPreview ? await findOpenPort() : undefined;
+  const previewDomainEnabled = input.previewDomainEnabled ?? (state.settings.autoPreviewDomainsEnabled && state.settings.previewDomainMode !== "disabled");
+  const env = parseEnvText(input.envText || "");
+  const now = new Date().toISOString();
+  const app: ManagedApp = {
+    id,
+    projectId: projectId || undefined,
+    name,
+    slug: appSlug,
+    serviceRole: input.serviceRole || "fullstack",
+    strategy: "docker",
+    source: "git",
+    sourceType: "github-app",
+    gitProviderConnectionId: connection.id,
+    gitInstallationId: installation.id,
+    gitRepositoryId: repository.id,
+    repoFullName: repository.fullName,
+    githubRepoId: repository.githubRepoId,
+    repoUrl: repository.cloneUrl,
+    branch,
+    autoDeployEnabled: Boolean(input.autoDeployEnabled),
+    autoDeployBranch: branch,
+    appDirectory,
+    deployMode: input.mode,
+    buildCommand: cleanCommand(input.buildCommand || ""),
+    startCommand: cleanCommand(input.startCommand || ""),
+    containerPort: internalPort,
+    internalPort,
+    healthPath: cleanHealthPath(input.healthPath || "/"),
+    envKeys: uniqueStrings([...env.keys, ...(database ? [database.envKey] : [])]),
+    corsOrigins,
+    databaseId: databaseId || undefined,
+    port: localProxyPort,
+    localProxyPort,
+    publicPreviewPort,
+    publicPreview,
+    portBind: publicPreview ? "public" : "localhost",
+    previewDomainEnabled,
+    previewDomainStatus: previewDomainEnabled ? "pending" : "disabled",
+    status: "created",
+    rootDir: appDir,
+    createdAt: now,
+    updatedAt: now
+  };
+  updateState((state) => {
+    state.apps.unshift(app);
+  });
+
+  return executeGitDeployment({
+    appId: app.id,
+    action: "deploy",
+    env,
+    auditMessage: "GitHub App service deployed.",
+    trigger: "manual",
+    provider: "github_app",
+    repositoryFullName: repository.fullName
+  });
+}
+
+export async function updateGitHubAppDeployment(appId: string, input: {
+  name: string;
+  projectId?: string;
+  serviceRole?: ServiceRole;
+  gitInstallationId: string;
+  gitRepositoryId: string;
+  branch?: string;
+  appDirectory?: string;
+  mode: "dockerfile" | "node" | "static";
+  buildCommand?: string;
+  startCommand?: string;
+  containerPort?: number;
+  healthPath?: string;
+  envText?: string;
+  corsOrigins?: string[];
+  databaseId?: string;
+  publicPreview?: boolean;
+  previewDomainEnabled?: boolean;
+  autoDeployEnabled?: boolean;
+}) {
+  const existing = getManagedApp(appId);
+  if (existing.source !== "git" || existing.sourceType !== "github-app") {
+    throw new Error("Only GitHub App services can be edited with this action.");
+  }
+  const name = assertSafeAppName(input.name);
+  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : existing.projectId || "";
+  const databaseId = input.databaseId ? assertSafeId(input.databaseId, "databaseId") : "";
+  const installation = getGitHubInstallation(input.gitInstallationId);
+  const repository = getGitHubRepository(input.gitRepositoryId);
+  if (repository.installationId !== installation.id) throw new Error("Repository does not belong to this GitHub installation.");
+  const connection = getGitHubConnection(installation.providerConnectionId);
+  const state = readState();
+  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
+  if (databaseId && !state.databases.some((database) => database.id === databaseId)) throw new Error("Database not found.");
+  const branch = assertSafeBranch(input.branch || existing.branch || repository.defaultBranch || "main");
+  const appDirectory = assertSafeRelativePath(input.appDirectory || "", "App directory");
+  const env = parseEnvText(input.envText?.trim() ? input.envText : userEnvText(existing));
+  const publicPreview = Boolean(input.publicPreview);
+  const previewDomainEnabled = input.previewDomainEnabled ?? existing.previewDomainEnabled ?? (state.settings.autoPreviewDomainsEnabled && state.settings.previewDomainMode !== "disabled");
+  updateState((next) => {
+    const app = next.apps.find((item) => item.id === existing.id);
+    if (!app) throw new Error("App not found.");
+    Object.assign(app, {
+      name,
+      projectId: projectId || undefined,
+      serviceRole: input.serviceRole || app.serviceRole || "fullstack",
+      strategy: "docker",
+      source: "git",
+      sourceType: "github-app",
+      gitProviderConnectionId: connection.id,
+      gitInstallationId: installation.id,
+      gitRepositoryId: repository.id,
+      repoFullName: repository.fullName,
+      githubRepoId: repository.githubRepoId,
+      repoUrl: repository.cloneUrl,
+      branch,
+      autoDeployEnabled: Boolean(input.autoDeployEnabled),
+      autoDeployBranch: branch,
+      appDirectory,
+      deployMode: input.mode,
+      buildCommand: cleanCommand(input.buildCommand || ""),
+      startCommand: cleanCommand(input.startCommand || ""),
+      containerPort: input.mode === "static" ? 80 : assertContainerPort(input.containerPort || app.containerPort || 3000),
+      internalPort: input.mode === "static" ? 80 : assertContainerPort(input.containerPort || app.containerPort || 3000),
+      healthPath: cleanHealthPath(input.healthPath || app.healthPath || "/"),
+      envKeys: uniqueStrings([...env.keys, ...(databaseId ? [state.databases.find((database) => database.id === databaseId)?.envKey || "DATABASE_URL"] : [])]),
+      corsOrigins: (input.corsOrigins || []).map(assertSafeOrigin).filter(Boolean).slice(0, 20),
+      databaseId: databaseId || undefined,
+      publicPreview,
+      publicPreviewPort: publicPreview ? app.publicPreviewPort : undefined,
+      portBind: publicPreview ? "public" : "localhost",
+      previewDomainEnabled,
+      previewDomainStatus: previewDomainEnabled ? (app.previewDomainStatus === "active" ? "active" : "pending") : "disabled",
+      status: "created",
+      lastMessage: "GitHub App redeploy queued with updated settings.",
+      updatedAt: new Date().toISOString()
+    });
+  });
+  let updated = getManagedApp(existing.id);
+  if (!updated.localProxyPort && !updated.port) {
+    const localProxyPort = await findOpenProxyPort(readState().settings);
+    markApp(updated.id, { port: localProxyPort, localProxyPort });
+    updated = getManagedApp(updated.id);
+  }
+  if (updated.publicPreview && !updated.publicPreviewPort) {
+    const publicPreviewPort = await findOpenPort();
+    markApp(updated.id, { publicPreviewPort });
+  }
+  return executeGitDeployment({
+    appId: updated.id,
+    action: "redeploy",
+    env,
+    auditMessage: "GitHub App service updated and redeployed.",
+    trigger: "manual",
+    provider: "github_app",
+    repositoryFullName: repository.fullName
+  });
+}
+
+const appDeploymentQueue = new Map<string, Promise<void>>();
+
+export async function handleGitHubWebhook(request: Request) {
+  const rawBody = await request.text();
+  const event = request.headers.get("x-github-event") || "";
+  const deliveryId = request.headers.get("x-github-delivery") || "";
+  const signature = request.headers.get("x-hub-signature-256");
+  const state = readState();
+  const connection = state.gitConnections.find((item) => {
+    if (!item.webhookSecretEncrypted) return false;
+    try {
+      return verifyGitHubSignature(rawBody, decryptSecret(item.webhookSecretEncrypted), signature);
+    } catch {
+      return false;
+    }
+  });
+
+  if (!connection) {
+    audit("git.github.webhook_rejected", "Rejected GitHub webhook with invalid or missing signature.", { event, deliveryId });
+    throw new UserFacingError("Invalid GitHub webhook signature.", 401);
+  }
+
+  if (event !== "push") {
+    recordGitWebhookEvent({
+      providerConnectionId: connection.id,
+      event,
+      deliveryId,
+      status: "ignored",
+      message: `Ignored unsupported GitHub event ${event || "unknown"}.`
+    });
+    return { status: "ignored", message: "Only push events are handled right now." };
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    throw new UserFacingError("Malformed GitHub webhook payload.", 400);
+  }
+  const repository = (payload.repository || {}) as Record<string, unknown>;
+  const installation = (payload.installation || {}) as Record<string, unknown>;
+  const repoFullName = String(repository.full_name || "");
+  const githubRepoId = Number(repository.id || 0);
+  const installationId = Number(installation.id || 0);
+  const branch = branchFromGitHubRef(String(payload.ref || ""));
+  const commitSha = String(payload.after || "");
+  const commits = Array.isArray(payload.commits) ? payload.commits as Array<Record<string, unknown>> : [];
+  const headCommit = (payload.head_commit || commits[commits.length - 1] || {}) as Record<string, unknown>;
+  const commitMessage = typeof headCommit.message === "string" ? headCommit.message.split(/\r?\n/)[0]?.slice(0, 180) || "" : "";
+  const pusher = typeof (payload.pusher as Record<string, unknown> | undefined)?.name === "string"
+    ? String((payload.pusher as Record<string, unknown>).name)
+    : typeof (payload.sender as Record<string, unknown> | undefined)?.login === "string"
+      ? String((payload.sender as Record<string, unknown>).login)
+      : "";
+  if (!repoFullName || !branch || !githubRepoId) {
+    recordGitWebhookEvent({
+      providerConnectionId: connection.id,
+      event,
+      deliveryId,
+      status: "ignored",
+      message: "Push payload did not include repository id/full_name or a branch ref."
+    });
+    return { status: "ignored", message: "Push payload was missing repository or branch details." };
+  }
+
+  const latest = readState();
+  const candidates = latest.apps.filter((app) => app.source === "git" && app.sourceType === "github-app" && app.autoDeployEnabled);
+  const matches = candidates.filter((app) => {
+    const repoMatches = (app.githubRepoId && app.githubRepoId === githubRepoId) || (app.repoFullName || "").toLowerCase() === repoFullName.toLowerCase();
+    const branchMatches = (app.autoDeployBranch || app.branch || "main") === branch;
+    const installationMatches = !app.gitInstallationId || latest.gitInstallations.find((item) => item.id === app.gitInstallationId)?.installationId === installationId;
+    return repoMatches && branchMatches && installationMatches;
+  });
+
+  if (matches.length === 0) {
+    const reason = candidates.some((app) => ((app.githubRepoId && app.githubRepoId === githubRepoId) || (app.repoFullName || "").toLowerCase() === repoFullName.toLowerCase()))
+      ? `No auto-deploy service matched branch ${branch}.`
+      : `No auto-deploy service is watching ${repoFullName}.`;
+    recordGitWebhookEvent({
+      providerConnectionId: connection.id,
+      installationId,
+      repositoryFullName: repoFullName,
+      githubRepoId,
+      branch,
+      event,
+      deliveryId,
+      status: "ignored",
+      message: reason
+    });
+    return { status: "ignored", message: reason };
+  }
+
+  for (const app of matches) {
+    queueGitHubAutoDeploy(app.id, {
+      deliveryId,
+      repoFullName,
+      branch,
+      commitSha,
+      commitMessage,
+      pusher
+    });
+  }
+  recordGitWebhookEvent({
+    providerConnectionId: connection.id,
+    installationId,
+    repositoryFullName: repoFullName,
+    githubRepoId,
+    branch,
+    event,
+    deliveryId,
+    status: "accepted",
+    message: `Queued ${matches.length} auto-deploy${matches.length === 1 ? "" : "s"} for ${repoFullName}@${branch}.`
+  });
+  return { status: "accepted", queued: matches.length };
+}
+
+export async function setGitHubAutoDeploy(input: { appId: string; enabled: boolean; branch?: string }) {
+  const appId = assertSafeId(input.appId, "appId");
+  const branch = input.branch ? assertSafeBranch(input.branch) : "";
+  updateState((state) => {
+    const app = state.apps.find((item) => item.id === appId);
+    if (!app) throw new Error("App not found.");
+    if (app.sourceType !== "github-app") throw new Error("Auto-deploy is available for GitHub App services only.");
+    app.autoDeployEnabled = Boolean(input.enabled);
+    app.autoDeployBranch = branch || app.branch || "main";
+    app.updatedAt = new Date().toISOString();
+    app.lastMessage = input.enabled ? `Auto-deploy enabled for ${app.autoDeployBranch}.` : "Auto-deploy disabled.";
+  });
+  audit("git.github.autodeploy", input.enabled ? "Enabled GitHub auto-deploy." : "Disabled GitHub auto-deploy.", { appId, branch });
+  return readState().apps.find((app) => app.id === appId);
+}
+
+export function gitIntegrationStatus() {
+  const state = readState();
+  return {
+    connections: state.gitConnections.length,
+    installations: state.gitInstallations.length,
+    repositories: state.gitRepositories.length,
+    webhookUrl: githubWebhookUrl(state.settings.publicDockioUrl || ""),
+    publicDockioUrl: state.settings.publicDockioUrl || "",
+    secretStorage: secretStorageStatus(),
+    recentWebhooks: state.gitWebhookEvents.slice(0, 20)
+  };
+}
+
 export async function deployGitApp(input: {
   name: string;
   projectId?: string;
@@ -464,6 +1010,13 @@ async function executeGitDeployment(input: {
   action: "deploy" | "redeploy";
   env: ReturnType<typeof parseEnvText>;
   auditMessage: string;
+  trigger?: "manual" | "webhook" | "system";
+  provider?: "public_git" | "github_app" | "docker_image" | "compose";
+  commitSha?: string;
+  commitMessage?: string;
+  pusher?: string;
+  webhookDeliveryId?: string;
+  repositoryFullName?: string;
 }) {
   const app = getManagedApp(input.appId);
   if (!app.repoUrl || !app.branch || !app.deployMode || app.deployMode === "compose") throw new Error("Git deployment settings are incomplete.");
@@ -478,10 +1031,18 @@ async function executeGitDeployment(input: {
     appId: app.id,
     action: input.action,
     message: `${input.action === "redeploy" ? "Redeploying" : "Deploying"} ${app.name} from ${branch}.`,
-    sourceType: "git-url",
+    sourceType: app.sourceType || "git-url",
     strategy: app.deployMode,
-    branch
+    branch,
+    trigger: input.trigger || "manual",
+    provider: input.provider || (app.sourceType === "github-app" ? "github_app" : "public_git"),
+    commitSha: input.commitSha,
+    commitMessage: input.commitMessage,
+    pusher: input.pusher,
+    webhookDeliveryId: input.webhookDeliveryId,
+    repositoryFullName: input.repositoryFullName || app.repoFullName
   });
+  const gitAuth = await gitAuthForAppClone(app);
   try {
     const envFile = writeAppEnvFile(app, input.env.env, deploymentId);
     appendDeploymentLog(deploymentId, "preparing workspace", `Workspace ready for ${app.id}.`);
@@ -489,8 +1050,8 @@ async function executeGitDeployment(input: {
       appendDeploymentLog(deploymentId, "cleaning workspace", "Removing the previous managed source checkout.");
       fs.rmSync(assertManagedPath(appDir, sourceDir), { recursive: true, force: true });
     }
-    appendDeploymentLog(deploymentId, "cloning repository", `${repoUrl} @ ${branch}`);
-    await safeRunForDeployment(deploymentId, "git clone", "git", ["clone", "--depth", "1", "--branch", branch, repoUrl, sourceDir]);
+    appendDeploymentLog(deploymentId, "cloning repository", `${app.sourceType === "github-app" ? app.repoFullName || "GitHub App repository" : repoUrl} @ ${branch}`);
+    await safeRunForDeployment(deploymentId, "git clone", "git", ["clone", "--depth", "1", "--branch", branch, repoUrl, sourceDir], undefined, gitAuth?.env);
     appendDeploymentLog(deploymentId, "checking branch", "Repository cloned.");
     const commit = await safeRun("git", ["rev-parse", "--short", "HEAD"], sourceDir);
     const image = "dio_" + app.id + ":" + Date.now();
@@ -519,7 +1080,7 @@ async function executeGitDeployment(input: {
         ? `Git ${app.deployMode} app deployed from ${branch}. Preview: ${previewText}`
         : `Git ${app.deployMode} app deployed from ${branch}. Add a domain or enable preview domains to expose it.`
     });
-    finishDeployment(deploymentId, "succeeded", previewText ? `Deployed ${app.name}. Preview: ${previewText}` : `Deployed ${app.name} from ${branch}.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined, imageTag: image });
+    finishDeployment(deploymentId, "succeeded", previewText ? `Deployed ${app.name}. Preview: ${previewText}` : `Deployed ${app.name} from ${branch}.`, { commitSha: commit.ok ? commit.stdout.trim() : input.commitSha, imageTag: image, repositoryFullName: input.repositoryFullName || app.repoFullName });
     audit("app.deploy_git", input.auditMessage, { appId: app.id, name: app.name, repoUrl, branch, appDirectory, mode: app.deployMode, publicPreview: app.publicPreview, previewDomainEnabled: finalApp.previewDomainEnabled, envKeys: input.env.keys });
     return readState().apps.find((item) => item.id === app.id) || app;
   } catch (error) {
@@ -527,6 +1088,8 @@ async function executeGitDeployment(input: {
     markApp(app.id, { status: "failed", lastMessage: message });
     finishDeployment(deploymentId, "failed", message);
     throw error;
+  } finally {
+    gitAuth?.cleanup();
   }
 }
 
@@ -921,6 +1484,28 @@ export async function startApp(appId: string) {
 export async function redeployApp(appId: string) {
   const app = getManagedApp(appId);
   const envText = userEnvText(app);
+  if (app.source === "git" && app.sourceType === "github-app" && app.gitInstallationId && app.gitRepositoryId && app.deployMode && app.deployMode !== "compose") {
+    return updateGitHubAppDeployment(app.id, {
+      name: app.name,
+      projectId: app.projectId,
+      serviceRole: app.serviceRole,
+      gitInstallationId: app.gitInstallationId,
+      gitRepositoryId: app.gitRepositoryId,
+      branch: app.branch,
+      appDirectory: app.appDirectory,
+      mode: app.deployMode,
+      buildCommand: app.buildCommand,
+      startCommand: app.startCommand,
+      containerPort: app.containerPort,
+      healthPath: app.healthPath,
+      envText,
+      corsOrigins: app.corsOrigins,
+      databaseId: app.databaseId,
+      publicPreview: app.publicPreview,
+      previewDomainEnabled: app.previewDomainEnabled,
+      autoDeployEnabled: app.autoDeployEnabled
+    });
+  }
   if (app.source === "git" && app.repoUrl && app.deployMode && app.deployMode !== "compose") {
     return updateGitAppDeployment(app.id, {
       name: app.name,
@@ -1654,8 +2239,10 @@ function normalizePreviewSettings(input: Partial<PanelSettings>) {
   const previewBaseDomain = (candidate.previewBaseDomain || "").trim().toLowerCase();
   if (mode === "custom" && !previewBaseDomain) throw new Error("Custom preview mode needs a preview base domain.");
   if (previewBaseDomain) assertSafeDomain(previewBaseDomain.replace(/^\*\./, ""));
+  const publicDockioUrl = candidate.publicDockioUrl ? cleanPublicUrl(candidate.publicDockioUrl) : "";
   return {
     publicServerIp,
+    publicDockioUrl,
     previewDomainMode: mode,
     previewBaseDomain: previewBaseDomain.replace(/^\*\./, ""),
     autoPreviewDomainsEnabled: candidate.autoPreviewDomainsEnabled !== false,
@@ -1762,12 +2349,13 @@ function getPublicPreviewPort(app: ManagedApp) {
   return assertSafePort(app.publicPreviewPort || app.port);
 }
 
-async function safeRun(command: string, args: string[], cwd?: string): Promise<CommandOutput> {
+async function safeRun(command: string, args: string[], cwd?: string, env?: Record<string, string>): Promise<CommandOutput> {
   assertAllowedCommand(command, args);
   const printable = [command, ...args].join(" ");
   try {
     const { stdout, stderr } = await execFileAsync(command, args, {
       cwd,
+      env: env ? { ...process.env, ...env } : process.env,
       timeout: 15 * 60 * 1000,
       maxBuffer: 5 * 1024 * 1024
     });
@@ -1792,8 +2380,8 @@ async function safeRunOrThrow(command: string, args: string[], cwd?: string) {
   return result;
 }
 
-async function safeRunForDeployment(deploymentId: string, step: string, command: string, args: string[], cwd?: string) {
-  const result = await safeRun(command, args, cwd);
+async function safeRunForDeployment(deploymentId: string, step: string, command: string, args: string[], cwd?: string, env?: Record<string, string>) {
+  const result = await safeRun(command, args, cwd, env);
   appendDeploymentLog(deploymentId, step, deploymentCommandLog(result));
   if (!result.ok) {
     throw new UserFacingError(result.command + " failed: " + (result.stderr || result.stdout), 500);
@@ -1904,6 +2492,174 @@ function assertAllowedCommand(command: string, args: string[]) {
   if (command === "sudo" && !["ufw", "mkdir", "install", "caddy", "systemctl", "rm"].includes(args[0] || "")) {
     throw new Error("sudo command is not allowed.");
   }
+}
+
+function getGitHubConnection(connectionId: string) {
+  const id = assertSafeId(connectionId, "connectionId");
+  const connection = readState().gitConnections.find((item) => item.id === id);
+  if (!connection) throw new Error("GitHub connection not found.");
+  return connection;
+}
+
+function getGitHubInstallation(installationId: string) {
+  const id = assertSafeId(installationId, "installationId");
+  const installation = readState().gitInstallations.find((item) => item.id === id);
+  if (!installation) throw new Error("GitHub installation not found. Refresh installations from the Git page.");
+  return installation;
+}
+
+function getGitHubRepository(repositoryId: string) {
+  const id = assertSafeId(repositoryId, "repositoryId");
+  const repository = readState().gitRepositories.find((item) => item.id === id);
+  if (!repository) throw new Error("GitHub repository not found. Refresh repositories from the Git page.");
+  return repository;
+}
+
+function githubAuthForConnection(connection: GitProviderConnection) {
+  return {
+    appId: connection.appId,
+    privateKey: decryptSecret(connection.privateKeyEncrypted)
+  };
+}
+
+async function getInstallationTokenForRecord(connection: GitProviderConnection, installationId: number) {
+  return getInstallationAccessToken(githubAuthForConnection(connection), installationId);
+}
+
+async function gitAuthForAppClone(app: ManagedApp) {
+  if (app.sourceType !== "github-app") return undefined;
+  if (!app.gitProviderConnectionId || !app.gitInstallationId) throw new Error("GitHub App source is missing connection details.");
+  const connection = getGitHubConnection(app.gitProviderConnectionId);
+  const installation = getGitHubInstallation(app.gitInstallationId);
+  const token = await getInstallationTokenForRecord(connection, installation.installationId);
+  return createGitAskPass(token.token);
+}
+
+function createGitAskPass(token: string) {
+  const tempDir = path.join(getDataDir(), "tmp");
+  fs.mkdirSync(tempDir, { recursive: true, mode: 0o750 });
+  const file = path.join(tempDir, `git-askpass-${crypto.randomBytes(8).toString("hex")}.sh`);
+  const script = [
+    "#!/bin/sh",
+    "case \"$1\" in",
+    "  *Username*) printf '%s\\n' 'x-access-token' ;;",
+    "  *Password*) printf '%s\\n' \"$DIO_GITHUB_TOKEN\" ;;",
+    "  *) printf '\\n' ;;",
+    "esac",
+    ""
+  ].join("\n");
+  fs.writeFileSync(file, script, { mode: 0o700 });
+  return {
+    env: {
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: file,
+      DIO_GITHUB_TOKEN: token
+    },
+    cleanup: () => {
+      try {
+        fs.rmSync(assertManagedPath(tempDir, file), { force: true });
+      } catch {
+        // Temp credential helper cleanup is best effort.
+      }
+    }
+  };
+}
+
+function queueGitHubAutoDeploy(appId: string, meta: {
+  deliveryId: string;
+  repoFullName: string;
+  branch: string;
+  commitSha: string;
+  commitMessage: string;
+  pusher: string;
+}) {
+  const app = getManagedApp(appId);
+  markApp(app.id, {
+    lastWebhookAt: new Date().toISOString(),
+    lastWebhookStatus: "accepted",
+    lastWebhookMessage: `Auto-deploy queued from ${meta.repoFullName}@${meta.branch}.`
+  });
+  const previous = appDeploymentQueue.get(app.id) || Promise.resolve();
+  const task = previous
+    .catch(() => undefined)
+    .then(() => executeGitDeployment({
+      appId: app.id,
+      action: "redeploy",
+      env: parseEnvText(userEnvText(getManagedApp(app.id))),
+      auditMessage: "GitHub webhook auto-deploy executed.",
+      trigger: "webhook",
+      provider: "github_app",
+      commitSha: meta.commitSha,
+      commitMessage: meta.commitMessage,
+      pusher: meta.pusher,
+      webhookDeliveryId: meta.deliveryId,
+      repositoryFullName: meta.repoFullName
+    }))
+    .then(() => {
+      markApp(app.id, {
+        lastWebhookAt: new Date().toISOString(),
+        lastWebhookStatus: "accepted",
+        lastWebhookMessage: `Auto-deploy completed for ${meta.repoFullName}@${meta.branch}.`
+      });
+    })
+    .catch((error) => {
+      markApp(app.id, {
+        lastWebhookAt: new Date().toISOString(),
+        lastWebhookStatus: "failed",
+        lastWebhookMessage: redact(error instanceof Error ? error.message : "Webhook deploy failed.")
+      });
+    })
+    .finally(() => {
+      if (appDeploymentQueue.get(app.id) === task) appDeploymentQueue.delete(app.id);
+    });
+  appDeploymentQueue.set(app.id, task);
+}
+
+function recordGitWebhookEvent(input: {
+  providerConnectionId?: string;
+  installationId?: number;
+  repositoryFullName?: string;
+  githubRepoId?: number;
+  branch?: string;
+  deliveryId?: string;
+  event: string;
+  status: "accepted" | "ignored" | "failed";
+  message: string;
+}) {
+  updateState((state) => {
+    state.gitWebhookEvents.unshift({
+      id: crypto.randomUUID(),
+      providerConnectionId: input.providerConnectionId,
+      installationId: input.installationId,
+      repositoryFullName: input.repositoryFullName,
+      githubRepoId: input.githubRepoId,
+      branch: input.branch,
+      deliveryId: input.deliveryId,
+      event: input.event,
+      status: input.status,
+      message: redact(input.message),
+      createdAt: new Date().toISOString()
+    });
+    state.gitWebhookEvents = state.gitWebhookEvents.slice(0, 200);
+  });
+}
+
+function cleanPublicUrl(value: string) {
+  const origin = assertSafeOrigin(value);
+  return origin.replace(/\/$/, "");
+}
+
+function cleanOptionalUrl(value?: string) {
+  const raw = (value || "").trim();
+  if (!raw) return undefined;
+  return assertSafeOrigin(raw);
+}
+
+function cleanOptionalText(value: string | undefined, max: number) {
+  const raw = (value || "").trim();
+  if (!raw) return undefined;
+  if (raw.length > max || /[\x00-\x1f\x7f]/.test(raw)) throw new Error("GitHub connection value contains invalid characters.");
+  return raw;
 }
 
 function getManagedApp(appId: string) {

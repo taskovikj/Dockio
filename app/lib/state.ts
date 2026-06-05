@@ -13,6 +13,7 @@ export type PreviewDomainStatus = "disabled" | "pending" | "active" | "error";
 
 export interface PanelSettings {
   publicServerIp?: string;
+  publicDockioUrl?: string;
   previewDomainMode: PreviewDomainMode;
   previewBaseDomain?: string;
   autoPreviewDomainsEnabled: boolean;
@@ -54,7 +55,18 @@ export interface ManagedApp {
   branch?: string;
   appDirectory?: string;
   dockerImage?: string;
-  sourceType?: "sample" | "git-url" | "docker-image" | "compose-yaml";
+  sourceType?: "sample" | "git-url" | "github-app" | "docker-image" | "compose-yaml";
+  gitProviderConnectionId?: string;
+  gitInstallationId?: string;
+  gitRepositoryId?: string;
+  repoFullName?: string;
+  githubRepoId?: number;
+  autoDeployEnabled?: boolean;
+  autoDeployBranch?: string;
+  watchPaths?: string[];
+  lastWebhookAt?: string;
+  lastWebhookStatus?: "accepted" | "ignored" | "failed";
+  lastWebhookMessage?: string;
   publicPreview?: boolean;
   previewUrl?: string;
   portBind?: "localhost" | "public";
@@ -132,8 +144,14 @@ export interface DeploymentEvent {
   finishedAt?: string;
   sourceType?: string;
   strategy?: string;
+  trigger?: "manual" | "webhook" | "system";
+  provider?: "public_git" | "github_app" | "docker_image" | "compose";
   branch?: string;
   commitSha?: string;
+  commitMessage?: string;
+  pusher?: string;
+  webhookDeliveryId?: string;
+  repositoryFullName?: string;
   imageTag?: string;
   logsPath?: string;
   steps?: Array<{ at: string; step: string; status: DeploymentStatus; message: string }>;
@@ -147,6 +165,75 @@ export interface AuditEvent {
   metadata?: Record<string, unknown>;
 }
 
+export interface GitProviderConnection {
+  id: string;
+  provider: "github";
+  name: string;
+  appId: string;
+  clientId?: string;
+  appSlug?: string;
+  appUrl?: string;
+  installUrl?: string;
+  privateKeyEncrypted: string;
+  webhookSecretEncrypted: string;
+  clientSecretEncrypted?: string;
+  status: "connected" | "needs_setup" | "error";
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GitInstallation {
+  id: string;
+  providerConnectionId: string;
+  installationId: number;
+  accountLogin: string;
+  accountType: "User" | "Organization" | string;
+  accountAvatarUrl?: string;
+  targetType?: string;
+  repositorySelection?: "all" | "selected" | string;
+  permissions?: Record<string, unknown>;
+  events?: string[];
+  status: "active" | "error";
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastSyncedAt?: string;
+}
+
+export interface GitRepository {
+  id: string;
+  installationId: string;
+  provider: "github";
+  githubRepoId: number;
+  fullName: string;
+  owner: string;
+  name: string;
+  private: boolean;
+  defaultBranch: string;
+  cloneUrl: string;
+  htmlUrl: string;
+  archived: boolean;
+  disabled: boolean;
+  pushedAt?: string;
+  updatedAt?: string;
+  lastSyncedAt?: string;
+}
+
+export interface GitWebhookEvent {
+  id: string;
+  providerConnectionId?: string;
+  installationId?: number;
+  repositoryFullName?: string;
+  githubRepoId?: number;
+  branch?: string;
+  deliveryId?: string;
+  event: string;
+  status: "accepted" | "ignored" | "failed";
+  message: string;
+  createdAt: string;
+}
+
 export interface PanelState {
   version: 1;
   admin: AdminAccount | null;
@@ -157,9 +244,14 @@ export interface PanelState {
   audit: AuditEvent[];
   deployments: DeploymentEvent[];
   settings: PanelSettings;
+  gitConnections: GitProviderConnection[];
+  gitInstallations: GitInstallation[];
+  gitRepositories: GitRepository[];
+  gitWebhookEvents: GitWebhookEvent[];
 }
 
 export const defaultPanelSettings: PanelSettings = {
+  publicDockioUrl: "",
   previewDomainMode: "sslip",
   previewBaseDomain: "",
   autoPreviewDomainsEnabled: true,
@@ -178,7 +270,11 @@ const initialState: PanelState = {
   databases: [],
   audit: [],
   deployments: [],
-  settings: defaultPanelSettings
+  settings: defaultPanelSettings,
+  gitConnections: [],
+  gitInstallations: [],
+  gitRepositories: [],
+  gitWebhookEvents: []
 };
 
 export function getDataDir() {
@@ -230,7 +326,11 @@ export function readState(): PanelState {
       }),
       databases: (parsed.databases || []).map((database) => ({ ...database, slug: database.slug || slug(database.name || database.id) })),
       audit: parsed.audit || [],
-      deployments: parsed.deployments || []
+      deployments: parsed.deployments || [],
+      gitConnections: (parsed.gitConnections || []).map(normalizeGitConnection),
+      gitInstallations: (parsed.gitInstallations || []).map(normalizeGitInstallation),
+      gitRepositories: (parsed.gitRepositories || []).map(normalizeGitRepository),
+      gitWebhookEvents: (parsed.gitWebhookEvents || []).slice(0, 200)
     };
     if (next.projects.length === 0) {
       const now = new Date().toISOString();
@@ -263,6 +363,7 @@ function normalizeSettings(settings?: Partial<PanelSettings>): PanelSettings {
     ...settings,
     previewDomainMode: ["sslip", "custom", "disabled"].includes(mode) ? mode : "sslip",
     publicServerIp: settings?.publicServerIp || "",
+    publicDockioUrl: normalizeOptionalUrl(settings?.publicDockioUrl || ""),
     previewBaseDomain: settings?.previewBaseDomain || "",
     autoPreviewDomainsEnabled: settings?.autoPreviewDomainsEnabled !== false,
     caddySitesDir: settings?.caddySitesDir || defaultPanelSettings.caddySitesDir,
@@ -270,6 +371,21 @@ function normalizeSettings(settings?: Partial<PanelSettings>): PanelSettings {
     localProxyPortRangeStart: Number.isInteger(start) ? start : defaultPanelSettings.localProxyPortRangeStart,
     localProxyPortRangeEnd: Number.isInteger(end) ? end : defaultPanelSettings.localProxyPortRangeEnd
   };
+}
+
+function normalizeOptionalUrl(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
 }
 
 function normalizeApp(app: ManagedApp): ManagedApp {
@@ -291,6 +407,49 @@ function normalizeApp(app: ManagedApp): ManagedApp {
     previewDomainStatus,
     port: localProxyPort || app.port || 0,
     portBind: app.publicPreview ? "public" : "localhost"
+  };
+}
+
+function normalizeGitConnection(connection: GitProviderConnection): GitProviderConnection {
+  return {
+    ...connection,
+    provider: "github",
+    name: connection.name || "GitHub",
+    appId: String(connection.appId || ""),
+    status: connection.status || "needs_setup",
+    createdAt: connection.createdAt || new Date().toISOString(),
+    updatedAt: connection.updatedAt || connection.createdAt || new Date().toISOString()
+  };
+}
+
+function normalizeGitInstallation(installation: GitInstallation): GitInstallation {
+  return {
+    ...installation,
+    installationId: Number(installation.installationId),
+    accountLogin: installation.accountLogin || String(installation.installationId || ""),
+    accountType: installation.accountType || "User",
+    status: installation.status || "active",
+    createdAt: installation.createdAt || new Date().toISOString(),
+    updatedAt: installation.updatedAt || installation.createdAt || new Date().toISOString()
+  };
+}
+
+function normalizeGitRepository(repository: GitRepository): GitRepository {
+  const fullName = repository.fullName || `${repository.owner}/${repository.name}`;
+  const [owner = repository.owner || "", name = repository.name || ""] = fullName.split("/");
+  return {
+    ...repository,
+    provider: "github",
+    githubRepoId: Number(repository.githubRepoId),
+    fullName,
+    owner,
+    name,
+    defaultBranch: repository.defaultBranch || "main",
+    cloneUrl: repository.cloneUrl || `https://github.com/${fullName}.git`,
+    htmlUrl: repository.htmlUrl || `https://github.com/${fullName}`,
+    private: Boolean(repository.private),
+    archived: Boolean(repository.archived),
+    disabled: Boolean(repository.disabled)
   };
 }
 
@@ -339,6 +498,15 @@ export function publicState() {
     databases: state.databases.map(({ secretPath: _secretPath, ...database }) => database),
     audit: state.audit.slice(0, 80),
     deployments: state.deployments.slice(0, 120).map(({ logsPath: _logsPath, ...deployment }) => deployment),
+    gitConnections: state.gitConnections.map(({ privateKeyEncrypted: privateKey, webhookSecretEncrypted: webhookSecret, clientSecretEncrypted: clientSecret, ...connection }) => ({
+      ...connection,
+      privateKeyConfigured: Boolean(privateKey),
+      webhookSecretConfigured: Boolean(webhookSecret),
+      clientSecretConfigured: Boolean(clientSecret)
+    })),
+    gitInstallations: state.gitInstallations,
+    gitRepositories: state.gitRepositories,
+    gitWebhookEvents: state.gitWebhookEvents.slice(0, 80),
     dataDir: getDataDir()
   };
 }
@@ -358,8 +526,11 @@ export function deploymentEvent(appId: string, action: string, status: Deploymen
       finishedAt: status === "running" ? undefined : new Date().toISOString(),
       sourceType: app?.sourceType || app?.source,
       strategy: app?.deployMode || app?.strategy,
+      trigger: "manual",
+      provider: app?.sourceType === "github-app" ? "github_app" : app?.sourceType === "docker-image" ? "docker_image" : app?.source === "compose" ? "compose" : "public_git",
       branch: app?.branch,
       commitSha: app?.commitSha,
+      repositoryFullName: app?.repoFullName,
       imageTag: app?.imageTag
     });
     state.deployments = state.deployments.slice(0, 300);
@@ -373,6 +544,13 @@ export function startDeployment(input: {
   sourceType?: string;
   strategy?: string;
   branch?: string;
+  trigger?: DeploymentEvent["trigger"];
+  provider?: DeploymentEvent["provider"];
+  commitSha?: string;
+  commitMessage?: string;
+  pusher?: string;
+  webhookDeliveryId?: string;
+  repositoryFullName?: string;
 }) {
   const deploymentId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -392,7 +570,14 @@ export function startDeployment(input: {
       startedAt: now,
       sourceType: input.sourceType || app?.sourceType || app?.source,
       strategy: input.strategy || app?.deployMode || app?.strategy,
+      trigger: input.trigger || "manual",
+      provider: input.provider,
       branch: input.branch || app?.branch,
+      commitSha: input.commitSha,
+      commitMessage: input.commitMessage,
+      pusher: input.pusher,
+      webhookDeliveryId: input.webhookDeliveryId,
+      repositoryFullName: input.repositoryFullName,
       logsPath,
       steps: [{ at: now, step: "queued", status: "running", message: input.message }]
     });
