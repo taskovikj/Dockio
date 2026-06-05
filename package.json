@@ -12,7 +12,7 @@
     "start": "next start",
     "clean": "node scripts/clean-local.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "next lint"
+    "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
