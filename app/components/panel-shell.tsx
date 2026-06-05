@@ -45,7 +45,6 @@ type Tab =
   | "logs"
   | "deployments"
   | "domains"
-  | "preview"
   | "advanced"
   | "docker"
   | "settings";
@@ -241,7 +240,6 @@ const serviceTabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
   { id: "environment", label: "Environment", icon: KeyRound },
   { id: "domains", label: "Domains", icon: Globe2 },
   { id: "deployments", label: "Deployments", icon: Activity },
-  { id: "preview", label: "Preview", icon: Eye },
   { id: "logs", label: "Logs", icon: Terminal },
   { id: "monitoring", label: "Monitoring", icon: HeartPulse },
   { id: "advanced", label: "Advanced", icon: Shield }
@@ -289,6 +287,8 @@ export function PanelShell() {
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedServiceId, setSelectedServiceId] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
+  const [projectCreateMode, setProjectCreateMode] = useState(false);
+  const [createdProjectId, setCreatedProjectId] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [csrfToken, setCsrfToken] = useState("");
@@ -343,6 +343,7 @@ export function PanelShell() {
   const [corsPresetForm, setCorsPresetForm] = useState({ frontendOrigin: "", backendOrigin: "" });
   const [logs, setLogs] = useState("");
   const [logsAppId, setLogsAppId] = useState("");
+  const [logsDeploymentId, setLogsDeploymentId] = useState("");
   const [repoAnalysis, setRepoAnalysis] = useState<RepoAnalysis | null>(null);
   const [selectedDetectionId, setSelectedDetectionId] = useState("");
   const [editingAppId, setEditingAppId] = useState("");
@@ -602,6 +603,7 @@ export function PanelShell() {
   function openProject(projectId: string) {
     setSelectedProjectId(projectId);
     setSelectedServiceId("");
+    setProjectCreateMode(false);
     setTab("general");
     syncProjectForms(projectId);
     clearLogs();
@@ -610,13 +612,23 @@ export function PanelShell() {
   function openGlobalTab(nextTab: Tab) {
     setSelectedProjectId("");
     setSelectedServiceId("");
+    setProjectCreateMode(false);
     setTab(globalTabs.has(nextTab) ? nextTab : "dashboard");
+    clearLogs();
+  }
+
+  function openCreateProject() {
+    setSelectedProjectId("");
+    setSelectedServiceId("");
+    setProjectCreateMode(true);
+    setTab("projects");
     clearLogs();
   }
 
   function showAllProjects(nextTab: Tab = "dashboard") {
     setSelectedProjectId("");
     setSelectedServiceId("");
+    setProjectCreateMode(false);
     setTab(globalTabs.has(nextTab) ? nextTab : "dashboard");
     clearLogs();
   }
@@ -645,9 +657,20 @@ export function PanelShell() {
   function clearLogs() {
     setLogs("");
     setLogsAppId("");
+    setLogsDeploymentId("");
   }
 
-  function startDeployment(provider: DeployProvider = deployProvider) {
+  function startDeployment(provider: DeployProvider = deployProvider, projectIdOverride = "") {
+    const projectId = projectIdOverride || selectedProjectId || gitForm.projectId || allProjects[0]?.id || "";
+    if (!projectId) {
+      openCreateProject();
+      setNotice("Create a project first. After that, Dockio opens the deploy flow inside that project.");
+      return;
+    }
+    setSelectedProjectId(projectId);
+    setSelectedServiceId("");
+    setProjectCreateMode(false);
+    syncProjectForms(projectId);
     setEditingAppId("");
     setRepoAnalysis(null);
     setSelectedDetectionId("");
@@ -657,16 +680,18 @@ export function PanelShell() {
   }
 
   function startGlobalDeployment(provider: DeployProvider = deployProvider) {
-    const projectId = gitForm.projectId && allProjects.some((project) => project.id === gitForm.projectId) ? gitForm.projectId : allProjects[0]?.id;
+    const projectId = allProjects.length === 1 ? allProjects[0]?.id : "";
     if (!projectId) {
-      openGlobalTab("projects");
-      setNotice("Create a project first, then Dockio will open the guided deploy flow inside that project.");
+      if (allProjects.length === 0) {
+        openCreateProject();
+        setNotice("Create a project first, then Dockio will open the guided deploy flow inside that project.");
+      } else {
+        openGlobalTab("projects");
+        setNotice("Open the project you want, then click Create Service. Dockio will keep the deploy flow scoped to that project.");
+      }
       return;
     }
-    setSelectedProjectId(projectId);
-    setSelectedServiceId("");
-    syncProjectForms(projectId);
-    startDeployment(provider);
+    startDeployment(provider, projectId);
   }
 
   function editGitDeployment(app: ManagedApp) {
@@ -674,6 +699,13 @@ export function PanelShell() {
       setNotice("Only public Git services can be edited in the deploy wizard right now.");
       return;
     }
+    const projectId = app.projectId || selectedProjectId || gitForm.projectId || "";
+    if (projectId) {
+      setSelectedProjectId(projectId);
+      syncProjectForms(projectId);
+    }
+    setSelectedServiceId("");
+    setProjectCreateMode(false);
     setEditingAppId(app.id);
     setRepoAnalysis(null);
     setSelectedDetectionId("");
@@ -683,7 +715,7 @@ export function PanelShell() {
     setGitForm((form) => ({
       ...form,
       name: app.name,
-      projectId: app.projectId || selectedProjectId || form.projectId,
+      projectId: projectId || form.projectId,
       serviceRole: app.serviceRole || "fullstack",
       repoUrl: app.repoUrl || "",
       branch: app.branch || "main",
@@ -706,8 +738,10 @@ export function PanelShell() {
     await run("Creating project", async () => {
       const result = await api<{ project: ProjectRecord }>("/api/projects", { method: "POST", csrfToken, body: projectForm });
       setProjectForm({ name: "New Project", description: "" });
+      setProjectCreateMode(false);
+      setCreatedProjectId(result.project.id);
       openProject(result.project.id);
-      setNotice(`${result.project.name} created.`);
+      setNotice(`${result.project.name} created. Add the first service from this project workspace.`);
       await refresh();
     });
   }
@@ -790,6 +824,7 @@ export function PanelShell() {
       const payload = result.result || result.connection;
       if (action === "connection" && payload?.value) {
         setLogsAppId("");
+        setLogsDeploymentId("");
         setLogs(`${payload.envKey || "DATABASE_URL"}=${payload.value}`);
         setTab("logs");
         setNotice("Connection URL loaded into Logs. Treat it like a password.");
@@ -885,6 +920,7 @@ export function PanelShell() {
 
   async function loadLogs(appId: string) {
     setLogsAppId(appId);
+    setLogsDeploymentId("");
     await run("Loading logs", async () => {
       const result = await api<{ logs: CommandOutput }>(`/api/apps/${appId}/logs`);
       setLogs([result.logs.command, result.logs.stdout, result.logs.stderr].filter(Boolean).join("\n\n"));
@@ -929,15 +965,18 @@ export function PanelShell() {
         body: { panelPort: Number(firewallForm.panelPort), trustedCidr: firewallForm.trustedCidr }
       });
       setLogsAppId("");
+      setLogsDeploymentId("");
       setLogs(result.results.map((item) => `$ ${item.command}\n${item.stdout || item.stderr || (item.ok ? "ok" : "failed")}`).join("\n\n"));
       setNotice("Firewall baseline applied.");
     });
   }
 
   async function loadDeploymentLogs(deploymentId: string) {
+    const deployment = state?.deployments.find((item) => item.id === deploymentId);
+    setLogsDeploymentId(deploymentId);
+    setLogsAppId(deployment?.appId || "");
     await run("Loading deployment log", async () => {
       const result = await api<{ logs: CommandOutput }>(`/api/deployments/${deploymentId}/logs`);
-      setLogsAppId("");
       setLogs([result.logs.command, result.logs.stdout, result.logs.stderr].filter(Boolean).join("\n\n"));
       setTab("logs");
     });
@@ -951,6 +990,7 @@ export function PanelShell() {
         body: { ...firewallRuleForm, port: Number(firewallRuleForm.port) }
       });
       setLogsAppId("");
+      setLogsDeploymentId("");
       setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
       setNotice(`Firewall ${firewallRuleForm.action} rule applied.`);
       await refresh();
@@ -975,6 +1015,7 @@ export function PanelShell() {
         body: { ruleNumber: Number(firewallDeleteForm.ruleNumber) }
       });
       setLogsAppId("");
+      setLogsDeploymentId("");
       setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
       setNotice(`Firewall rule #${firewallDeleteForm.ruleNumber} deleted.`);
       await refresh();
@@ -985,6 +1026,7 @@ export function PanelShell() {
     await run("Pruning Docker", async () => {
       const result = await api<{ result: CommandOutput }>("/api/system/prune", { method: "POST", csrfToken });
       setLogsAppId("");
+      setLogsDeploymentId("");
       setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
       setTab("logs");
       setNotice("Docker prune completed.");
@@ -1054,6 +1096,9 @@ export function PanelShell() {
   const projectPreviewItems = apps
     .map((app) => ({ app, url: app.domain ? `https://${app.domain}` : previewUrl(app, vpsIp) }))
     .filter((item) => Boolean(item.url));
+  const logsContext = describeLogsContext(allProjects, allApps, allDeployments, logsAppId, logsDeploymentId);
+  const logsSelectedApp = allApps.find((app) => app.id === logsAppId);
+  const logRefreshApp = logsSelectedApp || activeApp;
   const runningApps = allApps.filter((app) => app.status === "running");
   const failedApps = allApps.filter((app) => ["failed", "error", "stopped"].includes(app.status));
   const serverHealthy = isOk(status?.docker) && isActive(status?.caddy);
@@ -1068,7 +1113,7 @@ export function PanelShell() {
           <section className="min-w-0">
             <GlobalPageHeader title={globalPage.title} subtitle={globalPage.subtitle}>
               <div className="flex flex-wrap gap-2">
-                <button className="dio-button-primary" onClick={() => openGlobalTab("projects")}>
+                <button className="dio-button-primary" onClick={openCreateProject}>
                   <Layers3 size={15} />
                   New Project
                 </button>
@@ -1111,7 +1156,7 @@ export function PanelShell() {
                         </p>
                         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                           <ActionCard title="Deploy from Public Git" body="Paste a repo URL and let Dockio detect the stack." icon={GitBranch} onClick={() => startGlobalDeployment("git")} />
-                          <ActionCard title="Create Project" body="Group a frontend, API, databases, domains, and logs." icon={Layers3} onClick={() => openGlobalTab("projects")} />
+                          <ActionCard title="Create Project" body="Group a frontend, API, databases, domains, and logs." icon={Layers3} onClick={openCreateProject} />
                           <ActionCard title="Add Database" body="Create Postgres/Redis or save an external URL." icon={Database} onClick={() => openGlobalTab("database")} />
                           <ActionCard title="Add Domain" body="Route a custom domain through Caddy HTTPS." icon={Globe2} onClick={() => openGlobalTab("domains")} />
                           <ActionCard title="View Logs" body="Load runtime or deployment logs for a service." icon={Terminal} onClick={() => openGlobalTab("logs")} />
@@ -1140,33 +1185,51 @@ export function PanelShell() {
 
                   <Panel title="Projects Overview" icon={Layers3}>
                     {allProjects.length ? (
-                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => { openProject(projectId); startDeployment("git"); }} />
+                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => startDeployment("git", projectId)} />
                     ) : (
-                      <EmptyState title="No projects yet" body="Create one project to hold your app services, env vars, databases, domains, and deployment history." actionLabel="Create Project" onAction={() => openGlobalTab("projects")} icon={Layers3} />
+                      <EmptyState title="No projects yet" body="Create one project to hold your app services, env vars, databases, domains, and deployment history." actionLabel="Create Project" onAction={openCreateProject} icon={Layers3} />
                     )}
                   </Panel>
                 </div>
               )}
 
               {tab === "projects" && (
-                <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
-                  <section className="space-y-3">
-                    <input className="dio-input" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Search projects..." />
-                    <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => { openProject(projectId); startDeployment("git"); }} />
-                  </section>
-                  <Panel title={allProjects.length ? "Create Project" : "No projects yet"} icon={Layers3}>
-                    <div className="grid gap-3">
-                      <Field label="Project name" value={projectForm.name} onChange={(name) => setProjectForm({ ...projectForm, name })} placeholder="my-product" />
-                      <Info title="Slug preview" body={uiSlug(projectForm.name)} />
-                      <TextArea label="Description optional" value={projectForm.description} onChange={(description) => setProjectForm({ ...projectForm, description })} placeholder="Frontend + API + database + domain" />
-                      <button className="dio-button-primary justify-center" onClick={() => void createProject()} disabled={Boolean(busy) || !projectForm.name.trim()}>
-                        <Layers3 size={16} />
-                        Create Project
+                projectCreateMode ? (
+                  <div className="mx-auto max-w-3xl">
+                    <Panel title="Create Project" icon={Layers3}>
+                      <div className="grid gap-5 lg:grid-cols-[1fr_280px]">
+                        <div className="grid gap-3">
+                          <Field label="Project name" value={projectForm.name} onChange={(name) => setProjectForm({ ...projectForm, name })} placeholder="marketing-site" />
+                          <TextArea label="Description optional" value={projectForm.description} onChange={(description) => setProjectForm({ ...projectForm, description })} placeholder="Frontend, API, database, domains, and logs for one product." />
+                          <div className="flex flex-wrap gap-2">
+                            <button className="dio-button-primary" onClick={() => void createProject()} disabled={Boolean(busy) || !projectForm.name.trim()}>
+                              <Layers3 size={16} />
+                              Create Project
+                            </button>
+                            <button className="dio-button" onClick={() => setProjectCreateMode(false)} disabled={Boolean(busy)}>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid content-start gap-3">
+                          <Info title="Slug preview" body={uiSlug(projectForm.name)} />
+                          <Info title="Next step" body="After creation, Dockio opens the project workspace. Add a service there; you do not need to go back to the projects list." />
+                        </div>
+                      </div>
+                    </Panel>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <input className="dio-input md:max-w-lg" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Search projects..." />
+                      <button className="dio-button-primary w-fit" onClick={openCreateProject}>
+                        <Layers3 size={15} />
+                        New Project
                       </button>
-                      <p className="text-xs text-zinc-500">After creation, Dockio opens the project workspace so you can add services and deploy.</p>
                     </div>
-                  </Panel>
-                </div>
+                    <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => startDeployment("git", projectId)} />
+                  </div>
+                )
               )}
 
               {tab === "services" && (
@@ -1213,9 +1276,14 @@ export function PanelShell() {
                     </div>
                   </Panel>
                   <Panel title="Logs" icon={Terminal}>
+                    <div className="mb-3 rounded-md border border-line bg-panel p-3">
+                      <p className="dio-label">Selected log stream</p>
+                      <p className="mt-1 font-black text-ink">{logsContext.title}</p>
+                      <p className="mt-1 text-xs text-zinc-500">{logsContext.subtitle}</p>
+                    </div>
                     <div className="mb-3 flex flex-wrap gap-2">
-                      {activeApp && (
-                        <button className="dio-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
+                      {logRefreshApp && (
+                        <button className="dio-button" onClick={() => void loadLogs(logRefreshApp.id)} disabled={Boolean(busy)}>
                           <RefreshCw size={14} />
                           Refresh Logs
                         </button>
@@ -1465,7 +1533,7 @@ export function PanelShell() {
           )}
           <nav className="mt-5 grid gap-4" aria-label={selectedService ? "Service navigation" : "Project navigation"}>
             <SidebarGroup title={selectedService ? "Service" : "Project"}>
-              {currentTabs.filter((item) => ["general", "services", "deployments", "logs", "monitoring", "preview"].includes(item.id)).map((item) => (
+              {currentTabs.filter((item) => ["general", "services", "deployments", "logs", "monitoring"].includes(item.id)).map((item) => (
                 <TabButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />
               ))}
             </SidebarGroup>
@@ -1648,12 +1716,47 @@ export function PanelShell() {
                 <UrlCard title="Domain" url={selectedService.domain ? `https://${selectedService.domain}` : ""} help="Production URL through Caddy on ports 80/443." />
                 <Info title="Internal route" body={selectedService.localProxyPort || selectedService.port ? `127.0.0.1:${selectedService.localProxyPort || selectedService.port} -> :${selectedService.internalPort || selectedService.containerPort || selectedService.port}` : "No runtime port"} />
               </div>
+              {(selectedService.previewDomainError || selectedService.previewCaddyReloadStatus || selectedService.previewCaddyFile || previewPortUrl(selectedService, vpsIp)) && (
+                <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {selectedService.previewDomainError && (
+                    <div className="rounded-md border border-yellow-900 bg-yellow-950/30 p-3 text-sm text-yellow-100 md:col-span-2">
+                      <p className="font-bold">Preview domain error</p>
+                      <p className="mt-1 break-words text-yellow-200/80">{selectedService.previewDomainError}</p>
+                    </div>
+                  )}
+                  <Info title="Caddy reload" body={selectedService.previewCaddyReloadStatus || "not run"} />
+                  <Info title="Caddy file" body={selectedService.previewCaddyFile || "not written"} />
+                  <Info title="Public debug port" body={previewPortUrl(selectedService, vpsIp) || "disabled"} />
+                  <Info title="Caddy import" body={previewImportMessage(status)} />
+                </div>
+              )}
             </Panel>
           </div>
         )}
 
         {tab === "general" && !selectedService && (
           <div className="space-y-4">
+            {createdProjectId === currentProject.id && apps.length === 0 && (
+              <Panel title="Project Created" icon={CheckCircle2}>
+                <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+                  <div>
+                    <p className="font-black text-ink">{currentProject.name} is ready.</p>
+                    <p className="mt-1 text-sm text-zinc-400">Next, add the first service. The deploy wizard will stay inside this project and come back here with the preview link when it is done.</p>
+                  </div>
+                  <button className="dio-button-primary w-fit" onClick={() => startDeployment("git", currentProject.id)}>
+                    <PackagePlus size={15} />
+                    Add First Service
+                  </button>
+                </div>
+              </Panel>
+            )}
+
+            {projectPreviewItems.length > 0 && (
+              <Panel title="Previews" icon={Globe2}>
+                <ProjectPreviewLinks items={projectPreviewItems} onOpen={openService} />
+              </Panel>
+            )}
+
             <Panel title="Project Actions" icon={Play}>
               <div className="flex flex-wrap items-center gap-2">
                 <button className="dio-button-primary" onClick={() => startDeployment()} disabled={Boolean(busy)}>
@@ -1692,12 +1795,6 @@ export function PanelShell() {
                 )}
               </div>
             </Panel>
-
-            {projectPreviewItems.length > 0 && (
-              <Panel title="Project Preview Links" icon={Globe2}>
-                <ProjectPreviewLinks items={projectPreviewItems} onOpen={openService} />
-              </Panel>
-            )}
 
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <Metric label="Services" value={apps.length} detail="Frontend, API, workers" icon={Boxes} />
@@ -1787,7 +1884,7 @@ export function PanelShell() {
                   <div>
                     <p className="text-sm text-zinc-400">This project is empty. Add one service first, then configure env vars, storage, domains, and logs inside this same workspace.</p>
                     <div className="mt-4 grid gap-3 md:grid-cols-3">
-                      <button className="dio-button-primary" onClick={() => setTab("deployments")}>
+                      <button className="dio-button-primary" onClick={() => startDeployment("git", currentProject.id)}>
                         <Play size={15} />
                         Deploy Service
                       </button>
@@ -2033,15 +2130,23 @@ export function PanelShell() {
                 {visibleApps.map((app) => (
                   <button key={app.id} className={`dio-button min-w-0 justify-start ${logsAppId === app.id ? "border-action bg-action/10 text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
                     <Terminal size={14} />
-                    <span className="min-w-0 truncate">{app.name}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate">{app.name}</span>
+                      <span className="block truncate text-xs font-medium text-zinc-500">{currentProject.name} - {app.serviceRole || "fullstack"} - {app.status}</span>
+                    </span>
                   </button>
                 ))}
               </div>
             </Panel>
             <Panel title="Runtime Logs" icon={Terminal}>
+              <div className="mb-3 rounded-md border border-line bg-panel p-3">
+                <p className="dio-label">Selected log stream</p>
+                <p className="mt-1 font-black text-ink">{logsContext.title}</p>
+                <p className="mt-1 text-xs text-zinc-500">{logsContext.subtitle}</p>
+              </div>
               <div className="mb-3 flex flex-wrap gap-2">
-                {activeApp && (
-                  <button className="dio-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
+                {logRefreshApp && (
+                  <button className="dio-button" onClick={() => void loadLogs(logRefreshApp.id)} disabled={Boolean(busy)}>
                     <RefreshCw size={14} />
                     Refresh Logs
                   </button>
@@ -2259,54 +2364,6 @@ export function PanelShell() {
 
             <Panel title="Recent Deployments" icon={Activity}>
               <DeploymentList deployments={visibleDeployments} apps={apps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
-            </Panel>
-          </div>
-        )}
-
-        {tab === "preview" && selectedService && (
-          <div className="space-y-4">
-            <Panel title="Auto Preview Domain" icon={Eye}>
-              <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
-                <div className="grid gap-3">
-                  <UrlCard
-                    title="Preview URL"
-                    url={previewUrl(selectedService, vpsIp)}
-                    help={previewHelp(selectedService)}
-                  />
-                  {selectedService.previewDomainError && (
-                    <div className="rounded-md border border-yellow-900 bg-yellow-950/30 p-3 text-sm text-yellow-100">
-                      <p className="font-bold">Preview domain error</p>
-                      <p className="mt-1 break-words text-yellow-200/80">{selectedService.previewDomainError}</p>
-                    </div>
-                  )}
-                  <div className="grid gap-3 md:grid-cols-4">
-                    <Info title="Status" body={selectedService.previewDomainStatus || "disabled"} />
-                    <Info title="Mode" body={selectedService.previewDomainMode || state?.settings.previewDomainMode || "sslip"} />
-                    <Info title="Internal port" body={selectedService.internalPort || selectedService.containerPort ? `:${selectedService.internalPort || selectedService.containerPort}` : "Not configured"} />
-                    <Info title="Local proxy" body={selectedService.localProxyPort || selectedService.port ? `127.0.0.1:${selectedService.localProxyPort || selectedService.port}` : "Not assigned"} />
-                    <Info title="Health path" body={selectedService.healthPath || "/"} />
-                    <Info title="Caddy reload" body={selectedService.previewCaddyReloadStatus || "not run"} />
-                    <Info title="Caddy file" body={selectedService.previewCaddyFile || "not written"} />
-                    <Info title="Public debug port" body={previewPortUrl(selectedService, vpsIp) || "disabled"} />
-                  </div>
-                </div>
-                <div className="grid content-start gap-3">
-                  <Info title="How it works" body="The app container binds to 127.0.0.1. Caddy serves the preview hostname on 80/443 and reverse proxies to that local port." />
-                  <Info title="Caddy import" body={previewImportMessage(status)} />
-                  <button className="dio-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.status !== "running"}>
-                    <RefreshCw size={15} />
-                    Regenerate Preview URL
-                  </button>
-                  <button className="dio-button" onClick={() => void disablePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.previewDomainStatus === "disabled"}>
-                    <Square size={15} />
-                    Disable Preview Domain
-                  </button>
-                  <button className="dio-button" onClick={() => editGitDeployment(selectedService)} disabled={selectedService.source !== "git" && selectedService.sourceType !== "git-url"}>
-                    <Wrench size={15} />
-                    Edit Deploy Settings
-                  </button>
-                </div>
-              </div>
             </Panel>
           </div>
         )}
@@ -3451,7 +3508,7 @@ function previewPortUrl(app: ManagedApp, vpsIp: string) {
 
 function previewHelp(app: ManagedApp) {
   if (app.previewDomainStatus === "active") return "Generated Caddy hostname on ports 80/443. Caddy handles HTTPS automatically when DNS resolves.";
-  if (app.previewDomainStatus === "error") return app.publicPreview ? "Generated domain failed, but a public debug port fallback is available." : "Generated domain failed. Open the Preview tab for the Caddy error.";
+  if (app.previewDomainStatus === "error") return app.publicPreview ? "Generated domain failed, but a public debug port fallback is available." : "Generated domain failed. The service page shows the Caddy error and a fix action.";
   if (app.previewDomainStatus === "pending") return "Preview domain will be written during the next deploy or regenerate action.";
   if (app.publicPreview) return "Auto preview domain is disabled; this is the public debug port fallback.";
   return "Preview is disabled for this service.";
@@ -3479,6 +3536,31 @@ function projectName(projects: ProjectRecord[], projectId?: string) {
 
 function databaseName(databases: DatabaseResource[], databaseId?: string) {
   return databases.find((database) => database.id === databaseId)?.name || "Unknown database";
+}
+
+function describeLogsContext(projects: ProjectRecord[], apps: ManagedApp[], deployments: DeploymentEvent[], appId: string, deploymentId: string) {
+  const deployment = deploymentId ? deployments.find((item) => item.id === deploymentId) : undefined;
+  const app = (deployment?.appId ? apps.find((item) => item.id === deployment.appId) : undefined) || apps.find((item) => item.id === appId);
+  const project = app?.projectId ? projects.find((item) => item.id === app.projectId) : undefined;
+  if (deployment && app) {
+    return {
+      title: `${project?.name || "Unassigned"} / ${app.name}`,
+      subtitle: `Deployment log - ${deployment.action} - ${deployment.status}`,
+      kind: "deployment"
+    };
+  }
+  if (app) {
+    return {
+      title: `${project?.name || "Unassigned"} / ${app.name}`,
+      subtitle: `Runtime logs - ${app.serviceRole || "fullstack"} - ${app.status}`,
+      kind: "runtime"
+    };
+  }
+  return {
+    title: "No log stream selected",
+    subtitle: "Choose a service for runtime logs, or open a deployment record for build logs.",
+    kind: "empty"
+  };
 }
 
 function splitLines(value: string) {
