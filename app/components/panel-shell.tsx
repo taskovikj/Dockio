@@ -999,11 +999,6 @@ export function PanelShell() {
                   <Database size={15} />
                   Storage
                 </button>
-                <ComingSoonItem label="Backups" />
-              </SidebarGroup>
-              <SidebarGroup title="Settings">
-                <ComingSoonItem label="Git Sources" />
-                <ComingSoonItem label="Registry" />
               </SidebarGroup>
             </nav>
             <div className="mt-6 border-t border-line pt-4 text-xs text-zinc-500">
@@ -2161,7 +2156,7 @@ export function PanelShell() {
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`flex items-center gap-3 ${compact ? "" : "mb-6"}`}>
-      <div className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-[#111113] text-white">
+      <div className="flex h-10 w-10 items-center justify-center rounded-md border border-action/40 bg-action/20 text-white">
         <Server size={20} />
       </div>
       <div>
@@ -2177,15 +2172,6 @@ function SidebarGroup({ title, children }: { title: string; children: React.Reac
     <div className="grid gap-1">
       <p className="px-2 text-[0.68rem] font-black uppercase tracking-wide text-zinc-600">{title}</p>
       {children}
-    </div>
-  );
-}
-
-function ComingSoonItem({ label }: { label: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-md border border-line bg-[#080809] px-3 py-2 text-sm text-zinc-600">
-      <span>{label}</span>
-      <span className="text-[0.65rem] font-black uppercase">Soon</span>
     </div>
   );
 }

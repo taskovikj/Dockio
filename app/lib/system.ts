@@ -18,7 +18,6 @@ import {
   readState,
   startDeployment,
   updateState,
-  type AppStrategy,
   type DatabaseResource,
   type ManagedApp,
   type PanelSettings,
@@ -242,49 +241,6 @@ export async function updatePreviewSettings(input: Partial<PanelSettings>) {
     portRange: [settings.localProxyPortRangeStart, settings.localProxyPortRangeEnd]
   });
   return readState().settings;
-}
-
-export async function deploySampleApp(input: { name: string; strategy: AppStrategy; projectId?: string; serviceRole?: ServiceRole }) {
-  const name = assertSafeAppName(input.name || input.strategy + " sample");
-  const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
-  const state = readState();
-  if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
-  const project = projectId ? state.projects.find((item) => item.id === projectId) : undefined;
-  const appSlug = uniqueSlug(state.apps.filter((app) => app.projectId === projectId).map((app) => app.slug || app.id), slug(name));
-  const id = appSlug + "-" + crypto.randomBytes(3).toString("hex");
-  const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), project?.slug || "default", appSlug));
-  fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
-
-  const now = new Date().toISOString();
-  const app: ManagedApp = {
-    id,
-    projectId: projectId || undefined,
-    name,
-    slug: appSlug,
-    serviceRole: input.serviceRole || "fullstack",
-    strategy: input.strategy,
-    port: input.strategy === "static" ? 0 : await findOpenPort(),
-    status: "created",
-    source: "sample",
-    rootDir: appDir,
-    createdAt: now,
-    updatedAt: now
-  };
-
-  updateState((state) => {
-    state.apps.unshift(app);
-  });
-
-  if (input.strategy === "docker") {
-    await deployDockerSample(app);
-  } else if (input.strategy === "systemd") {
-    await deploySystemdSample(app);
-  } else {
-    await deployStaticSample(app);
-  }
-
-  audit("app.deploy_sample", "Sample " + input.strategy + " app deployed.", { appId: app.id, name: app.name });
-  return readState().apps.find((item) => item.id === app.id) || app;
 }
 
 export async function updateAppSettings(input: {
@@ -1519,59 +1475,6 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function deployDockerSample(app: ManagedApp) {
-  const serverJs = sampleNodeServer(app.name, app.port, "0.0.0.0");
-  fs.writeFileSync(path.join(app.rootDir!, "server.js"), serverJs, { mode: 0o640 });
-  const dockerfile = [
-    "FROM node:22-alpine",
-    "WORKDIR /app",
-    "COPY server.js /app/server.js",
-    "ENV NODE_ENV=production",
-    "ENV HOST=0.0.0.0",
-    "EXPOSE 3000",
-    'CMD ["node", "server.js"]',
-    ""
-  ].join("\n");
-  fs.writeFileSync(
-    path.join(app.rootDir!, "Dockerfile"),
-    dockerfile,
-    { mode: 0o640 }
-  );
-  const image = "svp_" + app.id + ":latest";
-  const container = "svp_" + app.id;
-  await safeRunOrThrow("docker", ["build", "-t", image, app.rootDir!]);
-  await safeRun("docker", ["rm", "-f", container]);
-  await safeRunOrThrow("docker", [
-    "run",
-    "-d",
-    "--name",
-    container,
-    "--restart",
-    "unless-stopped",
-    "--cap-drop",
-    "ALL",
-    "--security-opt",
-    "no-new-privileges",
-    "--memory",
-    "256m",
-    "--cpus",
-    "0.5",
-    "--pids-limit",
-    "128",
-    "--read-only",
-    "--tmpfs",
-    "/tmp:rw,noexec,nosuid,size=64m",
-    "--label",
-    "supavibe=true",
-    "--label",
-    "svp.appId=" + app.id,
-    "-p",
-    "127.0.0.1:" + app.port + ":3000",
-    image
-  ]);
-  markApp(app.id, { status: "running", containerName: container, imageTag: image, lastMessage: "Docker sample is running." });
-}
-
 async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: string) {
   const container = "svp_" + app.id;
   const containerPort = app.deployMode === "static" ? 80 : assertContainerPort(app.internalPort || app.containerPort || 3000);
@@ -1617,69 +1520,6 @@ async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: 
   if (envFile) args.push("--env-file", envFile);
   args.push(image);
   await safeRunOrThrow("docker", args);
-}
-
-async function deploySystemdSample(app: ManagedApp) {
-  const appRoot = assertManagedPath(getAppsDir(), app.rootDir!);
-  fs.writeFileSync(path.join(appRoot, "server.js"), sampleNodeServer(app.name, app.port, "127.0.0.1"), { mode: 0o640 });
-  const serviceName = "svp-" + app.id + ".service";
-  const service = [
-    "[Unit]",
-    "Description=Supavibe sample app " + app.id,
-    "After=network-online.target",
-    "Wants=network-online.target",
-    "",
-    "[Service]",
-    "Type=simple",
-    "User=" + (process.env.SVP_RUN_USER || os.userInfo().username),
-    "WorkingDirectory=" + appRoot,
-    "Environment=PORT=" + app.port,
-    "Environment=HOST=127.0.0.1",
-    "ExecStart=" + process.execPath + " " + path.join(appRoot, "server.js"),
-    "Restart=on-failure",
-    "RestartSec=3",
-    "NoNewPrivileges=true",
-    "PrivateTmp=true",
-    "ProtectHome=true",
-    "ProtectSystem=strict",
-    "RestrictSUIDSGID=true",
-    "LockPersonality=true",
-    "",
-    "[Install]",
-    "WantedBy=multi-user.target",
-    ""
-  ].join("\n");
-  const temp = await writeTemp(serviceName, service);
-  await safeRunOrThrow("sudo", ["install", "-m", "0644", "-o", "root", "-g", "root", temp, path.join("/etc/systemd/system", serviceName)]);
-  await safeRunOrThrow("sudo", ["systemctl", "daemon-reload"]);
-  await safeRunOrThrow("sudo", ["systemctl", "enable", "--now", serviceName]);
-  markApp(app.id, { status: "running", serviceName, lastMessage: "Systemd sample is running without Docker." });
-}
-
-async function deployStaticSample(app: ManagedApp) {
-  const appRoot = assertManagedPath(getAppsDir(), app.rootDir!);
-  const html = [
-    "<!doctype html>",
-    "<html>",
-    "<head>",
-    "<title>" + escapeHtml(app.name) + "</title>",
-    "<style>body{font-family:system-ui;margin:48px;background:#f5f7f4;color:#111827}main{max-width:760px}code{background:white;padding:2px 6px;border:1px solid #d9e2d7}</style>",
-    "</head>",
-    "<body>",
-    "<main>",
-    "<h1>" + escapeHtml(app.name) + "</h1>",
-    "<p>This static site is ready. Add a domain in Supavibe Panel and Caddy will serve this directory with HTTPS.</p>",
-    "<code>" + app.id + "</code>",
-    "</main>",
-    "</body>",
-    "</html>"
-  ].join("");
-  fs.writeFileSync(
-    path.join(appRoot, "index.html"),
-    html,
-    { mode: 0o640 }
-  );
-  markApp(app.id, { status: "running", lastMessage: "Static files are ready. Configure a domain to publish through Caddy." });
 }
 
 function markApp(appId: string, patch: Partial<ManagedApp>) {
@@ -2003,20 +1843,6 @@ async function writeTemp(name: string, content: string) {
   const file = path.join(tempDir, slug(name) + "-" + Date.now());
   fs.writeFileSync(file, content, { mode: 0o600 });
   return file;
-}
-
-function sampleNodeServer(name: string, port: number, defaultHost: "127.0.0.1" | "0.0.0.0") {
-  return [
-    'const http = require("http");',
-    "const port = Number(process.env.PORT || " + (port || 3000) + ");",
-    "const host = process.env.HOST || " + JSON.stringify(defaultHost) + ";",
-    "const name = " + JSON.stringify(name) + ";",
-    "http.createServer((req, res) => {",
-    '  res.setHeader("content-type", "application/json");',
-    '  res.end(JSON.stringify({ ok: true, app: name, path: req.url, time: new Date().toISOString() }, null, 2));',
-    '}).listen(port, host, () => console.log(name + " listening on " + host + ":" + port));',
-    ""
-  ].join("\n");
 }
 
 function assertAllowedCommand(command: string, args: string[]) {

@@ -8,6 +8,7 @@ RUN_USER="${RUN_USER:-supavibe}"
 PANEL_PORT="${PANEL_PORT:-3099}"
 PANEL_HOST="${PANEL_HOST:-0.0.0.0}"
 TRUSTED_CIDR="${TRUSTED_CIDR:-}"
+KEEP_DEV_DEPS="${SVP_KEEP_DEV_DEPS:-false}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo bash scripts/install.sh"
@@ -69,8 +70,13 @@ EOF
 chmod 440 /etc/sudoers.d/supavibe-panel
 
 cd "$APP_DIR"
-sudo -H -u "$RUN_USER" pnpm install
+sudo -H -u "$RUN_USER" pnpm install --frozen-lockfile
 sudo -H -u "$RUN_USER" pnpm build
+if [ "$KEEP_DEV_DEPS" != "true" ]; then
+  sudo -H -u "$RUN_USER" pnpm prune --prod
+  sudo -H -u "$RUN_USER" rm -rf .next/cache .next/dev tsconfig.tsbuildinfo
+fi
+sudo -H -u "$RUN_USER" pnpm store prune >/dev/null 2>&1 || true
 
 cat > /etc/systemd/system/supavibe-panel.service <<EOF
 [Unit]

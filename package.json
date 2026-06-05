@@ -8,6 +8,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "clean": "node scripts/clean-local.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "next lint"
   },

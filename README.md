@@ -7,14 +7,13 @@ Supavibe Panel is a self-hosted single-server dashboard. It is installed directl
 - First-run admin setup and login.
 - Server status: OS, disk, memory, Docker, Caddy, UFW, public IP.
 - Safe allowlisted actions only; no arbitrary shell endpoint.
-- Sample Docker deployment.
 - Public Git repository deployments with three modes:
   - use an existing `Dockerfile`
   - generated Node/Next/Vite-style Dockerfile
   - static build served by nginx behind Caddy
 - Docker Compose stack deployment from a Git repo.
-- Sample no-Docker systemd deployment.
-- Sample static deployment served through Caddy after domain setup.
+- Docker image deployment from public registries.
+- Managed Postgres and Redis resources.
 - Caddy domain configuration.
 - Firewall baseline helper.
 - App lifecycle actions: logs, health check, restart, stop, redeploy, delete.
@@ -76,18 +75,32 @@ The product should expose this as:
 5. User opens the panel URL.
 6. First screen forces admin account creation.
 7. Panel shows a safety warning if the port is public.
-8. User applies firewall baseline, then deploys sample Docker, systemd, or static apps.
+8. User applies firewall baseline, then deploys a public Git repo, Docker image, or Compose stack.
 
 This is intentionally easier than asking users to clone the repo, install pnpm, build manually, and create systemd files themselves.
+
+The installer builds the panel, prunes development dependencies, and removes rebuildable Next.js caches by default so the installed copy is smaller. Set `SVP_KEEP_DEV_DEPS=true` only if you need to debug/build directly inside `/opt/supavibe-panel/app`.
 
 ## Manual Dev Run
 
 ```bash
 pnpm install
-SVP_DATA_DIR=.data-supavibe-panel pnpm --filter @supavibe/vps-panel dev
+SVP_DATA_DIR=.data-supavibe-panel pnpm dev
 ```
 
 Open `http://localhost:3000`.
+
+To clean local rebuildable files:
+
+```bash
+pnpm clean
+```
+
+To also remove local dependencies and reinstall later:
+
+```bash
+pnpm clean -- --deps
+```
 
 ## Production Layout
 
@@ -109,11 +122,10 @@ Open `http://localhost:3000`.
 - API errors are structured and include request IDs.
 - The install-time `TRUSTED_CIDR` value is enforced with UFW firewall rules. The optional app-level `SVP_TRUSTED_NETWORK_ONLY=true` guard should only be enabled behind a proxy that forwards real client IP headers.
 - App containers bind only to `127.0.0.1`.
-- No-Docker/systemd sample apps bind only to `127.0.0.1`.
 - Public app ingress is through Caddy on 80/443.
 - No Docker socket is mounted into app containers.
 - No privileged app containers.
-- Docker sample apps run with dropped Linux capabilities, no-new-privileges, memory/CPU/pid limits, read-only filesystem, and tmpfs `/tmp`.
+- Docker app containers run with safer defaults such as dropped Linux capabilities, no-new-privileges, memory/CPU/pid limits, read-only filesystem, and tmpfs `/tmp` where compatible.
 - System actions are allowlisted in code and use specific commands.
 - Domains, CIDRs, app IDs, service names, Docker names, ports, and managed paths are validated before use.
 - Command output and API errors redact common tokens, passwords, database URLs, Authorization headers, private keys, and credentialed clone URLs.
