@@ -6,7 +6,7 @@
 corepack enable
 pnpm install
 cp .env.example .env.local
-SVP_DATA_DIR=.data-supavibe-panel pnpm dev
+DIO_DATA_DIR=.data-dockio-panel pnpm dev
 ```
 
 Open:
@@ -26,11 +26,11 @@ pnpm clean -- --deps
 
 ## Local State
 
-Local state lives under `SVP_DATA_DIR`.
+Local state lives under `DIO_DATA_DIR`.
 
 Default local folders are ignored by git:
 
-- `.data-supavibe-panel`
+- `.data-dockio-panel`
 - `.data-local`
 
 Do not commit:

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_REPO_URL="https://github.com/taskovikj/supavibe-panel.git"
+DEFAULT_REPO_URL="https://github.com/taskovikj/dockio-panel.git"
 REPO_URL="${REPO_URL:-$DEFAULT_REPO_URL}"
 REPO_REF="${REPO_REF:-main}"
 WORK_DIR="${WORK_DIR:-}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run with sudo:"
-  echo "  curl -fsSL https://raw.githubusercontent.com/taskovikj/supavibe-panel/main/scripts/install-from-github.sh | sudo bash"
+  echo "  curl -fsSL https://raw.githubusercontent.com/taskovikj/dockio-panel/main/scripts/install-from-github.sh | sudo bash"
   exit 1
 fi
 
-echo "== Supavibe Panel installer =="
+echo "== Dockio Panel installer =="
 echo "Repo: $REPO_URL"
 echo "Ref:  $REPO_REF"
 

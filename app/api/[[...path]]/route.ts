@@ -118,7 +118,7 @@ const previewSettingsSchema = z.object({
   previewDomainMode: z.enum(["sslip", "custom", "disabled"]).optional().default("sslip"),
   previewBaseDomain: z.string().max(253).optional().default(""),
   autoPreviewDomainsEnabled: z.boolean().optional().default(true),
-  caddySitesDir: z.string().max(220).optional().default("/etc/caddy/supavibe/sites"),
+  caddySitesDir: z.string().max(220).optional().default("/etc/caddy/dockio/sites"),
   caddyMainConfig: z.string().max(220).optional().default("/etc/caddy/Caddyfile"),
   localProxyPortRangeStart: z.coerce.number().int().min(1024).max(65535).optional().default(31000),
   localProxyPortRangeEnd: z.coerce.number().int().min(1024).max(65535).optional().default(39999)
@@ -221,7 +221,7 @@ async function route(request: Request, context: RouteContext) {
       await requireCsrf(request);
     }
 
-    if (segments.length === 0) return ok({ app: "Supavibe VPS Panel", mode: "single-vps" }, 200, requestId);
+    if (segments.length === 0) return ok({ app: "Dockio VPS Panel", mode: "single-vps" }, 200, requestId);
     if (segments[0] === "state" && request.method === "GET") return ok(publicState(), 200, requestId);
     if (segments[0] === "system" && segments[1] === "status" && request.method === "GET") {
       return ok(await serverStatus(), 200, requestId);
@@ -248,7 +248,7 @@ async function route(request: Request, context: RouteContext) {
       return ok({ analysis: await analyzeGitRepo(repoDetectSchema.parse(await request.json())) }, 200, requestId);
     }
     if (segments[0] === "firewall" && segments[1] === "plan" && request.method === "GET") {
-      const panelPort = Number(process.env.SVP_PORT || process.env.PORT || 3099);
+      const panelPort = Number(process.env.DIO_PORT || process.env.PORT || 3099);
       return ok({
         commands: [
           "sudo ufw allow OpenSSH",
@@ -420,7 +420,7 @@ function errorResponse(error: unknown, requestId: string) {
   const message = error instanceof Error ? error.message : "Request failed";
   if (message === "Authentication required.") return fail(message, 401, requestId);
   if (message === "CSRF validation failed.") return fail("Security check failed. Refresh the page and try again.", 403, requestId);
-  console.error("Supavibe API request failed", { requestId, error });
+  console.error("Dockio API request failed", { requestId, error });
   return fail(redact(message || "Request failed"), 500, requestId);
 }
 

@@ -1,6 +1,6 @@
 # Security Policy
 
-Supavibe Panel is beta software. Please test it carefully and avoid using it for sensitive production workloads until the project reaches a stable release.
+Dockio Panel is beta software. Please test it carefully and avoid using it for sensitive production workloads until the project reaches a stable release.
 
 ## Supported Versions
 
@@ -22,7 +22,7 @@ If you find a vulnerability, open a minimal public issue that says a security re
 
 ## Security Boundaries
 
-Supavibe Panel is designed to manage one VPS where it is installed.
+Dockio Panel is designed to manage one VPS where it is installed.
 
 Current boundaries:
 

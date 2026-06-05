@@ -5,7 +5,7 @@
 Check the service:
 
 ```bash
-sudo systemctl status supavibe-panel --no-pager -l
+sudo systemctl status dockio-panel --no-pager -l
 ```
 
 Check the port:
@@ -17,7 +17,7 @@ sudo ss -ltnp | grep 3099
 Check logs:
 
 ```bash
-sudo journalctl -u supavibe-panel -n 200 --no-pager
+sudo journalctl -u dockio-panel -n 200 --no-pager
 ```
 
 ## First Admin Setup Code
@@ -25,7 +25,7 @@ sudo journalctl -u supavibe-panel -n 200 --no-pager
 The installer prints the setup code. It is also stored in:
 
 ```bash
-sudo grep SVP_SETUP_TOKEN /etc/supavibe-panel/panel.env
+sudo grep DIO_SETUP_TOKEN /etc/dockio-panel/panel.env
 ```
 
 Do not share this code publicly.
@@ -47,7 +47,7 @@ Check:
 
 - the service is running
 - Caddy is active
-- the preview route exists in `/etc/caddy/supavibe/sites`
+- the preview route exists in `/etc/caddy/dockio/sites`
 - ports `80` and `443` are open
 - the panel service has the current sudoers rules
 
@@ -81,9 +81,9 @@ Only prune when you understand that unused images/containers may be removed.
 On a disposable VPS only:
 
 ```bash
-sudo systemctl stop supavibe-panel
-sudo rm -rf /opt/supavibe-panel /var/lib/supavibe-panel /etc/supavibe-panel
-sudo rm -f /etc/systemd/system/supavibe-panel.service /etc/sudoers.d/supavibe-panel
+sudo systemctl stop dockio-panel
+sudo rm -rf /opt/dockio-panel /var/lib/dockio-panel /etc/dockio-panel
+sudo rm -f /etc/systemd/system/dockio-panel.service /etc/sudoers.d/dockio-panel
 sudo systemctl daemon-reload
 ```
 

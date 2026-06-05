@@ -1,6 +1,6 @@
 # Architecture
 
-Supavibe Panel is currently a single-server, self-hosted control panel.
+Dockio Panel is currently a single-server, self-hosted control panel.
 
 ## High-Level Model
 
@@ -24,7 +24,7 @@ There is no separate remote agent in this repo. The panel is installed directly 
 ## Runtime Components
 
 - **Next.js App Router**: UI and API route handling.
-- **JSON state**: local beta state storage under `SVP_DATA_DIR`.
+- **JSON state**: local beta state storage under `DIO_DATA_DIR`.
 - **Docker**: app containers, Compose stacks, managed Postgres, managed Redis.
 - **Caddy**: HTTPS reverse proxy and preview/custom domain routing.
 - **UFW**: firewall baseline and simple port rules.
@@ -33,19 +33,19 @@ There is no separate remote agent in this repo. The panel is installed directly 
 ## Installed Server Layout
 
 ```txt
-/opt/supavibe-panel/app
+/opt/dockio-panel/app
   Installed app source and production build.
 
-/var/lib/supavibe-panel
+/var/lib/dockio-panel
   Local JSON state, generated app data, logs, temp files, and secrets.
 
-/etc/supavibe-panel/panel.env
+/etc/dockio-panel/panel.env
   Service environment.
 
 /etc/caddy/conf.d
   Custom domain Caddy route files.
 
-/etc/caddy/supavibe/sites
+/etc/caddy/dockio/sites
   Auto preview domain Caddy route files.
 ```
 

@@ -20,7 +20,7 @@ assignees: ""
 
 ## Environment
 
-- Supavibe Panel commit/version:
+- Dockio Panel commit/version:
 - VPS OS:
 - Install method:
 - Browser:

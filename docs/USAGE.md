@@ -1,11 +1,11 @@
 # Usage Guide
 
-This guide assumes Supavibe Panel is installed on a test VPS.
+This guide assumes Dockio Panel is installed on a test VPS.
 
 ## First Run
 
 1. Open the panel URL printed by the installer.
-2. Copy the first-admin setup code from the installer output or from `/etc/supavibe-panel/panel.env`.
+2. Copy the first-admin setup code from the installer output or from `/etc/dockio-panel/panel.env`.
 3. Create the admin account.
 4. Log in.
 
@@ -85,7 +85,7 @@ Caddy handles HTTPS automatically when DNS points to the VPS and ports `80` and 
 
 ## Preview URLs
 
-Supavibe can create preview hostnames using:
+Dockio can create preview hostnames using:
 
 - `sslip.io`
 - a custom wildcard preview domain

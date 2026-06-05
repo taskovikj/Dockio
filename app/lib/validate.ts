@@ -170,18 +170,18 @@ export function assertManagedPath(baseDir: string, candidate: string) {
   const base = path.resolve(baseDir);
   const resolved = path.resolve(candidate);
   if (resolved !== base && !resolved.startsWith(base + path.sep)) {
-    throw new Error("Managed path is outside the Supavibe data directory.");
+    throw new Error("Managed path is outside the Dockio data directory.");
   }
   return resolved;
 }
 
 export function assertSafeDockerName(value: string) {
-  if (!/^svp_[a-z0-9-]{2,80}$/.test(value)) throw new Error("Docker resource name is invalid.");
+  if (!/^dio_[a-z0-9-]{2,80}$/.test(value)) throw new Error("Docker resource name is invalid.");
   return value;
 }
 
 export function assertSafeSystemdService(value: string) {
-  if (!/^svp-[a-z0-9-]{2,80}\.service$/.test(value)) throw new Error("Systemd service name is invalid.");
+  if (!/^dio-[a-z0-9-]{2,80}\.service$/.test(value)) throw new Error("Systemd service name is invalid.");
   return value;
 }
 

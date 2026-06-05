@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { setupTokenRequired } from "./security";
 import { audit, readState, updateState, type AdminAccount, type SessionRecord } from "./state";
 
-const COOKIE = "svp_session";
+const COOKIE = "dio_session";
 const ITERATIONS = 210_000;
 const KEYLEN = 32;
 
@@ -114,7 +114,7 @@ export async function authState() {
 export async function requireCsrf(request: Request) {
   const auth = await requireAuth();
   if (auth.setupRequired || !auth.csrfToken) throw new Error("Authentication required.");
-  const provided = request.headers.get("x-supavibe-csrf") || "";
+  const provided = request.headers.get("x-dockio-csrf") || "";
   if (!provided || !crypto.timingSafeEqual(Buffer.from(tokenHash(provided)), Buffer.from(tokenHash(auth.csrfToken)))) {
     throw new Error("CSRF validation failed.");
   }
@@ -129,9 +129,9 @@ function assertStrongPassword(password: string) {
 }
 
 function shouldUseSecureCookie() {
-  const explicit = process.env.SVP_COOKIE_SECURE?.trim().toLowerCase();
+  const explicit = process.env.DIO_COOKIE_SECURE?.trim().toLowerCase();
   if (explicit === "true") return true;
   if (explicit === "false") return false;
-  const publicUrl = process.env.SVP_PUBLIC_ORIGIN || process.env.SVP_PUBLIC_BASE_URL || "";
+  const publicUrl = process.env.DIO_PUBLIC_ORIGIN || process.env.DIO_PUBLIC_BASE_URL || "";
   return publicUrl.startsWith("https://");
 }

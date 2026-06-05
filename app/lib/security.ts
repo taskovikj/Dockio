@@ -54,7 +54,7 @@ export function ensureSameOrigin(request: Request) {
 }
 
 export function requireSetupCode(input: string | undefined) {
-  const expected = process.env.SVP_SETUP_TOKEN?.trim();
+  const expected = process.env.DIO_SETUP_TOKEN?.trim();
   if (!expected) return;
   const provided = (input || "").trim();
   if (!provided || !timingSafeTextEqual(provided, expected)) {
@@ -63,12 +63,12 @@ export function requireSetupCode(input: string | undefined) {
 }
 
 export function setupTokenRequired() {
-  return Boolean(process.env.SVP_SETUP_TOKEN?.trim());
+  return Boolean(process.env.DIO_SETUP_TOKEN?.trim());
 }
 
 export function requireTrustedNetwork(request: Request) {
-  const enabled = String(process.env.SVP_TRUSTED_NETWORK_ONLY || "").toLowerCase() === "true";
-  const cidrs = (process.env.SVP_TRUSTED_CIDRS || "")
+  const enabled = String(process.env.DIO_TRUSTED_NETWORK_ONLY || "").toLowerCase() === "true";
+  const cidrs = (process.env.DIO_TRUSTED_CIDRS || "")
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
@@ -96,7 +96,7 @@ function allowedOrigins(request: Request) {
   const forwardedProto = firstHeaderValue(request.headers.get("x-forwarded-proto")) || requestUrl.protocol.replace(":", "");
   if (forwardedHost) origins.add(`${forwardedProto}://${forwardedHost}`);
 
-  for (const value of [process.env.SVP_PUBLIC_ORIGIN, process.env.SVP_PUBLIC_BASE_URL]) {
+  for (const value of [process.env.DIO_PUBLIC_ORIGIN, process.env.DIO_PUBLIC_BASE_URL]) {
     if (!value) continue;
     try {
       origins.add(new URL(value).origin);

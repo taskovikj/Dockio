@@ -1,14 +1,16 @@
-# Supavibe Panel
+# Dockio Panel
 
 > Public beta. This project is actively being built and tested. Some features work today, some are incomplete, and the API/state model may change before a stable release.
 
-Supavibe Panel is a self-hosted VPS control panel for deploying and managing apps on a single Linux server. It is meant to feel simpler than a full server control panel while still giving developers practical deployment tools: Git deploys, Docker image deploys, Compose stacks, Caddy routes, firewall helpers, logs, managed databases, and runtime controls.
+Dockio Panel is a self-hosted VPS control panel for deploying and managing apps on a single Linux server. It is meant to feel simpler than a full server control panel while still giving developers practical deployment tools: Git deploys, Docker image deploys, Compose stacks, Caddy routes, firewall helpers, logs, managed databases, and runtime controls.
+
+Project domain: `dockio.dev`.
 
 The current version is intended for test VPSs, homelab servers, prototypes, and early feedback. Do not treat it as a finished production platform yet.
 
 ## Status
 
-Supavibe Panel is currently in beta/WIP:
+Dockio Panel is currently in beta/WIP:
 
 - UI and workflows are still changing.
 - State is stored in local JSON files for now.
@@ -39,7 +41,7 @@ Supavibe Panel is currently in beta/WIP:
 
 ## Safety Model
 
-Supavibe Panel is not a web terminal and does not expose arbitrary shell execution. Server actions are implemented as allowlisted operations.
+Dockio Panel is not a web terminal and does not expose arbitrary shell execution. Server actions are implemented as allowlisted operations.
 
 Important defaults:
 
@@ -49,7 +51,7 @@ Important defaults:
 - App containers are not privileged.
 - Domains, ports, app IDs, Docker names, CIDRs, env keys, and managed paths are validated.
 - Command output and API responses redact common secrets, tokens, database URLs, Authorization headers, private keys, and credentialed clone URLs.
-- The installer creates a dedicated runtime user and narrow sudoers rules for UFW, Caddy, and `svp-*` systemd services.
+- The installer creates a dedicated runtime user and narrow sudoers rules for UFW, Caddy, and `dio-*` systemd services.
 
 Still, Git builds and Compose files run code on your VPS. Only deploy repositories and images you trust.
 
@@ -70,15 +72,17 @@ The installer installs:
 - Caddy
 - Node.js 22 if missing
 - pnpm through Corepack
-- Supavibe Panel systemd service
+- Dockio Panel systemd service
 
 ## Quick Install
 
 Run this on a fresh Ubuntu/Debian VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/taskovikj/supavibe-panel/main/scripts/install-from-github.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/taskovikj/dockio-panel/main/scripts/install-from-github.sh | sudo bash
 ```
+
+This command assumes the GitHub repository has been renamed or published as `taskovikj/dockio-panel`.
 
 The default panel port is:
 
@@ -95,7 +99,7 @@ http://YOUR_SERVER_IP:3099
 The installer prints a first-admin setup code and stores it in:
 
 ```txt
-/etc/supavibe-panel/panel.env
+/etc/dockio-panel/panel.env
 ```
 
 Use that code on the first screen to create the admin account.
@@ -107,7 +111,7 @@ If the panel port is public, create the admin account immediately and restrict a
 Example with the panel restricted to a VPN/private CIDR:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/taskovikj/supavibe-panel/main/scripts/install-from-github.sh \
+curl -fsSL https://raw.githubusercontent.com/taskovikj/dockio-panel/main/scripts/install-from-github.sh \
   | sudo env PANEL_PORT=3099 PANEL_HOST=0.0.0.0 TRUSTED_CIDR=100.64.0.0/10 bash
 ```
 
@@ -123,16 +127,16 @@ curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install
 ## Install From A Local Clone
 
 ```bash
-git clone https://github.com/taskovikj/supavibe-panel.git supavibe-panel
-cd supavibe-panel
+git clone https://github.com/taskovikj/dockio-panel.git dockio-panel
+cd dockio-panel
 sudo bash scripts/install.sh
 ```
 
 For a fork:
 
 ```bash
-git clone https://github.com/<owner>/<repo>.git supavibe-panel
-cd supavibe-panel
+git clone https://github.com/<owner>/<repo>.git dockio-panel
+cd dockio-panel
 sudo bash scripts/install.sh
 ```
 
@@ -142,7 +146,7 @@ Useful installer variables for local/manual installs:
 sudo PANEL_PORT=3099 PANEL_HOST=0.0.0.0 TRUSTED_CIDR=100.64.0.0/10 bash scripts/install.sh
 ```
 
-Set `SVP_KEEP_DEV_DEPS=true` only if you need to debug/build inside `/opt/supavibe-panel/app`. By default the installer builds the app, prunes development dependencies, and removes rebuildable Next.js caches to reduce disk usage.
+Set `DIO_KEEP_DEV_DEPS=true` only if you need to debug/build inside `/opt/dockio-panel/app`. By default the installer builds the app, prunes development dependencies, and removes rebuildable Next.js caches to reduce disk usage.
 
 ## Basic Usage
 
@@ -164,7 +168,7 @@ Set `SVP_KEEP_DEV_DEPS=true` only if you need to debug/build inside `/opt/supavi
 
 ```bash
 pnpm install
-SVP_DATA_DIR=.data-supavibe-panel pnpm dev
+DIO_DATA_DIR=.data-dockio-panel pnpm dev
 ```
 
 Open:
@@ -196,11 +200,11 @@ docs/                    project documentation
 ## Data Layout On Installed Servers
 
 ```txt
-/opt/supavibe-panel/app       app code
-/var/lib/supavibe-panel       state, app data, logs, temp files, secrets
-/etc/supavibe-panel/panel.env service config
+/opt/dockio-panel/app       app code
+/var/lib/dockio-panel       state, app data, logs, temp files, secrets
+/etc/dockio-panel/panel.env service config
 /etc/caddy/conf.d             generated custom domain routes
-/etc/caddy/supavibe/sites     generated preview routes
+/etc/caddy/dockio/sites     generated preview routes
 ```
 
 ## Contributing

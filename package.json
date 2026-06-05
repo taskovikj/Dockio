@@ -1,5 +1,5 @@
 {
-  "name": "supavibe-panel",
+  "name": "dockio-panel",
   "version": "0.1.0",
   "description": "Beta self-hosted VPS deployment panel for Git, Docker, Caddy, firewall, logs, and databases.",
   "private": false,

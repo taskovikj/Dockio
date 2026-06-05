@@ -1,6 +1,6 @@
 # Roadmap
 
-Supavibe Panel is in beta. This roadmap describes the intended direction, not guaranteed release dates.
+Dockio Panel is in beta. This roadmap describes the intended direction, not guaranteed release dates.
 
 ## Current Focus
 

@@ -9,8 +9,8 @@ const removeTargets = [
   "dist",
   "coverage",
   "tsconfig.tsbuildinfo",
-  ".supavibe-panel-dev.log",
-  ".supavibe-panel-preview.log"
+  ".dockio-panel-dev.log",
+  ".dockio-panel-preview.log"
 ];
 
 let removed = 0;

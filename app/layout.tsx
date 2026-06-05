@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Supavibe VPS Panel",
+  title: "Dockio VPS Panel",
   description: "Self-hosted single VPS deployment dashboard"
 };
 

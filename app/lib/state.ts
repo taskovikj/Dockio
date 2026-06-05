@@ -163,7 +163,7 @@ export const defaultPanelSettings: PanelSettings = {
   previewDomainMode: "sslip",
   previewBaseDomain: "",
   autoPreviewDomainsEnabled: true,
-  caddySitesDir: "/etc/caddy/supavibe/sites",
+  caddySitesDir: "/etc/caddy/dockio/sites",
   caddyMainConfig: "/etc/caddy/Caddyfile",
   localProxyPortRangeStart: 31000,
   localProxyPortRangeEnd: 39999
@@ -182,7 +182,7 @@ const initialState: PanelState = {
 };
 
 export function getDataDir() {
-  return path.resolve(process.env.SVP_DATA_DIR || process.env.YP_DATA_DIR || path.join(process.cwd(), ".data-supavibe-panel"));
+  return path.resolve(process.env.DIO_DATA_DIR || process.env.YP_DATA_DIR || path.join(process.cwd(), ".data-dockio-panel"));
 }
 
 export function getStatePath() {
@@ -248,7 +248,7 @@ export function readState(): PanelState {
     } catch {
       // Best effort only: if the state file cannot be moved, recreate below.
     }
-    console.error("Supavibe state file was unreadable and has been reset.", error);
+    console.error("Dockio state file was unreadable and has been reset.", error);
     writeState(initialState);
     return initialState;
   }

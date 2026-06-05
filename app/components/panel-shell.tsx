@@ -282,7 +282,7 @@ export function PanelShell() {
     previewDomainMode: "sslip",
     previewBaseDomain: "",
     autoPreviewDomainsEnabled: true,
-    caddySitesDir: "/etc/caddy/supavibe/sites",
+    caddySitesDir: "/etc/caddy/dockio/sites",
     caddyMainConfig: "/etc/caddy/Caddyfile",
     localProxyPortRangeStart: 31000,
     localProxyPortRangeEnd: 39999
@@ -329,7 +329,7 @@ export function PanelShell() {
     if (window.location.hash === nextHash) return;
     const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
     const write = routeWriteCount.current === 0 ? window.history.replaceState : window.history.pushState;
-    write.call(window.history, { supavibePanel: true }, "", nextUrl);
+    write.call(window.history, { dockioPanel: true }, "", nextUrl);
     routeWriteCount.current += 1;
   }, [routeHydrated, auth?.user, state, selectedProjectId, selectedServiceId, tab, deployProvider, deployStep]);
 
@@ -915,7 +915,7 @@ export function PanelShell() {
   if (!auth.user) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#050505] p-4 text-zinc-100">
-        <section className="svp-panel w-full max-w-lg p-5">
+        <section className="dio-panel w-full max-w-lg p-5">
           <Brand />
           <h1 className="text-2xl font-black text-ink">{auth.setupRequired ? "Create admin account" : "Sign in"}</h1>
           <p className="mt-2 text-sm text-zinc-400">
@@ -930,10 +930,10 @@ export function PanelShell() {
             )}
             {auth.setupRequired && (
               <p className="rounded-md border border-line bg-panel p-3 text-xs text-zinc-400">
-                Passwords must be at least 12 characters and include uppercase, lowercase, and a number. On installed servers, the setup code is printed by the installer and stored in `/etc/supavibe-panel/panel.env`.
+                Passwords must be at least 12 characters and include uppercase, lowercase, and a number. On installed servers, the setup code is printed by the installer and stored in `/etc/dockio-panel/panel.env`.
               </p>
             )}
-            <button className="svp-button-primary" onClick={() => void submitAuth()} disabled={Boolean(busy)}>
+            <button className="dio-button-primary" onClick={() => void submitAuth()} disabled={Boolean(busy)}>
               <KeyRound size={16} />
               {busy || (auth.setupRequired ? "Create Admin" : "Sign In")}
             </button>
@@ -977,25 +977,25 @@ export function PanelShell() {
             <Brand compact />
             <nav className="mt-5 grid gap-4">
               <SidebarGroup title="Main">
-                <button className="svp-button justify-start bg-[#1b1b1e]" onClick={showAllProjects}>
+                <button className="dio-button justify-start bg-[#1b1b1e]" onClick={showAllProjects}>
                   <Layers3 size={15} />
                   Projects
                 </button>
-                <button className="svp-button justify-start" onClick={() => setNotice("Open a project to view deployment history.")}>
+                <button className="dio-button justify-start" onClick={() => setNotice("Open a project to view deployment history.")}>
                   <Activity size={15} />
                   Deployments
                 </button>
-                <button className="svp-button justify-start" onClick={() => setNotice("Open a project/service to inspect logs.")}>
+                <button className="dio-button justify-start" onClick={() => setNotice("Open a project/service to inspect logs.")}>
                   <Terminal size={15} />
                   Logs
                 </button>
               </SidebarGroup>
               <SidebarGroup title="Infrastructure">
-                <button className="svp-button justify-start" onClick={() => setNotice("Open a project, then Settings to manage UFW and server status.")}>
+                <button className="dio-button justify-start" onClick={() => setNotice("Open a project, then Settings to manage UFW and server status.")}>
                   <Shield size={15} />
                   Firewall
                 </button>
-                <button className="svp-button justify-start" onClick={() => setNotice("Open a project, then Storage to create Postgres, Redis, or external DB records.")}>
+                <button className="dio-button justify-start" onClick={() => setNotice("Open a project, then Storage to create Postgres, Redis, or external DB records.")}>
                   <Database size={15} />
                   Storage
                 </button>
@@ -1017,11 +1017,11 @@ export function PanelShell() {
                   <h1 className="text-xl font-black text-ink">All Projects</h1>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
+                  <button className="dio-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
                     <RefreshCw size={15} />
                     Refresh
                   </button>
-                  <button className="svp-button" onClick={() => void logout()}>
+                  <button className="dio-button" onClick={() => void logout()}>
                     <Lock size={15} />
                     Logout
                   </button>
@@ -1045,7 +1045,7 @@ export function PanelShell() {
                     <Field label="Project name" value={projectForm.name} onChange={(name) => setProjectForm({ ...projectForm, name })} placeholder="my-product" />
                     <Field label="Slug preview" value={uiSlug(projectForm.name)} onChange={() => undefined} placeholder="auto-generated" />
                     <TextArea label="What will run here?" value={projectForm.description} onChange={(description) => setProjectForm({ ...projectForm, description })} placeholder="Frontend + API + Postgres, domains, env..." />
-                    <button className="svp-button-primary w-fit" onClick={() => void createProject()} disabled={Boolean(busy) || !projectForm.name.trim()}>
+                    <button className="dio-button-primary w-fit" onClick={() => void createProject()} disabled={Boolean(busy) || !projectForm.name.trim()}>
                       <Layers3 size={16} />
                       Create Project
                     </button>
@@ -1056,10 +1056,10 @@ export function PanelShell() {
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <label className="min-w-0 flex-1">
                       <span className="sr-only">Search projects</span>
-                      <input className="svp-input" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Search projects..." />
+                      <input className="dio-input" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Search projects..." />
                     </label>
                     <button
-                      className="svp-button-primary"
+                      className="dio-button-primary"
                       onClick={() => {
                         setProjectForm({ name: "New Project", description: "" });
                         setNotice("Fill the New Project form on the left, then create it to open the project.");
@@ -1083,17 +1083,17 @@ export function PanelShell() {
       <div className="grid min-h-screen lg:grid-cols-[240px_1fr]">
         <aside className="border-b border-line bg-[#050505] p-3 lg:border-b-0 lg:border-r">
           <Brand compact />
-          <button className="svp-button mt-5 w-full justify-start" onClick={showAllProjects}>
+          <button className="dio-button mt-5 w-full justify-start" onClick={showAllProjects}>
             <Home size={15} />
             Projects Home
           </button>
           <div className="mt-5 rounded-md border border-line bg-panel p-3">
-            <p className="svp-label">Current project</p>
+            <p className="dio-label">Current project</p>
             <p className="mt-2 truncate font-black text-ink">{currentProject.name}</p>
             <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{currentProject.description || "Services, deploys, env, domains, storage."}</p>
           </div>
           {selectedService && (
-            <button className="svp-button mt-3 w-full justify-start" onClick={() => { setSelectedServiceId(""); setTab("services"); }}>
+            <button className="dio-button mt-3 w-full justify-start" onClick={() => { setSelectedServiceId(""); setTab("services"); }}>
               <ArrowLeft size={15} />
               Back to Project
             </button>
@@ -1116,7 +1116,7 @@ export function PanelShell() {
           </nav>
           {!selectedService && apps.length > 0 && (
             <div className="mt-5 border-t border-line pt-4">
-              <p className="svp-label">Services</p>
+              <p className="dio-label">Services</p>
               <div className="mt-2 grid gap-1">
                 {apps.slice(0, 6).map((app) => (
                   <button key={app.id} className="rounded-md px-3 py-2 text-left text-sm font-bold text-zinc-400 hover:bg-panel hover:text-ink" onClick={() => openService(app)}>
@@ -1154,10 +1154,10 @@ export function PanelShell() {
                 {selectedService && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     <StatusPill ok={selectedService.status === "running"} label={selectedService.status} />
-                    <span className="svp-badge">{selectedService.serviceRole || "fullstack"}</span>
-                    <span className="svp-badge">{selectedService.deployMode || selectedService.strategy}</span>
-                    {selectedService.previewDomainStatus && <span className="svp-badge">preview {selectedService.previewDomainStatus}</span>}
-                    {selectedService.portBind === "public" && <span className="svp-badge">public preview</span>}
+                    <span className="dio-badge">{selectedService.serviceRole || "fullstack"}</span>
+                    <span className="dio-badge">{selectedService.deployMode || selectedService.strategy}</span>
+                    {selectedService.previewDomainStatus && <span className="dio-badge">preview {selectedService.previewDomainStatus}</span>}
+                    {selectedService.portBind === "public" && <span className="dio-badge">public preview</span>}
                   </div>
                 )}
               </div>
@@ -1165,49 +1165,49 @@ export function PanelShell() {
                 {selectedService ? (
                   <>
                     {(selectedService.domain || activePreviewUrl) && (
-                      <a className="svp-button-primary" href={selectedService.domain ? `https://${selectedService.domain}` : activePreviewUrl} target="_blank" rel="noreferrer">
+                      <a className="dio-button-primary" href={selectedService.domain ? `https://${selectedService.domain}` : activePreviewUrl} target="_blank" rel="noreferrer">
                         <ExternalLink size={15} />
                         Open URL
                       </a>
                     )}
                     {!activePreviewUrl && selectedService.status === "running" && (
-                      <button className="svp-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy)}>
+                      <button className="dio-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy)}>
                         <RefreshCw size={15} />
                         {selectedService.previewDomainStatus === "error" ? "Fix Preview" : "Generate Preview URL"}
                       </button>
                     )}
-                    <button className="svp-button" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
+                    <button className="dio-button" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
                       <RefreshCw size={15} />
                       Redeploy
                     </button>
-                    <button className="svp-button" onClick={() => void appAction(selectedService.id, selectedService.status === "running" ? "restart" : "start")} disabled={Boolean(busy)}>
+                    <button className="dio-button" onClick={() => void appAction(selectedService.id, selectedService.status === "running" ? "restart" : "start")} disabled={Boolean(busy)}>
                       <RotateCcw size={15} />
                       {selectedService.status === "running" ? "Restart" : "Start"}
                     </button>
                   </>
                 ) : (
                   <>
-                    <button className="svp-button-primary" onClick={() => startDeployment()} disabled={Boolean(busy)}>
+                    <button className="dio-button-primary" onClick={() => startDeployment()} disabled={Boolean(busy)}>
                       <PackagePlus size={15} />
                       Create Service
                     </button>
-                    <button className="svp-button" onClick={() => setTab("database")} disabled={Boolean(busy)}>
+                    <button className="dio-button" onClick={() => setTab("database")} disabled={Boolean(busy)}>
                       <Database size={15} />
                       Create Database
                     </button>
                   </>
                 )}
                 {(activeApp?.domain || activePreviewUrl) && (
-                  !selectedService && <a className="svp-button" href={activeApp?.domain ? `https://${activeApp.domain}` : activePreviewUrl} target="_blank" rel="noreferrer">
+                  !selectedService && <a className="dio-button" href={activeApp?.domain ? `https://${activeApp.domain}` : activePreviewUrl} target="_blank" rel="noreferrer">
                     <Globe2 size={15} />
                     {activeApp?.domain ? "Visit" : "Preview"}
                   </a>
                 )}
-                <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
+                <button className="dio-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
                   <RefreshCw size={15} />
                   Refresh
                 </button>
-                <button className="svp-button" onClick={() => void logout()}>
+                <button className="dio-button" onClick={() => void logout()}>
                   <Lock size={15} />
                   Logout
                 </button>
@@ -1223,28 +1223,28 @@ export function PanelShell() {
             <Panel title="Deploy Settings" icon={Play}>
               <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
                 <div className="flex flex-wrap gap-2">
-                  <button className="svp-button-primary" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
+                  <button className="dio-button-primary" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
                     <Play size={15} />
                     Redeploy
                   </button>
-                  <button className="svp-button" onClick={() => selectedService.source === "git" || selectedService.sourceType === "git-url" ? editGitDeployment(selectedService) : setNotice("Edit settings are currently available for public Git services.")}>
+                  <button className="dio-button" onClick={() => selectedService.source === "git" || selectedService.sourceType === "git-url" ? editGitDeployment(selectedService) : setNotice("Edit settings are currently available for public Git services.")}>
                     <Wrench size={15} />
                     Edit Build Settings
                   </button>
-                  <button className="svp-button" onClick={() => void appAction(selectedService.id, "restart")} disabled={Boolean(busy)}>
+                  <button className="dio-button" onClick={() => void appAction(selectedService.id, "restart")} disabled={Boolean(busy)}>
                     <RotateCcw size={15} />
                     Restart
                   </button>
-                  <button className="svp-button" onClick={() => selectedService.status === "running" ? void stop(selectedService.id) : void appAction(selectedService.id, "start")} disabled={Boolean(busy)}>
+                  <button className="dio-button" onClick={() => selectedService.status === "running" ? void stop(selectedService.id) : void appAction(selectedService.id, "start")} disabled={Boolean(busy)}>
                     <Square size={15} />
                     {selectedService.status === "running" ? "Stop" : "Start"}
                   </button>
-                  <button className="svp-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
+                  <button className="dio-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
                     <Terminal size={15} />
                     Logs
                   </button>
                 </div>
-                <Info title="No autodeploy yet" body="Supavibe deploys manually from this panel right now. Webhooks and GitHub account integrations are intentionally hidden until they work." />
+                <Info title="No autodeploy yet" body="Dockio deploys manually from this panel right now. Webhooks and GitHub account integrations are intentionally hidden until they work." />
               </div>
             </Panel>
 
@@ -1291,34 +1291,34 @@ export function PanelShell() {
           <div className="space-y-4">
             <Panel title="Project Actions" icon={Play}>
               <div className="flex flex-wrap items-center gap-2">
-                <button className="svp-button-primary" onClick={() => startDeployment()} disabled={Boolean(busy)}>
+                <button className="dio-button-primary" onClick={() => startDeployment()} disabled={Boolean(busy)}>
                   <PackagePlus size={15} />
                   Create Service
                 </button>
-                <button className="svp-button" onClick={() => setTab("database")} disabled={Boolean(busy)}>
+                <button className="dio-button" onClick={() => setTab("database")} disabled={Boolean(busy)}>
                   <Database size={15} />
                   Create Database
                 </button>
-                <button className="svp-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
+                <button className="dio-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
                   <RefreshCw size={15} />
                   Reload
                 </button>
                 {activeApp && (
                   <>
-                    <button className="svp-button" onClick={() => void appAction(activeApp.id, "redeploy")} disabled={Boolean(busy) || !(activeApp.source || activeApp.sourceType === "docker-image")}>
+                    <button className="dio-button" onClick={() => void appAction(activeApp.id, "redeploy")} disabled={Boolean(busy) || !(activeApp.source || activeApp.sourceType === "docker-image")}>
                       <Wrench size={15} />
                       Rebuild
                     </button>
-                    <button className="svp-button" onClick={() => void appAction(activeApp.id, "restart")} disabled={Boolean(busy)}>
+                    <button className="dio-button" onClick={() => void appAction(activeApp.id, "restart")} disabled={Boolean(busy)}>
                       <RotateCcw size={15} />
                       Restart
                     </button>
-                    <button className="svp-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
+                    <button className="dio-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
                       <Terminal size={15} />
                       Logs
                     </button>
                     {(activeApp.source === "git" || activeApp.sourceType === "git-url") && (
-                      <button className="svp-button" onClick={() => editGitDeployment(activeApp)} disabled={Boolean(busy)}>
+                      <button className="dio-button" onClick={() => editGitDeployment(activeApp)} disabled={Boolean(busy)}>
                         <Wrench size={15} />
                         Edit Deploy
                       </button>
@@ -1341,7 +1341,7 @@ export function PanelShell() {
                   <div className="rounded-md border border-line bg-[#050505] p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="svp-label">Primary service</p>
+                        <p className="dio-label">Primary service</p>
                         <h2 className="mt-2 truncate text-xl font-black text-ink">{activeApp.name}</h2>
                         <p className="mt-1 text-sm text-zinc-500">
                           {activeApp.serviceRole || "fullstack"} - {activeApp.strategy} - {activeApp.source || "manual"}
@@ -1355,26 +1355,26 @@ export function PanelShell() {
                       <p>Database: {activeApp.databaseId ? databaseName(databases, activeApp.databaseId) : "No database bound"}</p>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
-                      <button className="svp-button-primary" onClick={() => startDeployment()}>
+                      <button className="dio-button-primary" onClick={() => startDeployment()}>
                         <Play size={15} />
                         Deploy
                       </button>
-                      <button className="svp-button" onClick={() => void appAction(activeApp.id, "health")}>
+                      <button className="dio-button" onClick={() => void appAction(activeApp.id, "health")}>
                         <HeartPulse size={15} />
                         Health
                       </button>
-                      <button className="svp-button" onClick={() => void loadLogs(activeApp.id)}>
+                      <button className="dio-button" onClick={() => void loadLogs(activeApp.id)}>
                         <Terminal size={15} />
                         Logs
                       </button>
                       {activeApp.source && (
-                        <button className="svp-button" onClick={() => void appAction(activeApp.id, "redeploy")}>
+                        <button className="dio-button" onClick={() => void appAction(activeApp.id, "redeploy")}>
                           <GitBranch size={15} />
                           Redeploy
                         </button>
                       )}
                       {(activeApp.source === "git" || activeApp.sourceType === "git-url") && (
-                        <button className="svp-button" onClick={() => editGitDeployment(activeApp)}>
+                        <button className="dio-button" onClick={() => editGitDeployment(activeApp)}>
                           <Wrench size={15} />
                           Edit & Redeploy
                         </button>
@@ -1391,19 +1391,19 @@ export function PanelShell() {
                         <Info title="Deploys" body={deployments.length ? `${deployments.length} recorded events` : "No deploy events yet"} />
                       </div>
                       <div className="flex flex-wrap gap-2 border-t border-line pt-3">
-                        <button className="svp-button" onClick={() => setTab("environment")}>
+                        <button className="dio-button" onClick={() => setTab("environment")}>
                           <KeyRound size={14} />
                           Env
                         </button>
-                        <button className="svp-button" onClick={() => setTab("database")}>
+                        <button className="dio-button" onClick={() => setTab("database")}>
                           <Database size={14} />
                           Storage
                         </button>
-                        <button className="svp-button" onClick={() => setTab("domains")}>
+                        <button className="dio-button" onClick={() => setTab("domains")}>
                           <Globe2 size={14} />
                           Domains
                         </button>
-                        <button className="svp-button" onClick={() => setTab("advanced")}>
+                        <button className="dio-button" onClick={() => setTab("advanced")}>
                           <Shield size={14} />
                           Server
                         </button>
@@ -1416,15 +1416,15 @@ export function PanelShell() {
                   <div>
                     <p className="text-sm text-zinc-400">This project is empty. Add one service first, then configure env vars, storage, domains, and logs inside this same workspace.</p>
                     <div className="mt-4 grid gap-3 md:grid-cols-3">
-                      <button className="svp-button-primary" onClick={() => setTab("deployments")}>
+                      <button className="dio-button-primary" onClick={() => setTab("deployments")}>
                         <Play size={15} />
                         Deploy Service
                       </button>
-                      <button className="svp-button" onClick={() => setTab("environment")}>
+                      <button className="dio-button" onClick={() => setTab("environment")}>
                         <KeyRound size={15} />
                         Prepare Env
                       </button>
-                      <button className="svp-button" onClick={() => setTab("database")}>
+                      <button className="dio-button" onClick={() => setTab("database")}>
                         <Database size={15} />
                         Add Database
                       </button>
@@ -1463,7 +1463,7 @@ export function PanelShell() {
                     <Field label="Frontend origin" value={corsPresetForm.frontendOrigin} onChange={(frontendOrigin) => setCorsPresetForm({ ...corsPresetForm, frontendOrigin })} placeholder="https://app.example.com" />
                     <Field label="Backend/API origin" value={corsPresetForm.backendOrigin} onChange={(backendOrigin) => setCorsPresetForm({ ...corsPresetForm, backendOrigin })} placeholder="https://api.example.com" />
                   </div>
-                  <button className="svp-button w-fit" onClick={applyCorsPreset}>
+                  <button className="dio-button w-fit" onClick={applyCorsPreset}>
                     <Globe2 size={15} />
                     Add CORS/API Env Preset
                   </button>
@@ -1476,9 +1476,9 @@ export function PanelShell() {
               <Panel title="App Settings" icon={Wrench}>
                 <div className="grid gap-3">
                   <label className="grid gap-1">
-                    <span className="svp-label">App</span>
+                    <span className="dio-label">App</span>
                     <select
-                      className="svp-input"
+                      className="dio-input"
                       value={appSettingsForm.appId}
                       onChange={(event) => {
                         const app = apps.find((item) => item.id === event.target.value);
@@ -1503,7 +1503,7 @@ export function PanelShell() {
                   </div>
                   <Select label="Database binding" value={appSettingsForm.databaseId} onChange={(databaseId) => setAppSettingsForm({ ...appSettingsForm, databaseId })} options={[{ value: "", label: "No database" }, ...databases.map((database) => ({ value: database.id, label: `${database.name} (${database.envKey})` }))]} />
                   <TextArea label="Allowed CORS origins" value={appSettingsForm.corsText} onChange={(corsText) => setAppSettingsForm({ ...appSettingsForm, corsText })} placeholder={"https://app.example.com\nhttps://admin.example.com"} />
-                  <button className="svp-button-primary w-fit" onClick={() => void saveAppSettings()} disabled={Boolean(busy) || !appSettingsForm.appId}>
+                  <button className="dio-button-primary w-fit" onClick={() => void saveAppSettings()} disabled={Boolean(busy) || !appSettingsForm.appId}>
                     <Wrench size={15} />
                     Save Settings
                   </button>
@@ -1516,8 +1516,8 @@ export function PanelShell() {
               <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
                 <div className="grid gap-3">
                   <label className="grid gap-1">
-                    <span className="svp-label">Service</span>
-                    <select className="svp-input" value={appEnvForm.appId} onChange={(event) => setAppEnvForm({ ...appEnvForm, appId: event.target.value })}>
+                    <span className="dio-label">Service</span>
+                    <select className="dio-input" value={appEnvForm.appId} onChange={(event) => setAppEnvForm({ ...appEnvForm, appId: event.target.value })}>
                       <option value="">Select service</option>
                       {visibleApps.map((app) => (
                         <option key={app.id} value={app.id}>{app.name}</option>
@@ -1529,7 +1529,7 @@ export function PanelShell() {
                     <input className="mt-1" type="checkbox" checked={appEnvForm.replace} onChange={(event) => setAppEnvForm({ ...appEnvForm, replace: event.target.checked })} />
                     <span><span className="block font-bold text-ink">Replace existing saved env</span><span className="mt-1 block text-xs text-zinc-500">Leave unchecked to add or update only the keys you paste.</span></span>
                   </label>
-                  <button className="svp-button-primary w-fit" onClick={() => void saveAppEnvironment()} disabled={Boolean(busy) || !appEnvForm.appId || !appEnvForm.envText.trim()}>
+                  <button className="dio-button-primary w-fit" onClick={() => void saveAppEnvironment()} disabled={Boolean(busy) || !appEnvForm.appId || !appEnvForm.envText.trim()}>
                     <KeyRound size={15} />
                     Save Env
                   </button>
@@ -1537,7 +1537,7 @@ export function PanelShell() {
                 <div className="grid content-start gap-3">
                   <Info title="Secrets stay server-side" body="Values are written to this VPS data directory and only env key names are shown in the dashboard state." />
                   <Field label="Delete one env key" value={appEnvForm.deleteKey} onChange={(deleteKey) => setAppEnvForm({ ...appEnvForm, deleteKey })} placeholder="JWT_SECRET" />
-                  <button className="svp-button-danger w-fit" onClick={() => void deleteAppEnvKey()} disabled={Boolean(busy) || !appEnvForm.appId || !appEnvForm.deleteKey.trim()}>
+                  <button className="dio-button-danger w-fit" onClick={() => void deleteAppEnvKey()} disabled={Boolean(busy) || !appEnvForm.appId || !appEnvForm.deleteKey.trim()}>
                     <Trash2 size={15} />
                     Delete Key
                   </button>
@@ -1552,8 +1552,8 @@ export function PanelShell() {
                   <div key={app.id} className="rounded-md border border-line bg-panel p-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-bold text-ink">{app.name}</p>
-                      <span className="svp-badge">{app.serviceRole || "fullstack"}</span>
-                      <span className="svp-badge">{projectName(projects, app.projectId)}</span>
+                      <span className="dio-badge">{app.serviceRole || "fullstack"}</span>
+                      <span className="dio-badge">{projectName(projects, app.projectId)}</span>
                     </div>
                     <p className="mt-2 text-xs text-zinc-500">Env keys: {app.envKeys?.length ? app.envKeys.join(", ") : "No keys captured"}</p>
                     <p className="mt-1 text-xs text-zinc-500">CORS: {app.corsOrigins?.length ? app.corsOrigins.join(", ") : "Not configured"}</p>
@@ -1572,7 +1572,7 @@ export function PanelShell() {
                   <Select label="Project" value={managedDbForm.projectId} onChange={(projectId) => setManagedDbForm({ ...managedDbForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
                   <Field label="Database name" value={managedDbForm.name} onChange={(name) => setManagedDbForm({ ...managedDbForm, name })} />
                   <Field label="Env key" value={managedDbForm.envKey} onChange={(envKey) => setManagedDbForm({ ...managedDbForm, envKey })} placeholder="DATABASE_URL" />
-                  <button className="svp-button-primary w-fit" onClick={() => void createManagedDatabase()} disabled={Boolean(busy)}>
+                  <button className="dio-button-primary w-fit" onClick={() => void createManagedDatabase()} disabled={Boolean(busy)}>
                     <Database size={16} />
                     Create Postgres
                   </button>
@@ -1585,11 +1585,11 @@ export function PanelShell() {
                   <Select label="Project" value={managedRedisForm.projectId} onChange={(projectId) => setManagedRedisForm({ ...managedRedisForm, projectId })} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
                   <Field label="Redis name" value={managedRedisForm.name} onChange={(name) => setManagedRedisForm({ ...managedRedisForm, name })} />
                   <Field label="Env key" value={managedRedisForm.envKey} onChange={(envKey) => setManagedRedisForm({ ...managedRedisForm, envKey })} placeholder="REDIS_URL" />
-                  <button className="svp-button-primary w-fit" onClick={() => void createManagedRedis()} disabled={Boolean(busy)}>
+                  <button className="dio-button-primary w-fit" onClick={() => void createManagedRedis()} disabled={Boolean(busy)}>
                     <HardDrive size={16} />
                     Create Redis
                   </button>
-                  <Info title="Internal network" body="Redis joins the Supavibe Docker network and is injected into services as REDIS_URL when attached." />
+                  <Info title="Internal network" body="Redis joins the Dockio Docker network and is injected into services as REDIS_URL when attached." />
                 </div>
               </Panel>
 
@@ -1602,7 +1602,7 @@ export function PanelShell() {
                   <Field label="Name" value={externalDbForm.name} onChange={(name) => setExternalDbForm({ ...externalDbForm, name })} />
                   <Field label="Env key" value={externalDbForm.envKey} onChange={(envKey) => setExternalDbForm({ ...externalDbForm, envKey })} placeholder="DATABASE_URL" />
                   <TextArea label="Postgres URL" value={externalDbForm.url} onChange={(url) => setExternalDbForm({ ...externalDbForm, url })} placeholder="postgres://user:password@host:5432/db?sslmode=require" />
-                  <button className="svp-button-primary w-fit" onClick={() => void createExternalDatabase()} disabled={Boolean(busy) || !externalDbForm.url.trim()}>
+                  <button className="dio-button-primary w-fit" onClick={() => void createExternalDatabase()} disabled={Boolean(busy) || !externalDbForm.url.trim()}>
                     <KeyRound size={16} />
                     Save & Test
                   </button>
@@ -1623,7 +1623,7 @@ export function PanelShell() {
                 <Info title="Status" body={selectedService.status} />
                 <Info title="Last message" body={selectedService.lastMessage || "No recent health message."} />
                 <Info title="Health check" body={`${selectedService.healthPath || "/"} on 127.0.0.1:${selectedService.port || "unknown"}`} />
-                <button className="svp-button-primary w-fit" onClick={() => void appAction(selectedService.id, "health")} disabled={Boolean(busy)}>
+                <button className="dio-button-primary w-fit" onClick={() => void appAction(selectedService.id, "health")} disabled={Boolean(busy)}>
                   <HeartPulse size={15} />
                   Check Health
                 </button>
@@ -1649,7 +1649,7 @@ export function PanelShell() {
               <Metric label="Data" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
             </div>
             <Panel title="Server Status" icon={Activity}>
-              <pre className="svp-code max-h-[520px] overflow-auto rounded-md p-4 text-xs">{JSON.stringify(status, null, 2)}</pre>
+              <pre className="dio-code max-h-[520px] overflow-auto rounded-md p-4 text-xs">{JSON.stringify(status, null, 2)}</pre>
             </Panel>
           </div>
         )}
@@ -1660,7 +1660,7 @@ export function PanelShell() {
               <div className="grid gap-2">
                 {visibleApps.length === 0 && <p className="text-sm text-zinc-500">Deploy an app first, then logs appear here.</p>}
                 {visibleApps.map((app) => (
-                  <button key={app.id} className="svp-button justify-start" onClick={() => void loadLogs(app.id)}>
+                  <button key={app.id} className="dio-button justify-start" onClick={() => void loadLogs(app.id)}>
                     <Terminal size={14} />
                     {app.name}
                   </button>
@@ -1670,20 +1670,20 @@ export function PanelShell() {
             <Panel title="Runtime Logs" icon={Terminal}>
               <div className="mb-3 flex flex-wrap gap-2">
                 {activeApp && (
-                  <button className="svp-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
+                  <button className="dio-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
                     <RefreshCw size={14} />
                     Refresh Logs
                   </button>
                 )}
-                <button className="svp-button" onClick={() => void navigator.clipboard?.writeText(logs)} disabled={!logs}>
+                <button className="dio-button" onClick={() => void navigator.clipboard?.writeText(logs)} disabled={!logs}>
                   <Copy size={14} />
                   Copy
                 </button>
-                <button className="svp-button" onClick={() => setLogs("")} disabled={!logs}>
+                <button className="dio-button" onClick={() => setLogs("")} disabled={!logs}>
                   Clear
                 </button>
               </div>
-              <pre className="svp-code min-h-96 overflow-auto rounded-md p-4 text-xs">{logs || "Select a service to load recent logs."}</pre>
+              <pre className="dio-code min-h-96 overflow-auto rounded-md p-4 text-xs">{logs || "Select a service to load recent logs."}</pre>
             </Panel>
           </div>
         )}
@@ -1692,17 +1692,17 @@ export function PanelShell() {
           <div className="space-y-4">
             <Panel title="Service Deployments" icon={Activity}>
               <div className="mb-4 flex flex-wrap gap-2">
-                <button className="svp-button-primary" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
+                <button className="dio-button-primary" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
                   <RefreshCw size={15} />
                   Redeploy Latest
                 </button>
                 {(selectedService.source === "git" || selectedService.sourceType === "git-url") && (
-                  <button className="svp-button" onClick={() => editGitDeployment(selectedService)} disabled={Boolean(busy)}>
+                  <button className="dio-button" onClick={() => editGitDeployment(selectedService)} disabled={Boolean(busy)}>
                     <Wrench size={15} />
                     Edit Source & Build
                   </button>
                 )}
-                <button className="svp-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
+                <button className="dio-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
                   <Terminal size={15} />
                   Runtime Logs
                 </button>
@@ -1758,7 +1758,7 @@ export function PanelShell() {
                       <Field label="Branch" value={gitForm.branch} onChange={(branch) => { setGitForm({ ...gitForm, branch }); setRepoAnalysis(null); }} />
                       <Field label="Root directory optional" value={gitForm.appDirectory} onChange={(appDirectory) => { setGitForm({ ...gitForm, appDirectory }); setRepoAnalysis(null); }} placeholder="apps/web or blank" />
                     </div>
-                    <button className="svp-button-primary w-fit" onClick={() => void detectGitStack()} disabled={Boolean(busy) || !gitForm.repoUrl.trim()}>
+                    <button className="dio-button-primary w-fit" onClick={() => void detectGitStack()} disabled={Boolean(busy) || !gitForm.repoUrl.trim()}>
                       <Activity size={16} />
                       Detect Stack
                     </button>
@@ -1804,9 +1804,9 @@ export function PanelShell() {
                   </div>
                   <div className="grid gap-3">
                     <div className="flex flex-wrap gap-2">
-                      <button className={`svp-tab ${gitForm.mode === "node" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "node" })}>Generated Dockerfile</button>
-                      <button className={`svp-tab ${gitForm.mode === "dockerfile" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "dockerfile" })}>Repo Dockerfile</button>
-                      <button className={`svp-tab ${gitForm.mode === "static" ? "svp-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "static" })}>Static build</button>
+                      <button className={`dio-tab ${gitForm.mode === "node" ? "dio-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "node" })}>Generated Dockerfile</button>
+                      <button className={`dio-tab ${gitForm.mode === "dockerfile" ? "dio-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "dockerfile" })}>Repo Dockerfile</button>
+                      <button className={`dio-tab ${gitForm.mode === "static" ? "dio-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "static" })}>Static build</button>
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <Field label="Build command" value={gitForm.buildCommand} onChange={(buildCommand) => setGitForm({ ...gitForm, buildCommand })} placeholder="auto: npm run build" />
@@ -1827,7 +1827,7 @@ export function PanelShell() {
                         <TextArea label="Environment variables" value={gitForm.envText} onChange={(envText) => setGitForm({ ...gitForm, envText })} placeholder={"DATABASE_URL=...\nJWT_SECRET=..."} />
                         <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
                           <input className="mt-1" type="checkbox" checked={gitForm.previewDomainEnabled} onChange={(event) => setGitForm({ ...gitForm, previewDomainEnabled: event.target.checked })} />
-                          <span><span className="block font-bold text-ink">Create auto preview domain</span><span className="mt-1 block text-xs text-zinc-500">Recommended. Supavibe creates an sslip.io or custom wildcard hostname through Caddy on 80/443.</span></span>
+                          <span><span className="block font-bold text-ink">Create auto preview domain</span><span className="mt-1 block text-xs text-zinc-500">Recommended. Dockio creates an sslip.io or custom wildcard hostname through Caddy on 80/443.</span></span>
                         </label>
                         <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
                           <input className="mt-1" type="checkbox" checked={gitForm.publicPreview} onChange={(event) => setGitForm({ ...gitForm, publicPreview: event.target.checked })} />
@@ -1855,7 +1855,7 @@ export function PanelShell() {
                     <Info title="Project" body={`Deploying into ${currentProject.name}. Other projects are hidden while you work here.`} />
                     <Info title="Routing" body="Auto preview domains and custom domains go through Caddy on 80/443. Public debug ports are optional." />
                     <button
-                      className="svp-button-primary w-full justify-center"
+                      className="dio-button-primary w-full justify-center"
                       onClick={() => {
                         if (deployProvider === "git") void deployGit();
                         if (deployProvider === "image") void deployImage();
@@ -1872,14 +1872,14 @@ export function PanelShell() {
               )}
 
               <div className="mt-5 flex flex-wrap justify-between gap-2 border-t border-line pt-4">
-                <button className="svp-button" onClick={() => setDeployStep(previousDeployStep(deployStep, deployProvider))} disabled={deployStep === "source" || Boolean(busy)}>Back</button>
+                <button className="dio-button" onClick={() => setDeployStep(previousDeployStep(deployStep, deployProvider))} disabled={deployStep === "source" || Boolean(busy)}>Back</button>
                 {deployStep !== "runtime" && (
-                  <button className="svp-button-primary" onClick={() => setDeployStep(nextDeployStep(deployStep, deployProvider))} disabled={Boolean(busy) || !canContinueDeploy(deployStep, deployProvider, gitForm, imageForm, composeForm, composeYamlForm)}>
+                  <button className="dio-button-primary" onClick={() => setDeployStep(nextDeployStep(deployStep, deployProvider))} disabled={Boolean(busy) || !canContinueDeploy(deployStep, deployProvider, gitForm, imageForm, composeForm, composeYamlForm)}>
                     Continue
                   </button>
                 )}
                 {editingAppId && (
-                  <button className="svp-button" onClick={() => { setEditingAppId(""); setRepoAnalysis(null); setSelectedDetectionId(""); }} disabled={Boolean(busy)}>
+                  <button className="dio-button" onClick={() => { setEditingAppId(""); setRepoAnalysis(null); setSelectedDetectionId(""); }} disabled={Boolean(busy)}>
                     Cancel Edit
                   </button>
                 )}
@@ -1922,15 +1922,15 @@ export function PanelShell() {
                 <div className="grid content-start gap-3">
                   <Info title="How it works" body="The app container binds to 127.0.0.1. Caddy serves the preview hostname on 80/443 and reverse proxies to that local port." />
                   <Info title="Caddy import" body={previewImportMessage(status)} />
-                  <button className="svp-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.status !== "running"}>
+                  <button className="dio-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.status !== "running"}>
                     <RefreshCw size={15} />
                     Regenerate Preview URL
                   </button>
-                  <button className="svp-button" onClick={() => void disablePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.previewDomainStatus === "disabled"}>
+                  <button className="dio-button" onClick={() => void disablePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.previewDomainStatus === "disabled"}>
                     <Square size={15} />
                     Disable Preview Domain
                   </button>
-                  <button className="svp-button" onClick={() => editGitDeployment(selectedService)} disabled={selectedService.source !== "git" && selectedService.sourceType !== "git-url"}>
+                  <button className="dio-button" onClick={() => editGitDeployment(selectedService)} disabled={selectedService.source !== "git" && selectedService.sourceType !== "git-url"}>
                     <Wrench size={15} />
                     Edit Deploy Settings
                   </button>
@@ -1945,8 +1945,8 @@ export function PanelShell() {
             <Panel title="Add Domain" icon={Globe2}>
               <div className="grid gap-3">
                 <label className="grid gap-1">
-                  <span className="svp-label">App</span>
-                  <select className="svp-input" value={domainForm.appId} onChange={(event) => setDomainForm({ ...domainForm, appId: event.target.value })}>
+                  <span className="dio-label">App</span>
+                  <select className="dio-input" value={domainForm.appId} onChange={(event) => setDomainForm({ ...domainForm, appId: event.target.value })}>
                     <option value="">Select app</option>
                     {visibleApps.map((app) => (
                       <option key={app.id} value={app.id}>
@@ -1956,7 +1956,7 @@ export function PanelShell() {
                   </select>
                 </label>
                 <Field label="Domain" value={domainForm.domain} onChange={(domain) => setDomainForm({ ...domainForm, domain })} placeholder="app.example.com" />
-                <button className="svp-button-primary" onClick={() => void configureAppDomain()} disabled={!domainForm.appId || !domainForm.domain || Boolean(busy)}>
+                <button className="dio-button-primary" onClick={() => void configureAppDomain()} disabled={!domainForm.appId || !domainForm.domain || Boolean(busy)}>
                   <Globe2 size={16} />
                   Configure Caddy
                 </button>
@@ -1965,7 +1965,7 @@ export function PanelShell() {
             <Panel title="DNS Requirement" icon={Shield}>
               <div className="space-y-3 text-sm text-zinc-400">
                 <p>Point domains to this VPS public IP, then configure Caddy here. Caddy will request HTTPS certificates automatically.</p>
-                <pre className="svp-code overflow-auto rounded-md p-3 text-xs">{`A     ${domainForm.domain || "app.example.com"} -> ${vpsIp || "YOUR_VPS_PUBLIC_IP"}\nAAAA  optional if this VPS has IPv6`}</pre>
+                <pre className="dio-code overflow-auto rounded-md p-3 text-xs">{`A     ${domainForm.domain || "app.example.com"} -> ${vpsIp || "YOUR_VPS_PUBLIC_IP"}\nAAAA  optional if this VPS has IPv6`}</pre>
                 {selectedDomainApp && <Info title="Selected app" body={`${selectedDomainApp.name} via ${selectedDomainApp.strategy}${selectedDomainApp.localProxyPort || selectedDomainApp.port ? ` on 127.0.0.1:${selectedDomainApp.localProxyPort || selectedDomainApp.port}` : ""}`} />}
               </div>
             </Panel>
@@ -1978,7 +1978,7 @@ export function PanelShell() {
               <div className="grid gap-3 md:grid-cols-2">
                 <Info title="Container" body={selectedService.containerName || selectedService.composeProject || selectedService.serviceName || "Not created yet"} />
                 <Info title="Image / release" body={selectedService.imageTag || selectedService.dockerImage || "Not available"} />
-                <Info title="Root directory" body={selectedService.rootDir || "Managed by Supavibe"} />
+                <Info title="Root directory" body={selectedService.rootDir || "Managed by Dockio"} />
                 <Info title="Public exposure" body={selectedService.previewDomainHostname ? `Caddy preview ${selectedService.previewDomainHostname}` : selectedService.publicPreview ? `Public debug port ${selectedService.publicPreviewPort || selectedService.port}` : selectedService.domain ? "Public only through Caddy domain" : "No public route configured"} />
               </div>
             </Panel>
@@ -1991,7 +1991,7 @@ export function PanelShell() {
                     Removes runtime resources for this service. Deployment history stays in the project. Type-confirmation is required.
                   </p>
                 </div>
-                <button className="svp-button-danger" onClick={() => void appAction(selectedService.id, "delete")} disabled={Boolean(busy)}>
+                <button className="dio-button-danger" onClick={() => void appAction(selectedService.id, "delete")} disabled={Boolean(busy)}>
                   <Trash2 size={15} />
                   Delete Service
                 </button>
@@ -2004,10 +2004,10 @@ export function PanelShell() {
           <div className="space-y-4">
             <Panel title="Firewall Status" icon={Shield}>
               <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
-                <pre className="svp-code max-h-80 overflow-auto rounded-md p-3 text-xs">{commandOutputText(status?.ufw) || "UFW status is not available yet. Click Refresh after install."}</pre>
+                <pre className="dio-code max-h-80 overflow-auto rounded-md p-3 text-xs">{commandOutputText(status?.ufw) || "UFW status is not available yet. Click Refresh after install."}</pre>
                 <div className="space-y-3 text-sm text-zinc-400">
-                  <Info title="Real VPS firewall" body="These actions call UFW on this server through a restricted sudoers allowlist installed by Supavibe." />
-                  <button className="svp-button w-full justify-center" onClick={() => void refresh()} disabled={Boolean(busy)}>
+                  <Info title="Real VPS firewall" body="These actions call UFW on this server through a restricted sudoers allowlist installed by Dockio." />
+                  <button className="dio-button w-full justify-center" onClick={() => void refresh()} disabled={Boolean(busy)}>
                     <RefreshCw size={16} />
                     Refresh Status
                   </button>
@@ -2041,7 +2041,7 @@ export function PanelShell() {
                     <Field label="Caddy sites directory" value={previewSettingsForm.caddySitesDir} onChange={(caddySitesDir) => setPreviewSettingsForm({ ...previewSettingsForm, caddySitesDir })} />
                     <Field label="Caddy main config" value={previewSettingsForm.caddyMainConfig} onChange={(caddyMainConfig) => setPreviewSettingsForm({ ...previewSettingsForm, caddyMainConfig })} />
                   </div>
-                  <button className="svp-button-primary w-fit" onClick={() => void savePreviewSettings()} disabled={Boolean(busy)}>
+                  <button className="dio-button-primary w-fit" onClick={() => void savePreviewSettings()} disabled={Boolean(busy)}>
                     <Wrench size={16} />
                     Save Preview Settings
                   </button>
@@ -2058,11 +2058,11 @@ export function PanelShell() {
                 <div className="grid gap-3">
                   <Field label="Panel port" value={firewallForm.panelPort} onChange={(panelPort) => setFirewallForm({ ...firewallForm, panelPort })} />
                   <Field label="Trusted CIDR" value={firewallForm.trustedCidr} onChange={(trustedCidr) => setFirewallForm({ ...firewallForm, trustedCidr })} placeholder="100.64.0.0/10" />
-                  <button className="svp-button-primary" onClick={() => void applyFirewall()} disabled={Boolean(busy)}>
+                  <button className="dio-button-primary" onClick={() => void applyFirewall()} disabled={Boolean(busy)}>
                     <Flame size={16} />
                     Apply Baseline
                   </button>
-                  <button className="svp-button" onClick={() => void pruneSystem()} disabled={Boolean(busy)}>
+                  <button className="dio-button" onClick={() => void pruneSystem()} disabled={Boolean(busy)}>
                     <Wrench size={16} />
                     Docker Prune
                   </button>
@@ -2076,13 +2076,13 @@ export function PanelShell() {
                     <Select label="Protocol" value={firewallRuleForm.protocol} onChange={(protocol) => setFirewallRuleForm({ ...firewallRuleForm, protocol: protocol as "tcp" | "udp" })} options={[{ value: "tcp", label: "TCP" }, { value: "udp", label: "UDP" }]} />
                   </div>
                   <Field label="Source CIDR optional" value={firewallRuleForm.sourceCidr} onChange={(sourceCidr) => setFirewallRuleForm({ ...firewallRuleForm, sourceCidr })} placeholder="100.64.0.0/10 or blank for public" />
-                  <button className={firewallRuleForm.action === "deny" ? "svp-button-danger w-fit" : "svp-button-primary w-fit"} onClick={() => void applyFirewallRule()} disabled={Boolean(busy)}>
+                  <button className={firewallRuleForm.action === "deny" ? "dio-button-danger w-fit" : "dio-button-primary w-fit"} onClick={() => void applyFirewallRule()} disabled={Boolean(busy)}>
                     <Flame size={16} />
                     Apply Rule
                   </button>
                   <div className="border-t border-line pt-3">
                     <Field label="Delete numbered UFW rule" value={firewallDeleteForm.ruleNumber} onChange={(ruleNumber) => setFirewallDeleteForm({ ...firewallDeleteForm, ruleNumber })} placeholder="Run ufw status numbered, then enter number" />
-                    <button className="svp-button-danger mt-3 w-fit" onClick={() => void deleteFirewallRule()} disabled={Boolean(busy) || !firewallDeleteForm.ruleNumber.trim()}>
+                    <button className="dio-button-danger mt-3 w-fit" onClick={() => void deleteFirewallRule()} disabled={Boolean(busy) || !firewallDeleteForm.ruleNumber.trim()}>
                       <Trash2 size={16} />
                       Delete Rule
                     </button>
@@ -2125,7 +2125,7 @@ export function PanelShell() {
                     <input className="mt-1" type="checkbox" checked={projectDeleteVolumes} onChange={(event) => setProjectDeleteVolumes(event.target.checked)} />
                     <span><span className="block font-bold">Also delete managed database volumes</span><span className="mt-1 block text-xs text-red-200/70">Leave off when you might need the data later.</span></span>
                   </label>
-                  <button className="svp-button-danger justify-center" onClick={() => void deleteCurrentProject()} disabled={Boolean(busy) || projectDeleteConfirm !== currentProject.slug}>
+                  <button className="dio-button-danger justify-center" onClick={() => void deleteCurrentProject()} disabled={Boolean(busy) || projectDeleteConfirm !== currentProject.slug}>
                     <Trash2 size={16} />
                     Delete Full Project
                   </button>
@@ -2160,7 +2160,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
         <Server size={20} />
       </div>
       <div>
-        <p className="font-black text-ink">Supavibe VPS</p>
+        <p className="font-black text-ink">Dockio VPS</p>
         <p className="text-xs text-zinc-500">Self-hosted panel</p>
       </div>
     </div>
@@ -2198,11 +2198,11 @@ function UrlCard({
         <>
           <a className="mt-2 block break-all text-sm font-bold text-action" href={url} target="_blank" rel="noreferrer">{url}</a>
           <div className="mt-3 flex flex-wrap gap-2">
-            <a className="svp-button" href={url} target="_blank" rel="noreferrer">
+            <a className="dio-button" href={url} target="_blank" rel="noreferrer">
               <ExternalLink size={14} />
               Open
             </a>
-            <button className="svp-button" onClick={() => void navigator.clipboard?.writeText(url)}>
+            <button className="dio-button" onClick={() => void navigator.clipboard?.writeText(url)}>
               <Copy size={14} />
               Copy
             </button>
@@ -2212,7 +2212,7 @@ function UrlCard({
         <p className="mt-2 text-sm text-zinc-500">Not configured</p>
       )}
       {actionLabel && onAction && (
-        <button className="svp-button-primary mt-3" onClick={onAction} disabled={actionDisabled}>
+        <button className="dio-button-primary mt-3" onClick={onAction} disabled={actionDisabled}>
           <RefreshCw size={14} />
           {actionLabel}
         </button>
@@ -2233,7 +2233,7 @@ function DeploymentSteps({ active }: { active: DeployStep }) {
     <div className="mb-5 grid gap-2 md:grid-cols-4">
       {items.map((item, index) => (
         <div key={item.id} className={`rounded-md border p-3 text-sm ${active === item.id ? "border-action bg-action/10 text-ink" : "border-line bg-panel text-zinc-500"}`}>
-          <span className="svp-badge mr-2">{index + 1}</span>
+          <span className="dio-badge mr-2">{index + 1}</span>
           {item.label}
         </div>
       ))}
@@ -2279,7 +2279,7 @@ function SecurityBanner({ status }: { status: Record<string, unknown> | null }) 
           <p className="font-black">If this port is public, keep login enabled and restrict the panel port by firewall.</p>
           <p className="mt-1 text-yellow-200/80">Apps should be public through Caddy on 80/443. App runtimes should stay on localhost ports.</p>
         </div>
-        <span className="svp-badge">Public IP: {publicIp(status) || "checking"}</span>
+        <span className="dio-badge">Public IP: {publicIp(status) || "checking"}</span>
       </div>
     </div>
   );
@@ -2321,11 +2321,11 @@ function ProjectCards({
               <StatusPill ok={runningCount > 0 || projectApps.length === 0} label={projectApps.length ? `${runningCount}/${projectApps.length} running` : "new"} />
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <span className="svp-badge">{projectApps.length} services</span>
-              <span className="svp-badge">{projectApps.filter((app) => app.serviceRole === "frontend").length} frontend</span>
-              <span className="svp-badge">{projectApps.filter((app) => app.serviceRole === "backend").length} backend</span>
-              <span className="svp-badge">{projectDbs.length} db</span>
-              <span className="svp-badge">slug {project.slug}</span>
+              <span className="dio-badge">{projectApps.length} services</span>
+              <span className="dio-badge">{projectApps.filter((app) => app.serviceRole === "frontend").length} frontend</span>
+              <span className="dio-badge">{projectApps.filter((app) => app.serviceRole === "backend").length} backend</span>
+              <span className="dio-badge">{projectDbs.length} db</span>
+              <span className="dio-badge">slug {project.slug}</span>
             </div>
             <div className="mt-4 grid gap-1 text-xs text-zinc-500">
               <p>{lastDeployment ? `${lastDeployment.action}: ${lastDeployment.message}` : "Open project to manage its services, storage, domains, and logs."}</p>
@@ -2350,10 +2350,10 @@ function ProjectGrid({ projects, apps, databases }: { projects: ProjectRecord[];
             <p className="font-bold text-ink">{project.name}</p>
             {project.description && <p className="mt-1 text-xs text-zinc-500">{project.description}</p>}
             <div className="mt-3 flex flex-wrap gap-2">
-              <span className="svp-badge">{projectApps.length} services</span>
-              <span className="svp-badge">{projectApps.filter((app) => app.serviceRole === "frontend").length} frontend</span>
-              <span className="svp-badge">{projectApps.filter((app) => app.serviceRole === "backend").length} backend</span>
-              <span className="svp-badge">{projectDbs.length} db</span>
+              <span className="dio-badge">{projectApps.length} services</span>
+              <span className="dio-badge">{projectApps.filter((app) => app.serviceRole === "frontend").length} frontend</span>
+              <span className="dio-badge">{projectApps.filter((app) => app.serviceRole === "backend").length} backend</span>
+              <span className="dio-badge">{projectDbs.length} db</span>
             </div>
           </article>
         );
@@ -2412,54 +2412,54 @@ function AppGrid({
           </div>
           {app.lastMessage && <p className="mt-2 text-xs text-zinc-500">{app.lastMessage}</p>}
           <div className="mt-3 flex flex-wrap gap-2">
-            <button className="svp-button" onClick={() => void onLogs(app.id)}>
+            <button className="dio-button" onClick={() => void onLogs(app.id)}>
               <Terminal size={14} />
               Logs
             </button>
             {appPreview ? (
-              <a className="svp-button-primary" href={appPreview} target="_blank" rel="noreferrer">
+              <a className="dio-button-primary" href={appPreview} target="_blank" rel="noreferrer">
                 <ExternalLink size={14} />
                 Open Preview
               </a>
             ) : app.status === "running" ? (
-              <button className="svp-button-primary" onClick={() => void onPreview(app.id)}>
+              <button className="dio-button-primary" onClick={() => void onPreview(app.id)}>
                 <RefreshCw size={14} />
                 {app.previewDomainStatus === "error" ? "Fix Preview" : "Generate Preview"}
               </button>
             ) : null}
-            <button className="svp-button" onClick={() => onOpen(app)}>
+            <button className="dio-button" onClick={() => onOpen(app)}>
               <Settings size={14} />
               Manage
             </button>
-            <button className="svp-button" onClick={() => void onAction(app.id, "health")}>
+            <button className="dio-button" onClick={() => void onAction(app.id, "health")}>
               <HeartPulse size={14} />
               Health
             </button>
-            <button className="svp-button" onClick={() => void onAction(app.id, "start")}>
+            <button className="dio-button" onClick={() => void onAction(app.id, "start")}>
               <Play size={14} />
               Start
             </button>
-            <button className="svp-button" onClick={() => void onAction(app.id, "restart")}>
+            <button className="dio-button" onClick={() => void onAction(app.id, "restart")}>
               <RotateCcw size={14} />
               Restart
             </button>
             {(app.source || app.sourceType === "docker-image") && (
-              <button className="svp-button" onClick={() => void onAction(app.id, "redeploy")}>
+              <button className="dio-button" onClick={() => void onAction(app.id, "redeploy")}>
                 <GitBranch size={14} />
                 Redeploy
               </button>
             )}
             {(app.source === "git" || app.sourceType === "git-url") && (
-              <button className="svp-button" onClick={() => onEdit(app)}>
+              <button className="dio-button" onClick={() => onEdit(app)}>
                 <Wrench size={14} />
                 Edit
               </button>
             )}
-            <button className="svp-button" onClick={() => void onStop(app.id)}>
+            <button className="dio-button" onClick={() => void onStop(app.id)}>
               <Square size={14} />
               Stop
             </button>
-            <button className="svp-button-danger" onClick={() => void onAction(app.id, "delete")}>
+            <button className="dio-button-danger" onClick={() => void onAction(app.id, "delete")}>
               <Trash2 size={14} />
               Delete
             </button>
@@ -2521,12 +2521,12 @@ function DetectionReview({
                   {service.framework} - {service.mode} - {service.appDirectory || "repo root"} - port {service.containerPort}
                 </p>
               </div>
-              <span className="svp-badge">{service.serviceRole}</span>
+              <span className="dio-badge">{service.serviceRole}</span>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              <span className="svp-badge">{service.packageManager}</span>
-              {service.hasDockerfile && <span className="svp-badge">Dockerfile</span>}
-              {service.requiredEnv.length > 0 && <span className="svp-badge">{service.requiredEnv.length} env keys</span>}
+              <span className="dio-badge">{service.packageManager}</span>
+              {service.hasDockerfile && <span className="dio-badge">Dockerfile</span>}
+              {service.requiredEnv.length > 0 && <span className="dio-badge">{service.requiredEnv.length} env keys</span>}
             </div>
             {service.reasons.length > 0 && <p className="mt-2 text-xs text-zinc-500">{service.reasons.slice(0, 4).join(" - ")}</p>}
             {service.requiredEnv.length > 0 && <p className="mt-2 break-all text-xs text-zinc-600">Env: {service.requiredEnv.join(", ")}</p>}
@@ -2557,11 +2557,11 @@ function DeploymentList({ deployments, apps, onLogs, onDelete }: { deployments: 
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button className="svp-button" onClick={() => void onLogs(event.id)}>
+              <button className="dio-button" onClick={() => void onLogs(event.id)}>
                 <Terminal size={14} />
                 Logs
               </button>
-              <button className="svp-button-danger" onClick={() => void onDelete(event.id)}>
+              <button className="dio-button-danger" onClick={() => void onDelete(event.id)}>
                 <Trash2 size={14} />
                 Delete
               </button>
@@ -2604,28 +2604,28 @@ function DatabaseGrid({
             <StatusPill ok={["running", "reachable"].includes(database.status)} label={database.status} />
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button className="svp-button" onClick={() => void onAction(database.id, "test")}>
+            <button className="dio-button" onClick={() => void onAction(database.id, "test")}>
               <HeartPulse size={14} />
               Test
             </button>
-            <button className="svp-button" onClick={() => void onAction(database.id, "connection")}>
+            <button className="dio-button" onClick={() => void onAction(database.id, "connection")}>
               <KeyRound size={14} />
               Reveal URL
             </button>
-            <button className="svp-button-danger" onClick={() => void onDelete(database.id, false)}>
+            <button className="dio-button-danger" onClick={() => void onDelete(database.id, false)}>
               <Trash2 size={14} />
               Delete
             </button>
             {database.kind === "managed-postgres" && (
-              <button className="svp-button-danger" onClick={() => void onDelete(database.id, true)}>
+              <button className="dio-button-danger" onClick={() => void onDelete(database.id, true)}>
                 <Trash2 size={14} />
                 Delete + Volume
               </button>
             )}
           </div>
           <label className="mt-3 grid gap-1">
-            <span className="svp-label">Attach to service</span>
-            <select className="svp-input" value="" onChange={(event) => event.target.value && void onAttach(database.id, event.target.value)}>
+            <span className="dio-label">Attach to service</span>
+            <select className="dio-input" value="" onChange={(event) => event.target.value && void onAttach(database.id, event.target.value)}>
               <option value="">Choose service...</option>
               {apps
                 .filter((app) => !database.projectId || !app.projectId || app.projectId === database.projectId)
@@ -2643,8 +2643,8 @@ function DatabaseGrid({
 function Field({ label, value, onChange, placeholder, type = "text" }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string }) {
   return (
     <label className="grid gap-1">
-      <span className="svp-label">{label}</span>
-      <input className="svp-input" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type={type} />
+      <span className="dio-label">{label}</span>
+      <input className="dio-input" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type={type} />
     </label>
   );
 }
@@ -2652,8 +2652,8 @@ function Field({ label, value, onChange, placeholder, type = "text" }: { label: 
 function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }> }) {
   return (
     <label className="grid gap-1">
-      <span className="svp-label">{label}</span>
-      <select className="svp-input" value={value} onChange={(event) => onChange(event.target.value)}>
+      <span className="dio-label">{label}</span>
+      <select className="dio-input" value={value} onChange={(event) => onChange(event.target.value)}>
         {options.length === 0 && <option value="">Create a project first</option>}
         {options.map((option) => (
           <option key={option.value || option.label} value={option.value}>
@@ -2668,15 +2668,15 @@ function Select({ label, value, onChange, options }: { label: string; value: str
 function TextArea({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
   return (
     <label className="grid gap-1">
-      <span className="svp-label">{label}</span>
-      <textarea className="svp-input min-h-28 resize-y font-mono text-xs" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+      <span className="dio-label">{label}</span>
+      <textarea className="dio-input min-h-28 resize-y font-mono text-xs" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
     </label>
   );
 }
 
 function Panel({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: React.ReactNode }) {
   return (
-    <section className="svp-panel p-4">
+    <section className="dio-panel p-4">
       <div className="mb-4 flex items-center gap-2">
         <Icon className="text-zinc-300" size={18} />
         <h2 className="font-black text-ink">{title}</h2>
@@ -2688,10 +2688,10 @@ function Panel({ title, icon: Icon, children }: { title: string; icon: LucideIco
 
 function Metric({ label, value, detail, icon: Icon }: { label: string; value: number; detail: string; icon: LucideIcon }) {
   return (
-    <section className="svp-panel p-4">
+    <section className="dio-panel p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="svp-label">{label}</p>
+          <p className="dio-label">{label}</p>
           <p className="mt-2 text-3xl font-black text-ink">{value}</p>
           <p className="mt-1 break-all text-xs text-zinc-500">{detail}</p>
         </div>
@@ -2734,7 +2734,7 @@ function TabButton({ item, active, onClick }: { item: { id: Tab; label: string; 
 
 function Notice({ busy, notice }: { busy: string; notice: string }) {
   return (
-    <div className="svp-panel flex items-start gap-3 p-3">
+    <div className="dio-panel flex items-start gap-3 p-3">
       {busy ? <RefreshCw className="mt-0.5 animate-spin text-action" size={18} /> : <CheckCircle2 className="mt-0.5 text-action" size={18} />}
       <div>
         <p className="text-sm font-bold text-ink">{busy || "Status"}</p>
@@ -2747,7 +2747,7 @@ function Notice({ busy, notice }: { busy: string; notice: string }) {
 function Loading() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#050505] p-4 text-zinc-100">
-      <section className="svp-panel p-5">
+      <section className="dio-panel p-5">
         <Brand />
         <p className="text-sm text-zinc-500">Loading panel...</p>
       </section>
@@ -2758,7 +2758,7 @@ function Loading() {
 async function api<T>(url: string, options: { method?: string; body?: unknown; csrfToken?: string } = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (options.body) headers["Content-Type"] = "application/json";
-  if (options.csrfToken) headers["X-Supavibe-CSRF"] = options.csrfToken;
+  if (options.csrfToken) headers["X-Dockio-CSRF"] = options.csrfToken;
   const response = await fetch(url, {
     method: options.method || "GET",
     headers,
@@ -2820,7 +2820,7 @@ function previewImportMessage(status: Record<string, unknown> | null) {
   const preview = status?.previewDomains as { importConfigured?: boolean; message?: string; importLine?: string } | undefined;
   if (!preview) return "Refresh server status to check whether Caddy imports generated preview routes.";
   if (preview.importConfigured) return preview.message || "Caddy imports generated preview routes.";
-  return preview.message || `Missing Caddy import: ${preview.importLine || "import /etc/caddy/supavibe/sites/*.caddy"}`;
+  return preview.message || `Missing Caddy import: ${preview.importLine || "import /etc/caddy/dockio/sites/*.caddy"}`;
 }
 
 function roleOptions() {

@@ -84,7 +84,7 @@ export interface RepoAnalysis {
   warnings: string[];
 }
 
-const PREVIEW_IMPORT_LINE = "import /etc/caddy/supavibe/sites/*.caddy";
+const PREVIEW_IMPORT_LINE = "import /etc/caddy/dockio/sites/*.caddy";
 
 export async function createProject(input: { name: string; description?: string }) {
   const name = assertSafeAppName(input.name);
@@ -193,7 +193,7 @@ export async function analyzeGitRepo(input: { repoUrl: string; branch?: string; 
     try {
       fs.rmSync(cloneDir, { recursive: true, force: true });
     } catch {
-      // Temp cleanup is best effort; managed temp files are under SVP_DATA_DIR/tmp.
+      // Temp cleanup is best effort; managed temp files are under DIO_DATA_DIR/tmp.
     }
   }
 }
@@ -493,7 +493,7 @@ async function executeGitDeployment(input: {
     await safeRunForDeployment(deploymentId, "git clone", "git", ["clone", "--depth", "1", "--branch", branch, repoUrl, sourceDir]);
     appendDeploymentLog(deploymentId, "checking branch", "Repository cloned.");
     const commit = await safeRun("git", ["rev-parse", "--short", "HEAD"], sourceDir);
-    const image = "svp_" + app.id + ":" + Date.now();
+    const image = "dio_" + app.id + ":" + Date.now();
     const buildDir = appDirectory ? assertManagedPath(sourceDir, path.join(sourceDir, appDirectory)) : sourceDir;
     if (!fs.existsSync(buildDir)) throw new Error(`App directory ${appDirectory} was not found in the repository.`);
     appendDeploymentLog(deploymentId, "detecting app", appDirectory ? `Using app directory ${appDirectory}.` : "Using repository root.");
@@ -512,7 +512,7 @@ async function executeGitDeployment(input: {
     markApp(app.id, {
       status: "running",
       imageTag: image,
-      containerName: "svp_" + app.id,
+      containerName: "dio_" + app.id,
       commitSha: commit.ok ? commit.stdout.trim() : undefined,
       lastMessage: previewText
         ? `Git ${app.deployMode} app deployed from ${branch}. Preview: ${previewText}`
@@ -556,7 +556,7 @@ export async function deployComposeApp(input: { name: string; projectId?: string
     repoUrl,
     branch,
     deployMode: "compose",
-    composeProject: "svp_" + id,
+    composeProject: "dio_" + id,
     envKeys: env.keys,
     port: 0,
     status: "created",
@@ -629,7 +629,7 @@ export async function deployComposeYamlApp(input: { name: string; projectId?: st
     source: "compose",
     sourceType: "compose-yaml",
     deployMode: "compose",
-    composeProject: "svp_" + id,
+    composeProject: "dio_" + id,
     envKeys: env.keys,
     port: 0,
     status: "created",
@@ -730,7 +730,7 @@ export async function deployDockerImageApp(input: {
     const previewText = finalApp.previewUrl || (finalApp.publicPreview ? await previewUrlForPort(getPublicPreviewPort(finalApp)) : "");
     markApp(app.id, {
       status: "running",
-      containerName: "svp_" + app.id,
+      containerName: "dio_" + app.id,
       imageTag: image,
       lastMessage: previewText ? `Docker image is running. Preview: ${previewText}` : "Docker image is running on a localhost port."
     });
@@ -760,9 +760,9 @@ export async function configureDomain(input: { appId: string; domain: string }) 
     app.strategy === "static"
       ? domain + " {\n    encode gzip\n    root * " + rootDir + "\n    file_server\n}\n"
       : domain + " {\n    encode gzip\n    reverse_proxy 127.0.0.1:" + targetPort + "\n}\n";
-  const temp = await writeTemp("svp_" + app.id + ".caddy", content);
+  const temp = await writeTemp("dio_" + app.id + ".caddy", content);
   await safeRunOrThrow("sudo", ["mkdir", "-p", caddyDir]);
-  await safeRunOrThrow("sudo", ["install", "-m", "0644", "-o", "root", "-g", "root", temp, path.join(caddyDir, "svp_" + app.id + ".caddy")]);
+  await safeRunOrThrow("sudo", ["install", "-m", "0644", "-o", "root", "-g", "root", temp, path.join(caddyDir, "dio_" + app.id + ".caddy")]);
   const validation = await safeRun("sudo", ["caddy", "validate", "--config", "/etc/caddy/Caddyfile"]);
   if (!validation.ok) throw new Error("Caddy validation failed: " + (validation.stderr || validation.stdout));
   const reload = await safeRun("sudo", ["systemctl", "reload", "caddy"]);
@@ -974,16 +974,16 @@ export async function createManagedPostgres(input: { projectId?: string; name: s
   const dbSlug = uniqueSlug(state.databases.filter((database) => database.projectId === projectId).map((database) => database.slug || database.id), slug(name));
   const id = dbSlug + "-" + crypto.randomBytes(3).toString("hex");
   const localPort = await findOpenPort();
-  const username = "svp_" + crypto.randomBytes(3).toString("hex");
-  const database = "svp_" + crypto.randomBytes(3).toString("hex");
+  const username = "dio_" + crypto.randomBytes(3).toString("hex");
+  const database = "dio_" + crypto.randomBytes(3).toString("hex");
   const password = crypto.randomBytes(24).toString("base64url");
-  const volume = "svp_pg_" + id;
-  const container = "svp_pg_" + id;
+  const volume = "dio_pg_" + id;
+  const container = "dio_pg_" + id;
   const postgresEnvFile = writeSecretFile(
     id + "-postgres-env",
     [`POSTGRES_USER=${username}`, `POSTGRES_PASSWORD=${password}`, `POSTGRES_DB=${database}`].join("\n") + "\n"
   );
-  await safeRunOrThrow("docker", ["volume", "create", "--label", "supavibe=true", volume]);
+  await safeRunOrThrow("docker", ["volume", "create", "--label", "dockio=true", volume]);
   await ensureDockerNetwork();
   await safeRun("docker", ["rm", "-f", container]);
   try {
@@ -1001,17 +1001,17 @@ export async function createManagedPostgres(input: { projectId?: string; name: s
       "--pids-limit",
       "256",
       "--label",
-      "supavibe=true",
+      "dockio=true",
       "--label",
-      "supavibe.managed=true",
+      "dockio.managed=true",
       "--label",
-      "supavibe.project=" + (state.projects.find((project) => project.id === projectId)?.slug || "default"),
+      "dockio.project=" + (state.projects.find((project) => project.id === projectId)?.slug || "default"),
       "--label",
-      "supavibe.database=" + dbSlug,
+      "dockio.database=" + dbSlug,
       "--label",
-      "svp.databaseId=" + id,
+      "dockio.databaseId=" + id,
       "--network",
-      "supavibe",
+      "dockio",
       "--env-file",
       postgresEnvFile,
       "-v",
@@ -1063,7 +1063,7 @@ export async function createManagedRedis(input: { projectId?: string; name: stri
   if (projectId && !state.projects.some((project) => project.id === projectId)) throw new Error("Project not found.");
   const dbSlug = uniqueSlug(state.databases.filter((database) => database.projectId === projectId).map((database) => database.slug || database.id), slug(name));
   const id = dbSlug + "-" + crypto.randomBytes(3).toString("hex");
-  const container = "svp_redis_" + id;
+  const container = "dio_redis_" + id;
   await ensureDockerNetwork();
   await safeRun("docker", ["rm", "-f", container]);
   await safeRunOrThrow("docker", [
@@ -1080,17 +1080,17 @@ export async function createManagedRedis(input: { projectId?: string; name: stri
     "--pids-limit",
     "128",
     "--label",
-    "supavibe=true",
+    "dockio=true",
     "--label",
-    "supavibe.managed=true",
+    "dockio.managed=true",
     "--label",
-    "supavibe.project=" + (state.projects.find((project) => project.id === projectId)?.slug || "default"),
+    "dockio.project=" + (state.projects.find((project) => project.id === projectId)?.slug || "default"),
     "--label",
-    "supavibe.database=" + dbSlug,
+    "dockio.database=" + dbSlug,
     "--label",
-    "svp.databaseId=" + id,
+    "dockio.databaseId=" + id,
     "--network",
-    "supavibe",
+    "dockio",
     "redis:7-alpine"
   ]);
   const connectionUrl = `redis://${container}:6379`;
@@ -1112,7 +1112,7 @@ export async function createManagedRedis(input: { projectId?: string; name: stri
     dockerContainer: container,
     createdAt: now,
     updatedAt: now,
-    lastMessage: "Managed Redis is available inside the Supavibe Docker network."
+    lastMessage: "Managed Redis is available inside the Dockio Docker network."
   };
   updateState((next) => {
     next.databases.unshift(resource);
@@ -1165,7 +1165,7 @@ export async function testDatabase(databaseId: string) {
   const database = readState().databases.find((item) => item.id === id);
   if (!database) throw new Error("Database not found.");
   if (database.dockerContainer) {
-    const inspect = await safeRun("docker", ["inspect", "-f", "{{.State.Running}}", assertSupavibeDockerResource(database.dockerContainer)]);
+    const inspect = await safeRun("docker", ["inspect", "-f", "{{.State.Running}}", assertDockioDockerResource(database.dockerContainer)]);
     const ok = inspect.ok && inspect.stdout.trim() === "true";
     updateState((state) => {
       const current = state.databases.find((item) => item.id === id);
@@ -1436,7 +1436,7 @@ function humanPreviewDomainError(message: string) {
   if (message.includes("no new privileges") || message.includes("NoNewPrivileges")) {
     return [
       "The panel service is blocking sudo with NoNewPrivileges=true, so it cannot write/reload Caddy preview routes.",
-      "Update/re-run the installer, or set NoNewPrivileges=false in /etc/systemd/system/supavibe-panel.service and restart the panel."
+      "Update/re-run the installer, or set NoNewPrivileges=false in /etc/systemd/system/dockio-panel.service and restart the panel."
     ].join(" ");
   }
   return message;
@@ -1476,7 +1476,7 @@ function sleep(ms: number) {
 }
 
 async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: string) {
-  const container = "svp_" + app.id;
+  const container = "dio_" + app.id;
   const containerPort = app.deployMode === "static" ? 80 : assertContainerPort(app.internalPort || app.containerPort || 3000);
   const localProxyPort = assertSafePort(app.localProxyPort || app.port);
   const project = app.projectId ? readState().projects.find((item) => item.id === app.projectId) : undefined;
@@ -1500,17 +1500,17 @@ async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: 
     "--pids-limit",
     "256",
     "--label",
-    "supavibe=true",
+    "dockio=true",
     "--label",
-    "supavibe.managed=true",
+    "dockio.managed=true",
     "--label",
-    "supavibe.project=" + (project?.slug || "default"),
+    "dockio.project=" + (project?.slug || "default"),
     "--label",
-    "supavibe.service=" + (app.slug || slug(app.name)),
+    "dockio.service=" + (app.slug || slug(app.name)),
     "--label",
-    "svp.appId=" + app.id,
+    "dockio.appId=" + app.id,
     "--network",
-    "supavibe",
+    "dockio",
     "-p",
     "127.0.0.1:" + localProxyPort + ":" + containerPort
   ];
@@ -1543,7 +1543,7 @@ async function cleanupAppResources(app: ManagedApp) {
   if (app.containerName) await safeRun("docker", ["rm", "-f", assertSafeDockerName(app.containerName)]);
   if (app.imageTag) await safeRun("docker", ["image", "rm", assertSafeDockerImage(app.imageTag)]);
   if (app.domain) {
-    await safeRun("sudo", ["rm", "-f", path.join("/etc/caddy/conf.d", "svp_" + app.id + ".caddy")]);
+    await safeRun("sudo", ["rm", "-f", path.join("/etc/caddy/conf.d", "dio_" + app.id + ".caddy")]);
     await safeRun("sudo", ["systemctl", "reload", "caddy"]);
   }
   await removePreviewDomainRoute(app);
@@ -1558,11 +1558,11 @@ async function cleanupAppResources(app: ManagedApp) {
 
 async function cleanupDatabaseResource(database: DatabaseResource, deleteVolume = false) {
   if (database.kind === "managed-postgres") {
-    if (database.dockerContainer) await safeRun("docker", ["rm", "-f", assertSupavibeDockerResource(database.dockerContainer)]);
-    if (deleteVolume && database.dockerVolume) await safeRun("docker", ["volume", "rm", assertSupavibeDockerResource(database.dockerVolume)]);
+    if (database.dockerContainer) await safeRun("docker", ["rm", "-f", assertDockioDockerResource(database.dockerContainer)]);
+    if (deleteVolume && database.dockerVolume) await safeRun("docker", ["volume", "rm", assertDockioDockerResource(database.dockerVolume)]);
   }
   if (database.kind === "managed-redis" && database.dockerContainer) {
-    await safeRun("docker", ["rm", "-f", assertSupavibeDockerResource(database.dockerContainer)]);
+    await safeRun("docker", ["rm", "-f", assertDockioDockerResource(database.dockerContainer)]);
   }
   if (database.secretPath) {
     try {
@@ -1584,8 +1584,8 @@ function removeDeploymentFiles(deployments: Array<{ logsPath?: string }>) {
   }
 }
 
-function assertSupavibeDockerResource(value: string) {
-  if (!/^svp_[a-z0-9_-]{2,120}$/.test(value)) throw new Error("Managed Docker resource name is invalid.");
+function assertDockioDockerResource(value: string) {
+  if (!/^dio_[a-z0-9_-]{2,120}$/.test(value)) throw new Error("Managed Docker resource name is invalid.");
   return value;
 }
 
@@ -1964,9 +1964,9 @@ function uniqueSlug(existing: string[], base: string) {
 }
 
 async function ensureDockerNetwork() {
-  const inspect = await safeRun("docker", ["network", "inspect", "supavibe"]);
+  const inspect = await safeRun("docker", ["network", "inspect", "dockio"]);
   if (inspect.ok) return;
-  await safeRunOrThrow("docker", ["network", "create", "--label", "supavibe=true", "supavibe"]);
+  await safeRunOrThrow("docker", ["network", "create", "--label", "dockio=true", "dockio"]);
 }
 
 function writeSecretFile(name: string, content: string) {
@@ -2046,9 +2046,9 @@ function prepareDockerfile(sourceDir: string, appDir: string, mode: "dockerfile"
           "COPY . .",
           "RUN " + installCommand,
           "RUN " + buildCommand,
-          "RUN mkdir -p /app/.svp-static && if [ -d dist ]; then cp -a dist/. /app/.svp-static/; elif [ -d build ]; then cp -a build/. /app/.svp-static/; elif [ -d out ]; then cp -a out/. /app/.svp-static/; else echo 'No dist, build, or out directory found after build' && exit 1; fi",
+          "RUN mkdir -p /app/.dio-static && if [ -d dist ]; then cp -a dist/. /app/.dio-static/; elif [ -d build ]; then cp -a build/. /app/.dio-static/; elif [ -d out ]; then cp -a out/. /app/.dio-static/; else echo 'No dist, build, or out directory found after build' && exit 1; fi",
           "FROM nginx:1.27-alpine",
-          "COPY --from=builder /app/.svp-static /usr/share/nginx/html",
+          "COPY --from=builder /app/.dio-static /usr/share/nginx/html",
           "EXPOSE 80",
           "CMD [\"nginx\", \"-g\", \"daemon off;\"]",
           ""

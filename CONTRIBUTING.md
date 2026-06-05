@@ -1,6 +1,6 @@
-# Contributing To Supavibe Panel
+# Contributing To Dockio Panel
 
-Thanks for helping test and improve Supavibe Panel. This repository is a beta project, so clear bug reports and small focused fixes are especially valuable.
+Thanks for helping test and improve Dockio Panel. This repository is a beta project, so clear bug reports and small focused fixes are especially valuable.
 
 ## Before You Start
 
@@ -20,7 +20,7 @@ Requirements:
 ```bash
 corepack enable
 pnpm install
-SVP_DATA_DIR=.data-supavibe-panel pnpm dev
+DIO_DATA_DIR=.data-dockio-panel pnpm dev
 ```
 
 Open:
@@ -61,7 +61,7 @@ pnpm clean
 
 Please include:
 
-- Supavibe Panel version or commit SHA.
+- Dockio Panel version or commit SHA.
 - VPS OS and version.
 - Install method.
 - What you clicked or ran.

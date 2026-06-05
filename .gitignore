@@ -8,6 +8,6 @@ coverage/
 .env
 .env.local
 .DS_Store
-.data-supavibe-panel/
+.data-*/
 .data-local/
 .idea/
