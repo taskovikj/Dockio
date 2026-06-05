@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/taskovikj/supavibe-panel.git}"
+REPO_URL="${REPO_URL:-}"
 REPO_REF="${REPO_REF:-main}"
 WORK_DIR="${WORK_DIR:-}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run with sudo:"
-  echo "  curl -fsSL https://raw.githubusercontent.com/taskovikj/supavibe-panel/main/scripts/install-from-github.sh | sudo bash"
+  echo "  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install-from-github.sh | sudo env REPO_URL=https://github.com/<owner>/<repo>.git bash"
+  exit 1
+fi
+
+if [ -z "$REPO_URL" ]; then
+  echo "REPO_URL is required so forks and beta copies install from the intended repository."
+  echo "Example:"
+  echo "  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install-from-github.sh | sudo env REPO_URL=https://github.com/<owner>/<repo>.git bash"
   exit 1
 fi
 

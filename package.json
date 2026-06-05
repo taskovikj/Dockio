@@ -1,8 +1,10 @@
 {
   "name": "supavibe-panel",
   "version": "0.1.0",
+  "description": "Beta self-hosted VPS deployment panel for Git, Docker, Caddy, firewall, logs, and databases.",
   "private": false,
   "type": "module",
+  "license": "MIT",
   "packageManager": "pnpm@11.0.8",
   "scripts": {
     "dev": "next dev",
