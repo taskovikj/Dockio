@@ -502,6 +502,7 @@ async function executeGitDeployment(input: {
     await safeRunForDeployment(deploymentId, "docker build", "docker", ["build", "-t", image, "-f", dockerfile, buildDir]);
     appendDeploymentLog(deploymentId, "starting service", `Starting container on 127.0.0.1:${app.localProxyPort || app.port} for Caddy preview routing.`);
     await replaceDockerContainer(app, image, envFile);
+    markApp(app.id, { containerName: "dio_" + app.id, imageTag: image });
     await waitForAppHealth(app, deploymentId);
     await ensurePreviewDomain(app.id, deploymentId);
     if (app.publicPreview) {
@@ -567,15 +568,30 @@ export async function deployComposeApp(input: { name: string; projectId?: string
   updateState((state) => {
     state.apps.unshift(app);
   });
+  return executeComposeGitDeployment(app.id, env, "compose_deploy");
+}
+
+async function executeComposeGitDeployment(appId: string, env: ReturnType<typeof parseEnvText>, action: "compose_deploy" | "compose_redeploy") {
+  const app = getManagedApp(appId);
+  if (!app.repoUrl || !app.branch || !app.composeProject || !app.rootDir) throw new Error("Compose deployment settings are incomplete.");
+  const repoUrl = assertSafeGitRepo(app.repoUrl);
+  const branch = assertSafeBranch(app.branch || "main");
+  const appDir = assertManagedPath(getAppsDir(), app.rootDir);
+  const sourceDir = assertManagedPath(appDir, path.join(appDir, "source"));
+  fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
   const deploymentId = startDeployment({
     appId: app.id,
-    action: "compose_deploy",
-    message: `Deploying Compose stack ${name}.`,
+    action,
+    message: `${action === "compose_redeploy" ? "Redeploying" : "Deploying"} Compose stack ${app.name}.`,
     sourceType: "git-url",
     strategy: "compose",
     branch
   });
   try {
+    if (fs.existsSync(sourceDir)) {
+      appendDeploymentLog(deploymentId, "cleaning workspace", "Removing the previous Compose checkout.");
+      fs.rmSync(sourceDir, { recursive: true, force: true });
+    }
     appendDeploymentLog(deploymentId, "cloning repository", `${repoUrl} @ ${branch}`);
     await safeRunOrThrow("git", ["clone", "--depth", "1", "--branch", branch, repoUrl, sourceDir]);
     writeEnvFile(sourceDir, env.env);
@@ -591,8 +607,8 @@ export async function deployComposeApp(input: { name: string; projectId?: string
       commitSha: commit.ok ? commit.stdout.trim() : undefined,
       lastMessage: "Docker Compose stack is running. Review compose ports before exposing publicly."
     });
-    finishDeployment(deploymentId, "succeeded", `Compose stack ${name} deployed.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined });
-    audit("app.deploy_compose", "Compose stack deployed.", { appId: app.id, name, repoUrl, branch, envKeys: env.keys });
+    finishDeployment(deploymentId, "succeeded", `Compose stack ${app.name} deployed.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined });
+    audit("app.deploy_compose", "Compose stack deployed.", { appId: app.id, name: app.name, repoUrl, branch, envKeys: env.keys });
     return readState().apps.find((item) => item.id === app.id) || app;
   } catch (error) {
     const message = error instanceof Error ? redact(error.message) : "Compose deploy failed.";
@@ -714,13 +730,21 @@ export async function deployDockerImageApp(input: {
   updateState((state) => {
     state.apps.unshift(app);
   });
-  const deploymentId = startDeployment({ appId: app.id, action: "deploy_image", message: `Deploying Docker image ${image}.`, sourceType: "docker-image", strategy: "docker" });
+  return executeDockerImageDeployment(app.id, env, "deploy_image");
+}
+
+async function executeDockerImageDeployment(appId: string, env: ReturnType<typeof parseEnvText>, action: "deploy_image" | "redeploy_image") {
+  const app = getManagedApp(appId);
+  if (!app.dockerImage) throw new Error("Docker image settings are incomplete.");
+  const image = assertSafeDockerImage(app.dockerImage);
+  const deploymentId = startDeployment({ appId: app.id, action, message: `${action === "redeploy_image" ? "Redeploying" : "Deploying"} Docker image ${image}.`, sourceType: "docker-image", strategy: "docker" });
   try {
     const envFile = writeAppEnvFile(app, env.env, deploymentId);
     appendDeploymentLog(deploymentId, "pulling image", image);
     await safeRunOrThrow("docker", ["pull", image]);
     appendDeploymentLog(deploymentId, "starting service", `Starting container on 127.0.0.1:${app.localProxyPort || app.port}.`);
     await replaceDockerContainer(app, image, envFile);
+    markApp(app.id, { containerName: "dio_" + app.id, imageTag: image });
     await waitForAppHealth(app, deploymentId);
     await ensurePreviewDomain(app.id, deploymentId);
     if (app.publicPreview) {
@@ -735,7 +759,14 @@ export async function deployDockerImageApp(input: {
       lastMessage: previewText ? `Docker image is running. Preview: ${previewText}` : "Docker image is running on a localhost port."
     });
     finishDeployment(deploymentId, "succeeded", previewText ? `Docker image ${image} deployed. Preview: ${previewText}` : `Docker image ${image} deployed.`, { imageTag: image });
-    audit("app.deploy_image", "Docker image deployed.", { appId: app.id, name, image, publicPreview, previewDomainEnabled, envKeys: env.keys });
+    audit("app.deploy_image", "Docker image deployed.", {
+      appId: app.id,
+      name: app.name,
+      image,
+      publicPreview: finalApp.publicPreview,
+      previewDomainEnabled: finalApp.previewDomainEnabled,
+      envKeys: env.keys
+    });
     return readState().apps.find((item) => item.id === app.id) || app;
   } catch (error) {
     const message = error instanceof Error ? redact(error.message) : "Docker image deploy failed.";
@@ -911,22 +942,15 @@ export async function redeployApp(appId: string) {
     });
   }
   if (app.source === "compose" && app.repoUrl) {
-    await stopApp(app.id);
-    return deployComposeApp({ name: app.name, projectId: app.projectId, repoUrl: app.repoUrl, branch: app.branch });
+    markApp(app.id, { status: "created", lastMessage: "Compose redeploy queued." });
+    return executeComposeGitDeployment(app.id, parseEnvText(envText), "compose_redeploy");
   }
   if (app.sourceType === "docker-image" && app.dockerImage) {
-    await stopApp(app.id);
-    return deployDockerImageApp({
-      name: app.name,
-      projectId: app.projectId,
-      serviceRole: app.serviceRole,
-      image: app.dockerImage,
-      containerPort: app.containerPort || 3000,
-      healthPath: app.healthPath,
-      envText,
-      publicPreview: app.publicPreview,
-      previewDomainEnabled: app.previewDomainEnabled
-    });
+    if (app.publicPreview && !app.publicPreviewPort) {
+      markApp(app.id, { publicPreviewPort: await findOpenPort() });
+    }
+    markApp(app.id, { status: "created", lastMessage: "Docker image redeploy queued." });
+    return executeDockerImageDeployment(app.id, parseEnvText(envText), "redeploy_image");
   }
   throw new Error("Redeploy is available for Git, Compose repository, and Docker image apps only.");
 }
@@ -1491,6 +1515,7 @@ async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: 
     "unless-stopped",
     "--cap-drop",
     "ALL",
+    ...(containerPort < 1024 ? ["--cap-add", "NET_BIND_SERVICE"] : []),
     "--security-opt",
     "no-new-privileges",
     "--memory",
