@@ -79,10 +79,10 @@ The installer installs:
 Run this on a fresh Ubuntu/Debian VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/taskovikj/dockio-panel/main/scripts/install-from-github.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/taskovikj/supavibe-panel/main/scripts/install-from-github.sh | sudo bash
 ```
 
-This command assumes the GitHub repository has been renamed or published as `taskovikj/dockio-panel`.
+The product installs as Dockio Panel, but the current source repository is still `taskovikj/supavibe-panel`.
 
 The default panel port is:
 
@@ -111,7 +111,7 @@ If the panel port is public, create the admin account immediately and restrict a
 Example with the panel restricted to a VPN/private CIDR:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/taskovikj/dockio-panel/main/scripts/install-from-github.sh \
+curl -fsSL https://raw.githubusercontent.com/taskovikj/supavibe-panel/main/scripts/install-from-github.sh \
   | sudo env PANEL_PORT=3099 PANEL_HOST=0.0.0.0 TRUSTED_CIDR=100.64.0.0/10 bash
 ```
 
@@ -127,7 +127,7 @@ curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install
 ## Install From A Local Clone
 
 ```bash
-git clone https://github.com/taskovikj/dockio-panel.git dockio-panel
+git clone https://github.com/taskovikj/supavibe-panel.git dockio-panel
 cd dockio-panel
 sudo bash scripts/install.sh
 ```

@@ -34,7 +34,21 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-type Tab = "general" | "services" | "environment" | "database" | "monitoring" | "logs" | "deployments" | "domains" | "preview" | "advanced";
+type Tab =
+  | "dashboard"
+  | "projects"
+  | "general"
+  | "services"
+  | "environment"
+  | "database"
+  | "monitoring"
+  | "logs"
+  | "deployments"
+  | "domains"
+  | "preview"
+  | "advanced"
+  | "docker"
+  | "settings";
 type Strategy = "docker" | "systemd" | "static" | "compose";
 type GitMode = "dockerfile" | "node" | "static";
 type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
@@ -216,9 +230,9 @@ const projectTabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
   { id: "deployments", label: "Deployments", icon: Activity },
   { id: "logs", label: "Logs", icon: Terminal },
   { id: "monitoring", label: "Observability", icon: HeartPulse },
-  { id: "environment", label: "Environment Variables", icon: KeyRound },
+  { id: "environment", label: "Environment", icon: KeyRound },
   { id: "domains", label: "Domains", icon: Globe2 },
-  { id: "database", label: "Storage", icon: Database },
+  { id: "database", label: "Databases", icon: Database },
   { id: "advanced", label: "Settings", icon: Wrench }
 ];
 
@@ -233,7 +247,37 @@ const serviceTabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
   { id: "advanced", label: "Advanced", icon: Shield }
 ];
 
-const routeTabs = new Set<Tab>([...projectTabs, ...serviceTabs].map((item) => item.id));
+const globalSidebarGroups: Array<{ title: string; items: Array<{ id: Tab; label: string; icon: LucideIcon }> }> = [
+  {
+    title: "Overview",
+    items: [
+      { id: "dashboard", label: "Dashboard", icon: Home },
+      { id: "projects", label: "Projects", icon: Layers3 },
+      { id: "services", label: "Services", icon: Boxes },
+      { id: "deployments", label: "Deployments", icon: Activity },
+      { id: "logs", label: "Logs", icon: Terminal }
+    ]
+  },
+  {
+    title: "Infrastructure",
+    items: [
+      { id: "database", label: "Databases", icon: Database },
+      { id: "domains", label: "Domains", icon: Globe2 },
+      { id: "advanced", label: "Firewall", icon: Shield },
+      { id: "docker", label: "Docker", icon: HardDrive }
+    ]
+  },
+  {
+    title: "Server",
+    items: [
+      { id: "monitoring", label: "Server Status", icon: Server },
+      { id: "settings", label: "Settings", icon: Wrench }
+    ]
+  }
+];
+
+const globalTabs = new Set<Tab>(globalSidebarGroups.flatMap((group) => group.items.map((item) => item.id)));
+const routeTabs = new Set<Tab>([...globalTabs, ...projectTabs.map((item) => item.id), ...serviceTabs.map((item) => item.id)]);
 const deployProviders = new Set<DeployProvider>(["git", "image", "compose", "compose-yaml"]);
 const deploySteps = new Set<DeployStep>(["source", "details", "build", "runtime"]);
 
@@ -241,7 +285,7 @@ export function PanelShell() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [state, setState] = useState<StatePayload | null>(null);
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
-  const [tab, setTab] = useState<Tab>("general");
+  const [tab, setTab] = useState<Tab>("dashboard");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedServiceId, setSelectedServiceId] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
@@ -345,7 +389,7 @@ export function PanelShell() {
       const service = state.apps.find((app) => app.id === selectedServiceId);
       if (!service || (selectedProjectId && service.projectId && service.projectId !== selectedProjectId)) {
         setSelectedServiceId("");
-        setTab((current) => normalizeRouteTab(current, false));
+        setTab((current) => normalizeRouteTab(current, false, Boolean(selectedProjectId)));
       }
     }
   }, [state, selectedProjectId, selectedServiceId]);
@@ -402,7 +446,7 @@ export function PanelShell() {
     const nextServiceId = routeService && (!routeService.projectId || routeService.projectId === nextProjectId) ? routeService.id : "";
     setSelectedProjectId(nextProjectId);
     setSelectedServiceId(nextServiceId);
-    setTab(normalizeRouteTab(route.tab, Boolean(nextServiceId)));
+    setTab(normalizeRouteTab(route.tab, Boolean(nextServiceId), Boolean(nextProjectId)));
     if (route.deployProvider) setDeployProvider(route.deployProvider);
     if (route.deployStep) setDeployStep(route.deployStep);
     if (nextProjectId && nextProjectId !== selectedProjectId) syncProjectForms(nextProjectId);
@@ -557,10 +601,17 @@ export function PanelShell() {
     setLogs("");
   }
 
-  function showAllProjects() {
+  function openGlobalTab(nextTab: Tab) {
     setSelectedProjectId("");
     setSelectedServiceId("");
-    setTab("general");
+    setTab(globalTabs.has(nextTab) ? nextTab : "dashboard");
+    setLogs("");
+  }
+
+  function showAllProjects(nextTab: Tab = "dashboard") {
+    setSelectedProjectId("");
+    setSelectedServiceId("");
+    setTab(globalTabs.has(nextTab) ? nextTab : "dashboard");
     setLogs("");
   }
 
@@ -591,6 +642,19 @@ export function PanelShell() {
     setDeployProvider(provider);
     setDeployStep("source");
     setTab("deployments");
+  }
+
+  function startGlobalDeployment(provider: DeployProvider = deployProvider) {
+    const projectId = gitForm.projectId && allProjects.some((project) => project.id === gitForm.projectId) ? gitForm.projectId : allProjects[0]?.id;
+    if (!projectId) {
+      openGlobalTab("projects");
+      setNotice("Create a project first, then Dockio will open the guided deploy flow inside that project.");
+      return;
+    }
+    setSelectedProjectId(projectId);
+    setSelectedServiceId("");
+    syncProjectForms(projectId);
+    startDeployment(provider);
   }
 
   function editGitDeployment(app: ManagedApp) {
@@ -968,109 +1032,388 @@ export function PanelShell() {
   const activePreviewUrl = activeApp ? previewUrl(activeApp, vpsIp) : "";
   const visibleApps = selectedService ? [selectedService] : apps;
   const visibleDeployments = selectedService ? deployments.filter((deployment) => deployment.appId === selectedService.id) : deployments;
+  const runningApps = allApps.filter((app) => app.status === "running");
+  const failedApps = allApps.filter((app) => ["failed", "error", "stopped"].includes(app.status));
+  const serverHealthy = isOk(status?.docker) && isActive(status?.caddy);
+  const globalPage = globalPageMeta(tab);
 
   if (!currentProject) {
     return (
       <main className="min-h-screen bg-[#050505] text-zinc-100">
-        <div className="grid min-h-screen lg:grid-cols-[240px_1fr]">
-          <aside className="border-b border-line bg-[#050505] p-3 lg:border-b-0 lg:border-r">
-            <Brand compact />
-            <nav className="mt-5 grid gap-4">
-              <SidebarGroup title="Main">
-                <button className="dio-button justify-start bg-[#1b1b1e]" onClick={showAllProjects}>
-                  <Layers3 size={15} />
-                  Projects
-                </button>
-                <button className="dio-button justify-start" onClick={() => setNotice("Open a project to view deployment history.")}>
-                  <Activity size={15} />
-                  Deployments
-                </button>
-                <button className="dio-button justify-start" onClick={() => setNotice("Open a project/service to inspect logs.")}>
-                  <Terminal size={15} />
-                  Logs
-                </button>
-              </SidebarGroup>
-              <SidebarGroup title="Infrastructure">
-                <button className="dio-button justify-start" onClick={() => setNotice("Open a project, then Settings to manage UFW and server status.")}>
-                  <Shield size={15} />
-                  Firewall
-                </button>
-                <button className="dio-button justify-start" onClick={() => setNotice("Open a project, then Storage to create Postgres, Redis, or external DB records.")}>
-                  <Database size={15} />
-                  Storage
-                </button>
-              </SidebarGroup>
-            </nav>
-            <div className="mt-6 border-t border-line pt-4 text-xs text-zinc-500">
-              <p>Server IP</p>
-              <p className="mt-1 break-all text-zinc-300">{vpsIp || "checking"}</p>
-              <p className="mt-3">Signed in</p>
-              <p className="mt-1 truncate text-zinc-300">{auth.user?.email}</p>
-            </div>
-          </aside>
+        <div className="grid min-h-screen lg:grid-cols-[260px_1fr]">
+          <GlobalSidebar activeTab={tab} email={auth.user?.email || ""} vpsIp={vpsIp} onNavigate={openGlobalTab} onLogout={() => void logout()} />
 
           <section className="min-w-0">
-            <header className="border-b border-line px-4 py-3 md:px-6">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="text-xs font-bold text-zinc-500">Workspace</p>
-                  <h1 className="text-xl font-black text-ink">All Projects</h1>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button className="dio-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
-                    <RefreshCw size={15} />
-                    Refresh
-                  </button>
-                  <button className="dio-button" onClick={() => void logout()}>
-                    <Lock size={15} />
-                    Logout
-                  </button>
-                </div>
+            <GlobalPageHeader title={globalPage.title} subtitle={globalPage.subtitle}>
+              <div className="flex flex-wrap gap-2">
+                <button className="dio-button-primary" onClick={() => openGlobalTab("projects")}>
+                  <Layers3 size={15} />
+                  New Project
+                </button>
+                <button className="dio-button" onClick={() => startGlobalDeployment()} disabled={Boolean(busy)}>
+                  <PackagePlus size={15} />
+                  Deploy App
+                </button>
+                <button className="dio-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
+                  <RefreshCw size={15} />
+                  Refresh
+                </button>
+                <button className="dio-button" onClick={() => void logout()}>
+                  <Lock size={15} />
+                  Logout
+                </button>
               </div>
-            </header>
+            </GlobalPageHeader>
 
             <div className="mx-auto max-w-7xl space-y-5 px-4 py-5 md:px-6">
               {(notice || busy) && <Notice busy={busy} notice={notice} />}
 
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Metric label="Projects" value={allProjects.length} detail="Apps grouped by product" icon={Layers3} />
-                <Metric label="Services" value={allApps.length} detail="Frontend, API, workers" icon={Boxes} />
-                <Metric label="Databases" value={allDatabases.length} detail="Managed and external" icon={Database} />
-                <Metric label="Deployments" value={allDeployments.length} detail="Recent lifecycle events" icon={Activity} />
-              </div>
-
-              <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-                <Panel title="New Project" icon={Layers3}>
-                  <div className="grid gap-3">
-                    <Field label="Project name" value={projectForm.name} onChange={(name) => setProjectForm({ ...projectForm, name })} placeholder="my-product" />
-                    <Field label="Slug preview" value={uiSlug(projectForm.name)} onChange={() => undefined} placeholder="auto-generated" />
-                    <TextArea label="What will run here?" value={projectForm.description} onChange={(description) => setProjectForm({ ...projectForm, description })} placeholder="Frontend + API + Postgres, domains, env..." />
-                    <button className="dio-button-primary w-fit" onClick={() => void createProject()} disabled={Boolean(busy) || !projectForm.name.trim()}>
-                      <Layers3 size={16} />
-                      Create Project
-                    </button>
+              {tab === "dashboard" && (
+                <div className="space-y-5">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                    <Metric label="Projects" value={allProjects.length} detail="Grouped workspaces" icon={Layers3} />
+                    <Metric label="Services" value={allApps.length} detail="Apps and workers" icon={Boxes} />
+                    <Metric label="Running" value={runningApps.length} detail={failedApps.length ? `${failedApps.length} need attention` : "Healthy services"} icon={CheckCircle2} />
+                    <Metric label="Databases" value={allDatabases.length} detail="Postgres, Redis, external" icon={Database} />
+                    <Metric label="Deployments" value={allDeployments.length} detail="Recent activity" icon={Activity} />
+                    <Metric label="Server" value={serverHealthy ? 1 : 0} detail={serverHealthy ? "Docker and Caddy active" : "Check server status"} icon={Server} />
                   </div>
+
+                  <Panel title={allProjects.length ? "Workspace Snapshot" : "Start by deploying your first app"} icon={Play}>
+                    <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+                      <div>
+                        <p className="text-sm text-zinc-400">
+                          {allProjects.length
+                            ? `${allProjects.length} project${allProjects.length === 1 ? "" : "s"} active, ${runningApps.length} service${runningApps.length === 1 ? "" : "s"} running, and ${allDeployments[0] ? `last deployment ${allDeployments[0].status}` : "no deployments recorded yet"}.`
+                            : "Create a project, connect a public Git repo, confirm the detected stack, add env vars, and Dockio will give you a preview URL."}
+                        </p>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                          <ActionCard title="Deploy from Public Git" body="Paste a repo URL and let Dockio detect the stack." icon={GitBranch} onClick={() => startGlobalDeployment("git")} />
+                          <ActionCard title="Create Project" body="Group a frontend, API, databases, domains, and logs." icon={Layers3} onClick={() => openGlobalTab("projects")} />
+                          <ActionCard title="Add Database" body="Create Postgres/Redis or save an external URL." icon={Database} onClick={() => openGlobalTab("database")} />
+                          <ActionCard title="Add Domain" body="Route a custom domain through Caddy HTTPS." icon={Globe2} onClick={() => openGlobalTab("domains")} />
+                          <ActionCard title="View Logs" body="Load runtime or deployment logs for a service." icon={Terminal} onClick={() => openGlobalTab("logs")} />
+                        </div>
+                      </div>
+                      <ServerSnapshot status={status} vpsIp={vpsIp} dataDir={state?.dataDir || ""} />
+                    </div>
+                  </Panel>
+
+                  <div className="grid gap-5 xl:grid-cols-[1fr_0.95fr]">
+                    <Panel title="Recent Deployments" icon={Activity}>
+                      {allDeployments.length ? (
+                        <DeploymentList deployments={allDeployments} apps={allApps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
+                      ) : (
+                        <EmptyState title="No deployments yet" body="Deploy your first app from a public Git repo, Docker image, or Compose stack." actionLabel="Deploy App" onAction={() => startGlobalDeployment()} icon={PackagePlus} />
+                      )}
+                    </Panel>
+                    <Panel title="Running Services" icon={Boxes}>
+                      {runningApps.length ? (
+                        <AppGrid apps={runningApps.slice(0, 6)} projects={allProjects} databases={allDatabases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} onPreview={regeneratePreview} onEdit={editGitDeployment} onOpen={openService} />
+                      ) : (
+                        <EmptyState title="No running services" body="Deploy an app, then restart, redeploy, preview, and inspect logs from here." actionLabel="Deploy App" onAction={() => startGlobalDeployment()} icon={Play} />
+                      )}
+                    </Panel>
+                  </div>
+
+                  <Panel title="Projects Overview" icon={Layers3}>
+                    {allProjects.length ? (
+                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} onOpen={openProject} onDeploy={(projectId) => { openProject(projectId); startDeployment("git"); }} />
+                    ) : (
+                      <EmptyState title="No projects yet" body="Create one project to hold your app services, env vars, databases, domains, and deployment history." actionLabel="Create Project" onAction={() => openGlobalTab("projects")} icon={Layers3} />
+                    )}
+                  </Panel>
+                </div>
+              )}
+
+              {tab === "projects" && (
+                <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
+                  <section className="space-y-3">
+                    <input className="dio-input" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Search projects..." />
+                    <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} onOpen={openProject} onDeploy={(projectId) => { openProject(projectId); startDeployment("git"); }} />
+                  </section>
+                  <Panel title={allProjects.length ? "Create Project" : "No projects yet"} icon={Layers3}>
+                    <div className="grid gap-3">
+                      <Field label="Project name" value={projectForm.name} onChange={(name) => setProjectForm({ ...projectForm, name })} placeholder="my-product" />
+                      <Info title="Slug preview" body={uiSlug(projectForm.name)} />
+                      <TextArea label="Description optional" value={projectForm.description} onChange={(description) => setProjectForm({ ...projectForm, description })} placeholder="Frontend + API + database + domain" />
+                      <button className="dio-button-primary justify-center" onClick={() => void createProject()} disabled={Boolean(busy) || !projectForm.name.trim()}>
+                        <Layers3 size={16} />
+                        Create Project
+                      </button>
+                      <p className="text-xs text-zinc-500">After creation, Dockio opens the project workspace so you can add services and deploy.</p>
+                    </div>
+                  </Panel>
+                </div>
+              )}
+
+              {tab === "services" && (
+                <Panel title="All Services" icon={Boxes}>
+                  <AppGrid apps={allApps} projects={allProjects} databases={allDatabases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} onPreview={regeneratePreview} onEdit={editGitDeployment} onOpen={openService} />
                 </Panel>
+              )}
 
-                <section className="space-y-3">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <label className="min-w-0 flex-1">
-                      <span className="sr-only">Search projects</span>
-                      <input className="dio-input" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Search projects..." />
-                    </label>
-                    <button
-                      className="dio-button-primary"
-                      onClick={() => {
-                        setProjectForm({ name: "New Project", description: "" });
-                        setNotice("Fill the New Project form on the left, then create it to open the project.");
-                      }}
-                    >
-                      Add New
+              {tab === "deployments" && (
+                <Panel title="Deployments" icon={Activity}>
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    <button className="dio-button-primary" onClick={() => startGlobalDeployment("git")} disabled={Boolean(busy)}>
+                      <GitBranch size={15} />
+                      Deploy from Public Git
+                    </button>
+                    <button className="dio-button" onClick={() => startGlobalDeployment("image")} disabled={Boolean(busy)}>
+                      <Boxes size={15} />
+                      Deploy Docker Image
+                    </button>
+                    <button className="dio-button" onClick={() => startGlobalDeployment("compose")} disabled={Boolean(busy)}>
+                      <Layers3 size={15} />
+                      Deploy Compose
                     </button>
                   </div>
-                  <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} onOpen={openProject} />
-                </section>
-              </div>
+                  {allDeployments.length ? (
+                    <DeploymentList deployments={allDeployments} apps={allApps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
+                  ) : (
+                    <EmptyState title="No deployments yet" body="Choose a project and deploy an app. Build logs and deployment records appear here." actionLabel="Deploy App" onAction={() => startGlobalDeployment()} icon={PackagePlus} />
+                  )}
+                </Panel>
+              )}
+
+              {tab === "logs" && (
+                <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+                  <Panel title="Choose Service" icon={Server}>
+                    <div className="grid gap-2">
+                      {allApps.length === 0 && <EmptyState title="No services yet" body="Deploy an app first, then runtime logs will be available here." actionLabel="Deploy App" onAction={() => startGlobalDeployment()} icon={Terminal} />}
+                      {allApps.map((app) => (
+                        <button key={app.id} className="dio-button justify-start" onClick={() => void loadLogs(app.id)}>
+                          <Terminal size={14} />
+                          <span className="truncate">{projectName(allProjects, app.projectId)} / {app.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </Panel>
+                  <Panel title="Logs" icon={Terminal}>
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      {activeApp && (
+                        <button className="dio-button" onClick={() => void loadLogs(activeApp.id)} disabled={Boolean(busy)}>
+                          <RefreshCw size={14} />
+                          Refresh Logs
+                        </button>
+                      )}
+                      <button className="dio-button" onClick={() => void navigator.clipboard?.writeText(logs)} disabled={!logs}>
+                        <Copy size={14} />
+                        Copy
+                      </button>
+                      <button className="dio-button" onClick={() => setLogs("")} disabled={!logs}>
+                        Clear
+                      </button>
+                    </div>
+                    <pre className="dio-code min-h-96 overflow-auto rounded-md p-4 text-xs">{logs || "Choose a service to view runtime logs or open a deployment record to view build logs."}</pre>
+                  </Panel>
+                </div>
+              )}
+
+              {tab === "database" && (
+                <div className="space-y-4">
+                  <div className="grid gap-4 xl:grid-cols-3">
+                    <Panel title="Create Postgres" icon={Database}>
+                      <div className="grid gap-3">
+                        <Select label="Project" value={managedDbForm.projectId} onChange={(projectId) => setManagedDbForm({ ...managedDbForm, projectId })} options={allProjects.map((project) => ({ value: project.id, label: project.name }))} />
+                        <Field label="Database name" value={managedDbForm.name} onChange={(name) => setManagedDbForm({ ...managedDbForm, name })} />
+                        <Field label="Env key" value={managedDbForm.envKey} onChange={(envKey) => setManagedDbForm({ ...managedDbForm, envKey })} placeholder="DATABASE_URL" />
+                        <button className="dio-button-primary justify-center" onClick={() => void createManagedDatabase()} disabled={Boolean(busy) || !managedDbForm.projectId}>
+                          <Database size={16} />
+                          Create Postgres
+                        </button>
+                      </div>
+                    </Panel>
+                    <Panel title="Create Redis" icon={HardDrive}>
+                      <div className="grid gap-3">
+                        <Select label="Project" value={managedRedisForm.projectId} onChange={(projectId) => setManagedRedisForm({ ...managedRedisForm, projectId })} options={allProjects.map((project) => ({ value: project.id, label: project.name }))} />
+                        <Field label="Redis name" value={managedRedisForm.name} onChange={(name) => setManagedRedisForm({ ...managedRedisForm, name })} />
+                        <Field label="Env key" value={managedRedisForm.envKey} onChange={(envKey) => setManagedRedisForm({ ...managedRedisForm, envKey })} placeholder="REDIS_URL" />
+                        <button className="dio-button-primary justify-center" onClick={() => void createManagedRedis()} disabled={Boolean(busy) || !managedRedisForm.projectId}>
+                          <HardDrive size={16} />
+                          Create Redis
+                        </button>
+                      </div>
+                    </Panel>
+                    <Panel title="External Postgres" icon={Globe2}>
+                      <div className="grid gap-3">
+                        <Select label="Project" value={externalDbForm.projectId} onChange={(projectId) => setExternalDbForm({ ...externalDbForm, projectId })} options={allProjects.map((project) => ({ value: project.id, label: project.name }))} />
+                        <Field label="Name" value={externalDbForm.name} onChange={(name) => setExternalDbForm({ ...externalDbForm, name })} />
+                        <Field label="Env key" value={externalDbForm.envKey} onChange={(envKey) => setExternalDbForm({ ...externalDbForm, envKey })} placeholder="DATABASE_URL" />
+                        <TextArea label="Postgres URL" value={externalDbForm.url} onChange={(url) => setExternalDbForm({ ...externalDbForm, url })} placeholder="postgres://user:password@host:5432/db?sslmode=require" />
+                        <button className="dio-button-primary justify-center" onClick={() => void createExternalDatabase()} disabled={Boolean(busy) || !externalDbForm.projectId || !externalDbForm.url.trim()}>
+                          <KeyRound size={16} />
+                          Save External DB
+                        </button>
+                      </div>
+                    </Panel>
+                  </div>
+                  <Panel title="Database Resources" icon={Database}>
+                    <DatabaseGrid databases={allDatabases} projects={allProjects} apps={allApps} onAction={databaseAction} onAttach={attachDatabase} onDelete={deleteDatabaseResource} />
+                  </Panel>
+                </div>
+              )}
+
+              {tab === "domains" && (
+                <div className="space-y-4">
+                  <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+                    <Panel title="Add Domain" icon={Globe2}>
+                      <div className="grid gap-3">
+                        <label className="grid gap-1">
+                          <span className="dio-label">Service</span>
+                          <select className="dio-input" value={domainForm.appId} onChange={(event) => setDomainForm({ ...domainForm, appId: event.target.value })}>
+                            <option value="">Select service</option>
+                            {allApps.map((app) => (
+                              <option key={app.id} value={app.id}>{projectName(allProjects, app.projectId)} / {app.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <Field label="Domain" value={domainForm.domain} onChange={(domain) => setDomainForm({ ...domainForm, domain })} placeholder="app.example.com" />
+                        <button className="dio-button-primary justify-center" onClick={() => void configureAppDomain()} disabled={!domainForm.appId || !domainForm.domain || Boolean(busy)}>
+                          <Globe2 size={16} />
+                          Configure Caddy
+                        </button>
+                      </div>
+                    </Panel>
+                    <Panel title="DNS Requirement" icon={Shield}>
+                      <div className="space-y-3 text-sm text-zinc-400">
+                        <p>Point the domain to this VPS public IP, then configure Caddy. Caddy requests HTTPS automatically when DNS resolves.</p>
+                        <pre className="dio-code overflow-auto rounded-md p-3 text-xs">{`A     ${domainForm.domain || "app.example.com"} -> ${vpsIp || "YOUR_VPS_PUBLIC_IP"}\nAAAA  optional if this VPS has IPv6`}</pre>
+                      </div>
+                    </Panel>
+                  </div>
+                  <Panel title="Domains & Preview URLs" icon={Globe2}>
+                    <DomainGrid apps={allApps} projects={allProjects} vpsIp={vpsIp} onOpen={openService} onPreview={regeneratePreview} />
+                  </Panel>
+                </div>
+              )}
+
+              {tab === "advanced" && (
+                <div className="space-y-4">
+                  <Panel title="Firewall" icon={Shield}>
+                    <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
+                      <pre className="dio-code max-h-96 overflow-auto rounded-md p-3 text-xs">{commandOutputText(status?.ufw) || "UFW status is not available yet. Click Refresh after install."}</pre>
+                      <div className="grid content-start gap-3">
+                        <Info title="Safe default" body="Keep 80/443 public for apps. Restrict the panel port to your IP, VPN, or Tailscale CIDR whenever possible." />
+                        <button className="dio-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
+                          <RefreshCw size={16} />
+                          Refresh Firewall
+                        </button>
+                      </div>
+                    </div>
+                  </Panel>
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <Panel title="Apply Baseline" icon={Shield}>
+                      <div className="grid gap-3">
+                        <Field label="Panel port" value={firewallForm.panelPort} onChange={(panelPort) => setFirewallForm({ ...firewallForm, panelPort })} />
+                        <Field label="Trusted CIDR" value={firewallForm.trustedCidr} onChange={(trustedCidr) => setFirewallForm({ ...firewallForm, trustedCidr })} placeholder="100.64.0.0/10 or your IP/32" />
+                        <button className="dio-button-primary w-fit" onClick={() => void applyFirewall()} disabled={Boolean(busy)}>
+                          <Flame size={16} />
+                          Apply Baseline
+                        </button>
+                      </div>
+                    </Panel>
+                    <Panel title="Expose or Block Port" icon={Flame}>
+                      <div className="grid gap-3">
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <Select label="Action" value={firewallRuleForm.action} onChange={(action) => setFirewallRuleForm({ ...firewallRuleForm, action: action as "allow" | "deny" })} options={[{ value: "allow", label: "Allow" }, { value: "deny", label: "Deny" }]} />
+                          <Field label="Port" value={firewallRuleForm.port} onChange={(port) => setFirewallRuleForm({ ...firewallRuleForm, port })} placeholder="8080" />
+                          <Select label="Protocol" value={firewallRuleForm.protocol} onChange={(protocol) => setFirewallRuleForm({ ...firewallRuleForm, protocol: protocol as "tcp" | "udp" })} options={[{ value: "tcp", label: "TCP" }, { value: "udp", label: "UDP" }]} />
+                        </div>
+                        <Field label="Source CIDR optional" value={firewallRuleForm.sourceCidr} onChange={(sourceCidr) => setFirewallRuleForm({ ...firewallRuleForm, sourceCidr })} placeholder="100.64.0.0/10 or blank for public" />
+                        <button className={firewallRuleForm.action === "deny" ? "dio-button-danger w-fit" : "dio-button-primary w-fit"} onClick={() => void applyFirewallRule()} disabled={Boolean(busy)}>
+                          <Flame size={16} />
+                          Apply Rule
+                        </button>
+                        <div className="border-t border-line pt-3">
+                          <Field label="Delete numbered UFW rule" value={firewallDeleteForm.ruleNumber} onChange={(ruleNumber) => setFirewallDeleteForm({ ...firewallDeleteForm, ruleNumber })} placeholder="Run UFW status, then enter the number" />
+                          <button className="dio-button-danger mt-3 w-fit" onClick={() => void deleteFirewallRule()} disabled={Boolean(busy) || !firewallDeleteForm.ruleNumber.trim()}>
+                            <Trash2 size={16} />
+                            Delete Rule
+                          </button>
+                        </div>
+                      </div>
+                    </Panel>
+                  </div>
+                  <Panel title="Preview Domain Settings" icon={Eye}>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <Select label="Preview mode" value={previewSettingsForm.previewDomainMode} onChange={(previewDomainMode) => setPreviewSettingsForm({ ...previewSettingsForm, previewDomainMode: previewDomainMode as PreviewDomainMode })} options={[{ value: "sslip", label: "sslip.io zero-config" }, { value: "custom", label: "Custom wildcard domain" }, { value: "disabled", label: "Disabled" }]} />
+                      <Field label="Public server IPv4" value={previewSettingsForm.publicServerIp || ""} onChange={(publicServerIp) => setPreviewSettingsForm({ ...previewSettingsForm, publicServerIp })} placeholder={vpsIp || "95.217.10.20"} />
+                      <Field label="Custom preview base domain" value={previewSettingsForm.previewBaseDomain || ""} onChange={(previewBaseDomain) => setPreviewSettingsForm({ ...previewSettingsForm, previewBaseDomain })} placeholder="preview.example.com" />
+                      <button className="dio-button-primary self-end" onClick={() => void savePreviewSettings()} disabled={Boolean(busy)}>
+                        <Wrench size={16} />
+                        Save Preview
+                      </button>
+                    </div>
+                  </Panel>
+                </div>
+              )}
+
+              {tab === "docker" && (
+                <div className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={HardDrive} />
+                    <Metric label="Managed containers" value={allApps.filter((app) => app.containerName || app.composeProject).length + allDatabases.filter((database) => database.dockerContainer).length} detail="Dockio-labelled runtime resources" icon={Boxes} />
+                    <Metric label="Data dir" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
+                  </div>
+                  <Panel title="Managed Docker Resources" icon={Boxes}>
+                    <DockerResourceGrid apps={allApps} databases={allDatabases} projects={allProjects} />
+                  </Panel>
+                  <Panel title="Cleanup" icon={Trash2}>
+                    <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
+                      <p className="text-sm text-zinc-400">Prune unused Docker images and stopped containers. Running services and databases are not intentionally stopped by this action.</p>
+                      <button className="dio-button-danger" onClick={() => void pruneSystem()} disabled={Boolean(busy)}>
+                        <Trash2 size={16} />
+                        Docker Prune
+                      </button>
+                    </div>
+                  </Panel>
+                </div>
+              )}
+
+              {tab === "monitoring" && (
+                <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+                  <ServerSnapshot status={status} vpsIp={vpsIp} dataDir={state?.dataDir || ""} />
+                  <Panel title="Raw Server Status" icon={Activity}>
+                    <pre className="dio-code max-h-[620px] overflow-auto rounded-md p-4 text-xs">{JSON.stringify(status, null, 2)}</pre>
+                  </Panel>
+                </div>
+              )}
+
+              {tab === "settings" && (
+                <div className="space-y-4">
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <Panel title="Panel Runtime" icon={Settings}>
+                      <div className="grid gap-3">
+                        <Info title="Product" body="Dockio Panel self-hosted VPS dashboard" />
+                        <Info title="Data directory" body={state?.dataDir || "Not loaded yet"} />
+                        <Info title="Signed in as" body={auth.user?.email || "Unknown"} />
+                        <Info title="Public IP" body={vpsIp || "Detecting"} />
+                      </div>
+                    </Panel>
+                    <Panel title="Security Defaults" icon={Shield}>
+                      <div className="grid gap-3">
+                        <Info title="Panel auth" body="Admin login, CSRF checks, rate limits, secure headers, and same-origin checks are enabled." />
+                        <Info title="Public panel" body="If port 3099 is public, restrict it by firewall to your IP, VPN, or Tailscale CIDR." />
+                        <Info title="App ingress" body="Production apps should use Caddy on 80/443. Debug preview ports are explicit and optional." />
+                        <Info title="Secrets" body="Env values and database URLs are not exposed in normal dashboard state responses." />
+                      </div>
+                    </Panel>
+                  </div>
+                  <Panel title="Preview URL Defaults" icon={Eye}>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <Select label="Preview mode" value={previewSettingsForm.previewDomainMode} onChange={(previewDomainMode) => setPreviewSettingsForm({ ...previewSettingsForm, previewDomainMode: previewDomainMode as PreviewDomainMode })} options={[{ value: "sslip", label: "sslip.io zero-config" }, { value: "custom", label: "Custom wildcard domain" }, { value: "disabled", label: "Disabled" }]} />
+                      <Field label="Public server IPv4" value={previewSettingsForm.publicServerIp || ""} onChange={(publicServerIp) => setPreviewSettingsForm({ ...previewSettingsForm, publicServerIp })} placeholder={vpsIp || "95.217.10.20"} />
+                      <Field label="Custom preview base domain" value={previewSettingsForm.previewBaseDomain || ""} onChange={(previewBaseDomain) => setPreviewSettingsForm({ ...previewSettingsForm, previewBaseDomain })} placeholder="preview.example.com" />
+                      <button className="dio-button-primary self-end" onClick={() => void savePreviewSettings()} disabled={Boolean(busy)}>
+                        <Wrench size={16} />
+                        Save Preview
+                      </button>
+                    </div>
+                  </Panel>
+                </div>
+              )}
             </div>
           </section>
         </div>
@@ -1083,7 +1426,7 @@ export function PanelShell() {
       <div className="grid min-h-screen lg:grid-cols-[240px_1fr]">
         <aside className="border-b border-line bg-[#050505] p-3 lg:border-b-0 lg:border-r">
           <Brand compact />
-          <button className="dio-button mt-5 w-full justify-start" onClick={showAllProjects}>
+          <button className="dio-button mt-5 w-full justify-start" onClick={() => showAllProjects()}>
             <Home size={15} />
             Projects Home
           </button>
@@ -1121,7 +1464,7 @@ export function PanelShell() {
                 {apps.slice(0, 6).map((app) => (
                   <button key={app.id} className="rounded-md px-3 py-2 text-left text-sm font-bold text-zinc-400 hover:bg-panel hover:text-ink" onClick={() => openService(app)}>
                     <span className="block truncate">{app.name}</span>
-                    <span className="block truncate text-xs font-medium text-zinc-600">{app.serviceRole || "fullstack"} · {app.status}</span>
+                    <span className="block truncate text-xs font-medium text-zinc-600">{app.serviceRole || "fullstack"} - {app.status}</span>
                   </button>
                 ))}
               </div>
@@ -1148,7 +1491,7 @@ export function PanelShell() {
                 <h1 className="mt-1 truncate text-2xl font-black tracking-normal text-ink">{selectedService?.name || currentProject.name}</h1>
                 <p className="mt-1 max-w-3xl text-sm text-zinc-400">
                   {selectedService
-                    ? `${selectedService.serviceRole || "fullstack"} service · ${selectedService.sourceType || selectedService.source || selectedService.strategy} · ${selectedService.slug}`
+                    ? `${selectedService.serviceRole || "fullstack"} service - ${selectedService.sourceType || selectedService.source || selectedService.strategy} - ${selectedService.slug}`
                     : currentProject.description || "Project workspace for services, deploys, env, storage, domains, logs, firewall, and rollbacks."}
                 </p>
                 {selectedService && (
@@ -2167,11 +2510,208 @@ function Brand({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function GlobalSidebar({
+  activeTab,
+  email,
+  vpsIp,
+  onNavigate,
+  onLogout
+}: {
+  activeTab: Tab;
+  email: string;
+  vpsIp: string;
+  onNavigate: (tab: Tab) => void;
+  onLogout: () => void;
+}) {
+  return (
+    <aside className="border-b border-line bg-[#050505] p-3 lg:border-b-0 lg:border-r">
+      <Brand compact />
+      <nav className="mt-6 grid gap-5" aria-label="Main navigation">
+        {globalSidebarGroups.map((group) => (
+          <SidebarGroup key={group.title} title={group.title}>
+            {group.items.map((item) => (
+              <TabButton key={`${group.title}-${item.id}-${item.label}`} item={item} active={activeTab === item.id} onClick={() => onNavigate(item.id)} />
+            ))}
+          </SidebarGroup>
+        ))}
+      </nav>
+      <div className="mt-6 border-t border-line pt-4 text-xs text-zinc-500">
+        <p className="dio-label">Server</p>
+        <p className="mt-1 break-all text-zinc-300">{vpsIp || "detecting public IP"}</p>
+        <p className="dio-label mt-4">Account</p>
+        <p className="mt-1 truncate text-zinc-300">{email}</p>
+        <button className="dio-button mt-3 w-full justify-start" onClick={onLogout}>
+          <Lock size={15} />
+          Logout
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function GlobalPageHeader({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+  return (
+    <header className="border-b border-line bg-[#050505]/95 px-4 py-4 md:px-6">
+      <div className="mx-auto flex max-w-7xl flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="dio-label">Dockio Panel</p>
+          <h1 className="mt-1 text-2xl font-black tracking-normal text-ink">{title}</h1>
+          <p className="mt-1 max-w-3xl text-sm text-zinc-400">{subtitle}</p>
+        </div>
+        {children}
+      </div>
+    </header>
+  );
+}
+
 function SidebarGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="grid gap-1">
       <p className="px-2 text-[0.68rem] font-black uppercase tracking-wide text-zinc-600">{title}</p>
       {children}
+    </div>
+  );
+}
+
+function ActionCard({ title, body, icon: Icon, onClick }: { title: string; body: string; icon: LucideIcon; onClick: () => void }) {
+  return (
+    <button className="group min-h-32 rounded-md border border-line bg-panel p-3 text-left transition hover:border-action hover:bg-action/10" onClick={onClick}>
+      <Icon className="text-action" size={18} />
+      <p className="mt-3 font-black text-ink">{title}</p>
+      <p className="mt-1 text-xs leading-5 text-zinc-500">{body}</p>
+    </button>
+  );
+}
+
+function EmptyState({
+  title,
+  body,
+  actionLabel,
+  onAction,
+  icon: Icon
+}: {
+  title: string;
+  body: string;
+  actionLabel: string;
+  onAction: () => void;
+  icon: LucideIcon;
+}) {
+  return (
+    <div className="rounded-md border border-dashed border-line bg-[#050505] p-5 text-center">
+      <Icon className="mx-auto text-action" size={22} />
+      <p className="mt-3 font-black text-ink">{title}</p>
+      <p className="mx-auto mt-1 max-w-xl text-sm text-zinc-500">{body}</p>
+      <button className="dio-button-primary mt-4" onClick={onAction}>
+        <Icon size={15} />
+        {actionLabel}
+      </button>
+    </div>
+  );
+}
+
+function ServerSnapshot({ status, vpsIp, dataDir }: { status: Record<string, unknown> | null; vpsIp: string; dataDir: string }) {
+  return (
+    <Panel title="Server Snapshot" icon={Server}>
+      <div className="grid gap-3">
+        <Info title="VPS IP" body={vpsIp || "Detecting"} />
+        <Info title="Docker" body={outputLabel(status?.docker)} />
+        <Info title="Caddy" body={outputLabel(status?.caddy)} />
+        <Info title="Firewall" body={commandOutputText(status?.ufw) ? "UFW status available" : "Refresh to check UFW"} />
+        <Info title="Preview routes" body={previewImportMessage(status)} />
+        <Info title="Data directory" body={dataDir || "Not loaded yet"} />
+      </div>
+    </Panel>
+  );
+}
+
+function DomainGrid({
+  apps,
+  projects,
+  vpsIp,
+  onOpen,
+  onPreview
+}: {
+  apps: ManagedApp[];
+  projects: ProjectRecord[];
+  vpsIp: string;
+  onOpen: (app: ManagedApp, tab?: Tab) => void;
+  onPreview: (id: string) => Promise<void>;
+}) {
+  if (apps.length === 0) {
+    return <p className="text-sm text-zinc-500">Deploy an app first, then add a custom domain or generate an automatic preview URL.</p>;
+  }
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      {apps.map((app) => {
+        const appPreview = previewUrl(app, vpsIp);
+        return (
+          <article key={app.id} className="rounded-md border border-line bg-panel p-3">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div className="min-w-0">
+                <p className="font-bold text-ink">{app.name}</p>
+                <p className="text-xs text-zinc-500">{projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"}</p>
+                {app.domain ? <a className="mt-2 block break-all text-sm font-bold text-action" href={`https://${app.domain}`} target="_blank" rel="noreferrer">https://{app.domain}</a> : <p className="mt-2 text-sm text-zinc-500">No custom domain</p>}
+                {appPreview ? <a className="mt-1 block break-all text-sm font-bold text-action" href={appPreview} target="_blank" rel="noreferrer">{appPreview}</a> : <p className="mt-1 text-sm text-zinc-500">No preview URL</p>}
+              </div>
+              <StatusPill ok={app.previewDomainStatus === "active" || Boolean(app.domain)} label={app.domain ? "custom" : app.previewDomainStatus || "no route"} />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button className="dio-button" onClick={() => onOpen(app, "domains")}>
+                <Settings size={14} />
+                Manage
+              </button>
+              {appPreview ? (
+                <a className="dio-button-primary" href={appPreview} target="_blank" rel="noreferrer">
+                  <ExternalLink size={14} />
+                  Open Preview
+                </a>
+              ) : app.status === "running" ? (
+                <button className="dio-button-primary" onClick={() => void onPreview(app.id)}>
+                  <RefreshCw size={14} />
+                  Generate Preview
+                </button>
+              ) : null}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function DockerResourceGrid({ apps, databases, projects }: { apps: ManagedApp[]; databases: DatabaseResource[]; projects: ProjectRecord[] }) {
+  const appResources = apps.filter((app) => app.containerName || app.composeProject || app.imageTag);
+  const databaseResources = databases.filter((database) => database.dockerContainer || database.dockerVolume);
+  if (appResources.length === 0 && databaseResources.length === 0) {
+    return <p className="text-sm text-zinc-500">No managed Docker resources yet. Deploy a service or create a database to see containers here.</p>;
+  }
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      {appResources.map((app) => (
+        <article key={app.id} className="rounded-md border border-line bg-panel p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate font-bold text-ink">{app.name}</p>
+              <p className="text-xs text-zinc-500">{projectName(projects, app.projectId)} - {app.strategy}</p>
+              <p className="mt-1 break-all text-xs text-zinc-600">{app.containerName || app.composeProject || "no container name"}</p>
+              {app.imageTag && <p className="mt-1 break-all text-xs text-zinc-600">image {app.imageTag}</p>}
+            </div>
+            <StatusPill ok={app.status === "running"} label={app.status} />
+          </div>
+        </article>
+      ))}
+      {databaseResources.map((database) => (
+        <article key={database.id} className="rounded-md border border-line bg-panel p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate font-bold text-ink">{database.name}</p>
+              <p className="text-xs text-zinc-500">{projectName(projects, database.projectId)} - {database.kind}</p>
+              <p className="mt-1 break-all text-xs text-zinc-600">{database.dockerContainer || "no container"} / {database.dockerVolume || "no volume"}</p>
+            </div>
+            <StatusPill ok={["running", "reachable"].includes(database.status)} label={database.status} />
+          </div>
+        </article>
+      ))}
     </div>
   );
 }
@@ -2224,15 +2764,17 @@ function UrlCard({
 
 function DeploymentSteps({ active }: { active: DeployStep }) {
   const items: Array<{ id: DeployStep; label: string }> = [
-    { id: "source", label: "Source" },
-    { id: "details", label: "Details" },
+    { id: "source", label: "Type" },
+    { id: "details", label: "Basics" },
+    { id: "details", label: "Source" },
     { id: "build", label: "Build" },
-    { id: "runtime", label: "Runtime" }
+    { id: "runtime", label: "Env & Preview" },
+    { id: "runtime", label: "Deploy" }
   ];
   return (
-    <div className="mb-5 grid gap-2 md:grid-cols-4">
+    <div className="mb-5 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
       {items.map((item, index) => (
-        <div key={item.id} className={`rounded-md border p-3 text-sm ${active === item.id ? "border-action bg-action/10 text-ink" : "border-line bg-panel text-zinc-500"}`}>
+        <div key={`${item.id}-${item.label}`} className={`rounded-md border p-3 text-sm ${active === item.id ? "border-action bg-action/10 text-ink" : "border-line bg-panel text-zinc-500"}`}>
           <span className="dio-badge mr-2">{index + 1}</span>
           {item.label}
         </div>
@@ -2290,13 +2832,15 @@ function ProjectCards({
   apps,
   databases,
   deployments,
-  onOpen
+  onOpen,
+  onDeploy
 }: {
   projects: ProjectRecord[];
   apps: ManagedApp[];
   databases: DatabaseResource[];
   deployments: DeploymentEvent[];
   onOpen: (projectId: string) => void;
+  onDeploy?: (projectId: string) => void;
 }) {
   if (projects.length === 0) {
     return <p className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">No projects match that search. Create a project to group its services, domains, databases, logs, and deploy history.</p>;
@@ -2312,7 +2856,7 @@ function ProjectCards({
         const primaryDomain = projectApps.find((app) => app.domain)?.domain;
         const runningCount = projectApps.filter((app) => app.status === "running").length;
         return (
-          <button key={project.id} className="rounded-md border border-line bg-panel p-4 text-left transition hover:border-zinc-600 hover:bg-[#161618]" onClick={() => onOpen(project.id)}>
+          <article key={project.id} className="rounded-md border border-line bg-panel p-4 transition hover:border-zinc-600 hover:bg-[#161618]">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate text-base font-black text-ink">{project.name}</p>
@@ -2329,9 +2873,21 @@ function ProjectCards({
             </div>
             <div className="mt-4 grid gap-1 text-xs text-zinc-500">
               <p>{lastDeployment ? `${lastDeployment.action}: ${lastDeployment.message}` : "Open project to manage its services, storage, domains, and logs."}</p>
-              <p>Created {new Date(project.createdAt).toLocaleDateString()} · Updated {new Date(project.updatedAt).toLocaleDateString()}</p>
+              <p>Created {new Date(project.createdAt).toLocaleDateString()} - Updated {new Date(project.updatedAt).toLocaleDateString()}</p>
             </div>
-          </button>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button className="dio-button-primary" onClick={() => onOpen(project.id)}>
+                <ExternalLink size={14} />
+                Open
+              </button>
+              {onDeploy && (
+                <button className="dio-button" onClick={() => onDeploy(project.id)}>
+                  <PackagePlus size={14} />
+                  Deploy App
+                </button>
+              )}
+            </div>
+          </article>
         );
       })}
     </div>
@@ -2553,7 +3109,7 @@ function DeploymentList({ deployments, apps, onLogs, onDelete }: { deployments: 
               </p>
               <p className="text-xs text-zinc-600">
                 Started {new Date(event.startedAt || event.createdAt).toLocaleString()}
-                {event.finishedAt ? ` · Finished ${new Date(event.finishedAt).toLocaleString()}` : ""}
+                {event.finishedAt ? ` - Finished ${new Date(event.finishedAt).toLocaleString()}` : ""}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -2855,6 +3411,20 @@ function mergeEnvText(existing: string, additions: string[]) {
   return `${current}\n${next}`;
 }
 
+function globalPageMeta(tab: Tab) {
+  if (tab === "projects") return { title: "Projects", subtitle: "Apps grouped by product or workspace. Open a project to manage its services, databases, domains, and logs." };
+  if (tab === "services") return { title: "Services", subtitle: "All deployed services across projects, with quick access to logs, previews, restart, redeploy, and settings." };
+  if (tab === "deployments") return { title: "Deployments", subtitle: "Manual deploy history and build logs for public Git, Docker image, and Compose deployments." };
+  if (tab === "logs") return { title: "Logs", subtitle: "Choose a service to view recent runtime logs or open a deployment record for build logs." };
+  if (tab === "database") return { title: "Databases", subtitle: "Create managed Postgres or Redis, save external Postgres connections, and attach resources to services." };
+  if (tab === "domains") return { title: "Domains", subtitle: "Manage custom domains and automatic preview URLs served by Caddy on this VPS." };
+  if (tab === "advanced") return { title: "Firewall", subtitle: "Review UFW, apply a safe baseline, expose or block ports, and configure preview-domain routing." };
+  if (tab === "docker") return { title: "Docker", subtitle: "Inspect Dockio-managed containers, images, database volumes, and run safe cleanup." };
+  if (tab === "monitoring") return { title: "Server Status", subtitle: "Docker, Caddy, firewall, preview routing, and raw VPS status checks." };
+  if (tab === "settings") return { title: "Settings", subtitle: "Panel runtime, security defaults, install paths, and preview URL defaults." };
+  return { title: "Dashboard", subtitle: "Manage apps, databases, domains, deployments, logs, and firewall settings on this VPS." };
+}
+
 function buildPanelRouteHash(route: {
   selectedProjectId: string;
   selectedServiceId: string;
@@ -2887,8 +3457,9 @@ function parsePanelRouteHash(hash: string) {
   };
 }
 
-function normalizeRouteTab(tab: Tab | undefined, serviceSelected: boolean): Tab {
-  if (!tab) return "general";
+function normalizeRouteTab(tab: Tab | undefined, serviceSelected: boolean, projectSelected: boolean): Tab {
+  if (!tab) return projectSelected ? "general" : "dashboard";
+  if (!projectSelected) return globalTabs.has(tab) ? tab : "dashboard";
   const allowedTabs = serviceSelected ? serviceTabs : projectTabs;
   return allowedTabs.some((item) => item.id === tab) ? tab : "general";
 }
