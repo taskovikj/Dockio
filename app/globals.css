@@ -106,6 +106,7 @@ button {
   padding: 0.4rem 0.62rem;
   font-size: 0.78rem;
   font-weight: 760;
+  white-space: nowrap;
   transition:
     background 140ms ease,
     border-color 140ms ease,
@@ -131,6 +132,7 @@ button {
   padding: 0.42rem 0.7rem;
   font-size: 0.78rem;
   font-weight: 800;
+  white-space: nowrap;
   transition:
     background 140ms ease,
     border-color 140ms ease,
@@ -157,6 +159,13 @@ button {
   padding: 0.4rem 0.62rem;
   font-size: 0.78rem;
   font-weight: 800;
+  white-space: nowrap;
+}
+
+.dio-button svg,
+.dio-button-primary svg,
+.dio-button-danger svg {
+  flex: 0 0 auto;
 }
 
 .dio-button:disabled,

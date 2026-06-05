@@ -1051,6 +1051,9 @@ export function PanelShell() {
   const activePreviewUrl = activeApp ? previewUrl(activeApp, vpsIp) : "";
   const visibleApps = selectedService ? [selectedService] : apps;
   const visibleDeployments = selectedService ? deployments.filter((deployment) => deployment.appId === selectedService.id) : deployments;
+  const projectPreviewItems = apps
+    .map((app) => ({ app, url: app.domain ? `https://${app.domain}` : previewUrl(app, vpsIp) }))
+    .filter((item) => Boolean(item.url));
   const runningApps = allApps.filter((app) => app.status === "running");
   const failedApps = allApps.filter((app) => ["failed", "error", "stopped"].includes(app.status));
   const serverHealthy = isOk(status?.docker) && isActive(status?.caddy);
@@ -1137,7 +1140,7 @@ export function PanelShell() {
 
                   <Panel title="Projects Overview" icon={Layers3}>
                     {allProjects.length ? (
-                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} onOpen={openProject} onDeploy={(projectId) => { openProject(projectId); startDeployment("git"); }} />
+                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => { openProject(projectId); startDeployment("git"); }} />
                     ) : (
                       <EmptyState title="No projects yet" body="Create one project to hold your app services, env vars, databases, domains, and deployment history." actionLabel="Create Project" onAction={() => openGlobalTab("projects")} icon={Layers3} />
                     )}
@@ -1149,7 +1152,7 @@ export function PanelShell() {
                 <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
                   <section className="space-y-3">
                     <input className="dio-input" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Search projects..." />
-                    <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} onOpen={openProject} onDeploy={(projectId) => { openProject(projectId); startDeployment("git"); }} />
+                    <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => { openProject(projectId); startDeployment("git"); }} />
                   </section>
                   <Panel title={allProjects.length ? "Create Project" : "No projects yet"} icon={Layers3}>
                     <div className="grid gap-3">
@@ -1197,14 +1200,14 @@ export function PanelShell() {
               )}
 
               {tab === "logs" && (
-                <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+                <div className="grid gap-4 xl:grid-cols-[minmax(240px,300px)_minmax(0,1fr)]">
                   <Panel title="Choose Service" icon={Server}>
-                    <div className="grid gap-2">
+                    <div className="grid max-h-[calc(100vh-250px)] gap-2 overflow-auto pr-1">
                       {allApps.length === 0 && <EmptyState title="No services yet" body="Deploy an app first, then runtime logs will be available here." actionLabel="Deploy App" onAction={() => startGlobalDeployment()} icon={Terminal} />}
                       {allApps.map((app) => (
-                        <button key={app.id} className={`dio-button justify-start ${logsAppId === app.id ? "border-action bg-action/10 text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
+                        <button key={app.id} className={`dio-button min-w-0 justify-start ${logsAppId === app.id ? "border-action bg-action/10 text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
                           <Terminal size={14} />
-                          <span className="truncate">{projectName(allProjects, app.projectId)} / {app.name}</span>
+                          <span className="min-w-0 truncate">{projectName(allProjects, app.projectId)} / {app.name}</span>
                         </button>
                       ))}
                     </div>
@@ -1225,7 +1228,7 @@ export function PanelShell() {
                         Clear
                       </button>
                     </div>
-                    <pre className="dio-code min-h-96 overflow-auto rounded-md p-4 text-xs">{logs || "Choose a service to view runtime logs or open a deployment record to view build logs."}</pre>
+                    <pre className="dio-code h-[calc(100vh-295px)] min-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-md p-4 text-xs">{logs || "Choose a service to view runtime logs or open a deployment record to view build logs."}</pre>
                   </Panel>
                 </div>
               )}
@@ -1443,7 +1446,7 @@ export function PanelShell() {
   return (
     <main className="min-h-screen bg-[#050505] text-zinc-100">
       <div className="grid min-h-screen lg:grid-cols-[240px_1fr]">
-        <aside className="border-b border-line bg-[#050505] p-3 lg:border-b-0 lg:border-r">
+        <aside className="overflow-x-hidden border-b border-line bg-[#050505] p-3 lg:border-b-0 lg:border-r">
           <Brand compact />
           <button className="dio-button mt-5 w-full justify-start" onClick={() => showAllProjects()}>
             <Home size={15} />
@@ -1481,9 +1484,9 @@ export function PanelShell() {
               <p className="dio-label">Services</p>
               <div className="mt-2 grid gap-1">
                 {apps.slice(0, 6).map((app) => (
-                  <button key={app.id} className="rounded-md px-3 py-2 text-left text-sm font-bold text-zinc-400 hover:bg-panel hover:text-ink" onClick={() => openService(app)}>
-                    <span className="block truncate">{app.name}</span>
-                    <span className="block truncate text-xs font-medium text-zinc-600">{app.serviceRole || "fullstack"} - {app.status}</span>
+                  <button key={app.id} className="w-full min-w-0 rounded-md px-3 py-2 text-left text-sm font-bold text-zinc-400 hover:bg-panel hover:text-ink" onClick={() => openService(app)}>
+                    <span className="block max-w-full truncate">{app.name}</span>
+                    <span className="block max-w-full truncate text-xs font-medium text-zinc-600">{app.serviceRole || "fullstack"} - {app.status}</span>
                   </button>
                 ))}
               </div>
@@ -1689,6 +1692,12 @@ export function PanelShell() {
                 )}
               </div>
             </Panel>
+
+            {projectPreviewItems.length > 0 && (
+              <Panel title="Project Preview Links" icon={Globe2}>
+                <ProjectPreviewLinks items={projectPreviewItems} onOpen={openService} />
+              </Panel>
+            )}
 
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <Metric label="Services" value={apps.length} detail="Frontend, API, workers" icon={Boxes} />
@@ -2017,14 +2026,14 @@ export function PanelShell() {
         )}
 
         {tab === "logs" && (
-          <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(240px,300px)_minmax(0,1fr)]">
             <Panel title="Services" icon={Server}>
-              <div className="grid gap-2">
+              <div className="grid max-h-[calc(100vh-250px)] gap-2 overflow-auto pr-1">
                 {visibleApps.length === 0 && <p className="text-sm text-zinc-500">Deploy an app first, then logs appear here.</p>}
                 {visibleApps.map((app) => (
-                  <button key={app.id} className={`dio-button justify-start ${logsAppId === app.id ? "border-action bg-action/10 text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
+                  <button key={app.id} className={`dio-button min-w-0 justify-start ${logsAppId === app.id ? "border-action bg-action/10 text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
                     <Terminal size={14} />
-                    {app.name}
+                    <span className="min-w-0 truncate">{app.name}</span>
                   </button>
                 ))}
               </div>
@@ -2045,7 +2054,7 @@ export function PanelShell() {
                   Clear
                 </button>
               </div>
-              <pre className="dio-code min-h-96 overflow-auto rounded-md p-4 text-xs">{logs || (selectedService ? "Loading recent logs for this service..." : "Select a service to load recent logs.")}</pre>
+              <pre className="dio-code h-[calc(100vh-295px)] min-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-md p-4 text-xs">{logs || (selectedService ? "Loading recent logs for this service..." : "Select a service to load recent logs.")}</pre>
             </Panel>
           </div>
         )}
@@ -2846,11 +2855,40 @@ function SecurityBanner({ status }: { status: Record<string, unknown> | null }) 
   );
 }
 
+function ProjectPreviewLinks({ items, onOpen }: { items: Array<{ app: ManagedApp; url: string }>; onOpen: (app: ManagedApp, tab?: Tab) => void }) {
+  return (
+    <div className="grid gap-2 md:grid-cols-2">
+      {items.map(({ app, url }) => (
+        <div key={app.id} className="grid gap-3 rounded-md border border-line bg-[#171322] p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="max-w-full truncate font-black text-ink">{app.name}</p>
+              <StatusPill ok={app.status === "running"} label={app.status} />
+            </div>
+            <a className="mt-1 block max-w-full truncate text-sm font-bold text-action hover:underline" href={url} target="_blank" rel="noreferrer">{url}</a>
+          </div>
+          <div className="flex flex-wrap gap-2 md:justify-end">
+            <a className="dio-button-primary" href={url} target="_blank" rel="noreferrer">
+              <ExternalLink size={14} />
+              Open
+            </a>
+            <button className="dio-button" onClick={() => onOpen(app, "general")}>
+              <Settings size={14} />
+              Manage
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ProjectCards({
   projects,
   apps,
   databases,
   deployments,
+  vpsIp,
   onOpen,
   onDeploy
 }: {
@@ -2858,6 +2896,7 @@ function ProjectCards({
   apps: ManagedApp[];
   databases: DatabaseResource[];
   deployments: DeploymentEvent[];
+  vpsIp: string;
   onOpen: (projectId: string) => void;
   onDeploy?: (projectId: string) => void;
 }) {
@@ -2873,9 +2912,17 @@ function ProjectCards({
         const projectAppIds = new Set(projectApps.map((app) => app.id));
         const lastDeployment = deployments.find((deployment) => projectAppIds.has(deployment.appId));
         const primaryDomain = projectApps.find((app) => app.domain)?.domain;
+        const previewItems = projectApps
+          .map((app) => ({ app, url: app.domain ? `https://${app.domain}` : previewUrl(app, vpsIp) }))
+          .filter((item) => Boolean(item.url));
+        const primaryPreview = previewItems[0];
         const runningCount = projectApps.filter((app) => app.status === "running").length;
         return (
-          <article key={project.id} className="rounded-md border border-line bg-panel p-4 transition hover:border-zinc-600 hover:bg-[#161618]">
+          <article
+            key={project.id}
+            className="cursor-pointer rounded-md border border-line bg-panel p-4 text-left transition hover:border-zinc-600 hover:bg-[#161618]"
+            onClick={() => onOpen(project.id)}
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate text-base font-black text-ink">{project.name}</p>
@@ -2891,16 +2938,30 @@ function ProjectCards({
               <span className="dio-badge">slug {project.slug}</span>
             </div>
             <div className="mt-4 grid gap-1 text-xs text-zinc-500">
-              <p>{lastDeployment ? `${lastDeployment.action}: ${lastDeployment.message}` : "Open project to manage its services, storage, domains, and logs."}</p>
+              {primaryPreview ? (
+                <a className="block max-w-full truncate font-bold text-action hover:underline" href={primaryPreview.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                  Preview {primaryPreview.url}
+                </a>
+              ) : (
+                <p>No preview URL yet.</p>
+              )}
+              {previewItems.length > 1 && <p>{previewItems.length} active preview/domain links in this project.</p>}
+              <p className="line-clamp-2 break-words">{lastDeployment ? `${lastDeployment.action}: ${lastDeployment.message}` : "Open project to manage its services, storage, domains, and logs."}</p>
               <p>Created {new Date(project.createdAt).toLocaleDateString()} - Updated {new Date(project.updatedAt).toLocaleDateString()}</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <button className="dio-button-primary" onClick={() => onOpen(project.id)}>
+              <button className="dio-button-primary" onClick={(event) => { event.stopPropagation(); onOpen(project.id); }}>
                 <ExternalLink size={14} />
                 Open
               </button>
+              {primaryPreview && (
+                <a className="dio-button" href={primaryPreview.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                  <Globe2 size={14} />
+                  Preview
+                </a>
+              )}
               {onDeploy && (
-                <button className="dio-button" onClick={() => onDeploy(project.id)}>
+                <button className="dio-button" onClick={(event) => { event.stopPropagation(); onDeploy(project.id); }}>
                   <PackagePlus size={14} />
                   Deploy App
                 </button>
@@ -2962,30 +3023,35 @@ function AppGrid({
 }) {
   if (apps.length === 0) return <p className="text-sm text-zinc-500">No services yet. Deploy a public Git repository from the Deployments tab.</p>;
   return (
-    <div className="grid gap-3 lg:grid-cols-2">
+    <div className="grid gap-3 2xl:grid-cols-2">
       {apps.map((app) => {
         const appPreview = previewUrl(app, vpsIp);
         return (
         <article key={app.id} className="rounded-md border border-line bg-panel p-3 transition hover:border-zinc-600">
-          <div className="flex items-start justify-between gap-3">
+          <div className="grid gap-2">
             <div className="min-w-0">
-              <button className="truncate text-left font-bold text-ink hover:underline" onClick={() => onOpen(app)}>{app.name}</button>
-              <p className="text-xs text-zinc-500">
-                {projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"} - {app.deployMode || app.strategy} {app.sourceType || app.source ? `- ${app.sourceType || app.source}` : ""} {app.localProxyPort || app.port ? `- 127.0.0.1:${app.localProxyPort || app.port}` : ""}
+              <button className="block max-w-full truncate text-left font-bold text-ink hover:underline" onClick={() => onOpen(app)}>{app.name}</button>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <StatusPill ok={app.status === "running"} label={app.status} />
+                <span className="dio-badge">{app.serviceRole || "fullstack"}</span>
+                <span className="dio-badge">{app.deployMode || app.strategy}</span>
+              </div>
+              <p className="mt-2 line-clamp-2 break-words text-xs text-zinc-500">
+                {projectName(projects, app.projectId)} - {app.sourceType || app.source || "manual"}
+                {app.localProxyPort || app.port ? ` - 127.0.0.1:${app.localProxyPort || app.port}` : ""}
                 {app.internalPort || app.containerPort ? ` -> :${app.internalPort || app.containerPort}` : ""}
               </p>
-              {app.repoUrl && <p className="mt-1 truncate text-xs text-zinc-600">{app.repoUrl} {app.branch ? `@ ${app.branch}` : ""}</p>}
-              {app.appDirectory && <p className="mt-1 truncate text-xs text-zinc-600">directory {app.appDirectory}</p>}
-              {app.dockerImage && <p className="mt-1 truncate text-xs text-zinc-600">image {app.dockerImage}</p>}
+              {app.repoUrl && <p className="mt-1 max-w-full truncate text-xs text-zinc-600">{app.repoUrl} {app.branch ? `@ ${app.branch}` : ""}</p>}
+              {app.appDirectory && <p className="mt-1 max-w-full truncate text-xs text-zinc-600">directory {app.appDirectory}</p>}
+              {app.dockerImage && <p className="mt-1 max-w-full truncate text-xs text-zinc-600">image {app.dockerImage}</p>}
               {app.commitSha && <p className="mt-1 text-xs text-zinc-600">commit {app.commitSha}</p>}
-              {app.domain && <a className="mt-1 block break-all text-xs font-bold text-action" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>}
-              {appPreview && <a className="mt-1 block break-all text-xs font-bold text-action" href={appPreview} target="_blank" rel="noreferrer">Preview {appPreview}</a>}
-              {app.previewDomainStatus === "error" && <p className="mt-1 break-words text-xs text-yellow-300">Preview error: {app.previewDomainError}</p>}
+              {app.domain && <a className="mt-2 block max-w-full truncate text-xs font-bold text-action hover:underline" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>}
+              {appPreview && <a className="mt-1 block max-w-full truncate text-xs font-bold text-action hover:underline" href={appPreview} target="_blank" rel="noreferrer">Preview {appPreview}</a>}
+              {app.previewDomainStatus === "error" && <p className="mt-2 line-clamp-3 break-words text-xs text-yellow-300">Preview error: {app.previewDomainError}</p>}
               {app.databaseId && <p className="mt-1 text-xs text-zinc-600">db {databaseName(databases, app.databaseId)}</p>}
             </div>
-            <StatusPill ok={app.status === "running"} label={app.status} />
           </div>
-          {app.lastMessage && <p className="mt-2 text-xs text-zinc-500">{app.lastMessage}</p>}
+          {app.lastMessage && <p className="mt-2 line-clamp-3 break-words text-xs text-zinc-500">{app.lastMessage}</p>}
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="dio-button" onClick={() => void onLogs(app.id)}>
               <Terminal size={14} />
@@ -3119,10 +3185,10 @@ function DeploymentList({ deployments, apps, onLogs, onDelete }: { deployments: 
       {deployments.slice(0, 8).map((event) => {
         const app = apps.find((item) => item.id === event.appId);
         return (
-          <div key={event.id} className="flex flex-col gap-1 rounded-md border border-line bg-panel p-3 text-sm md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="font-bold text-ink">{app?.name || event.appId} - {event.action}</p>
-              <p className="text-zinc-400">{event.message}</p>
+          <div key={event.id} className="grid gap-3 rounded-md border border-line bg-panel p-3 text-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+            <div className="min-w-0">
+              <p className="truncate font-bold text-ink">{app?.name || event.appId} - {event.action}</p>
+              <p className="mt-1 line-clamp-2 break-words text-zinc-400">{event.message}</p>
               <p className="text-xs text-zinc-600">
                 {[event.sourceType, event.strategy, event.branch ? `branch ${event.branch}` : "", event.commitSha ? `commit ${event.commitSha}` : ""].filter(Boolean).join(" - ")}
               </p>
@@ -3131,7 +3197,7 @@ function DeploymentList({ deployments, apps, onLogs, onDelete }: { deployments: 
                 {event.finishedAt ? ` - Finished ${new Date(event.finishedAt).toLocaleString()}` : ""}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 md:justify-end">
               <button className="dio-button" onClick={() => void onLogs(event.id)}>
                 <Terminal size={14} />
                 Logs

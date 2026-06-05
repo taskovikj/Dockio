@@ -1484,8 +1484,21 @@ async function waitForAppHealth(app: ManagedApp, deploymentId: string) {
     }
     await sleep(1000);
   }
+  await appendContainerDiagnostics(app.id, deploymentId);
   appendDeploymentLog(deploymentId, "health check failed", lastMessage);
   throw new UserFacingError(`Service started, but health check failed at ${pathName} on port ${safePort}: ${redact(lastMessage)}`, 500);
+}
+
+async function appendContainerDiagnostics(appId: string, deploymentId: string) {
+  const current = readState().apps.find((item) => item.id === appId);
+  if (!current?.containerName) return;
+  const container = assertSafeDockerName(current.containerName);
+  const inspect = await safeRun("docker", ["inspect", "--format", "status={{.State.Status}} restarting={{.State.Restarting}} exit={{.State.ExitCode}} error={{.State.Error}}", container]);
+  appendDeploymentLog(deploymentId, "container status", inspect.stdout || inspect.stderr || "Container status unavailable.");
+  const ports = await safeRun("docker", ["port", container]);
+  appendDeploymentLog(deploymentId, "container ports", ports.stdout || ports.stderr || "No Docker port output.");
+  const logs = await safeRun("docker", ["logs", "--tail", "80", container]);
+  appendDeploymentLog(deploymentId, "container logs", logs.stdout || logs.stderr || "No recent container logs.");
 }
 
 async function fetchLocalHealth(port: number, pathName: string, timeoutMs = 5000) {
@@ -1515,7 +1528,7 @@ async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: 
     "unless-stopped",
     "--cap-drop",
     "ALL",
-    ...(containerPort < 1024 ? ["--cap-add", "NET_BIND_SERVICE"] : []),
+    ...containerRuntimeCaps(containerPort),
     "--security-opt",
     "no-new-privileges",
     "--memory",
@@ -1545,6 +1558,20 @@ async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: 
   if (envFile) args.push("--env-file", envFile);
   args.push(image);
   await safeRunOrThrow("docker", args);
+}
+
+function containerRuntimeCaps(containerPort: number) {
+  if (containerPort >= 1024) return [];
+  return [
+    "--cap-add",
+    "NET_BIND_SERVICE",
+    "--cap-add",
+    "CHOWN",
+    "--cap-add",
+    "SETUID",
+    "--cap-add",
+    "SETGID"
+  ];
 }
 
 function markApp(appId: string, patch: Partial<ManagedApp>) {
