@@ -72,28 +72,24 @@ The installer installs:
 - pnpm through Corepack
 - Supavibe Panel systemd service
 
-## Install From A GitHub Repo
+## Quick Install
 
-Fork or publish this repository, then run the installer on a test VPS.
-
-Use your own repository URL:
+Run this on a fresh Ubuntu/Debian VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install-from-github.sh \
-  | sudo env REPO_URL=https://github.com/<owner>/<repo>.git bash
+curl -fsSL https://raw.githubusercontent.com/taskovikj/supavibe-panel/main/scripts/install-from-github.sh | sudo bash
 ```
 
-Example with a private/VPN-restricted panel port:
+The default panel port is:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install-from-github.sh \
-  | sudo env REPO_URL=https://github.com/<owner>/<repo>.git PANEL_PORT=3111 PANEL_HOST=0.0.0.0 TRUSTED_CIDR=100.64.0.0/10 bash
+```txt
+3099
 ```
 
 Then open:
 
 ```txt
-http://YOUR_SERVER_IP:3111
+http://YOUR_SERVER_IP:3099
 ```
 
 The installer prints a first-admin setup code and stores it in:
@@ -104,7 +100,35 @@ The installer prints a first-admin setup code and stores it in:
 
 Use that code on the first screen to create the admin account.
 
+If the panel port is public, create the admin account immediately and restrict access in **Firewall & Server**.
+
+## Install With A Custom Port Or VPN CIDR
+
+Example with the panel restricted to a VPN/private CIDR:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/taskovikj/supavibe-panel/main/scripts/install-from-github.sh \
+  | sudo env PANEL_PORT=3099 PANEL_HOST=0.0.0.0 TRUSTED_CIDR=100.64.0.0/10 bash
+```
+
+## Install A Fork
+
+If you fork this beta and want the installer to pull your fork, pass `REPO_URL`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install-from-github.sh \
+  | sudo env REPO_URL=https://github.com/<owner>/<repo>.git bash
+```
+
 ## Install From A Local Clone
+
+```bash
+git clone https://github.com/taskovikj/supavibe-panel.git supavibe-panel
+cd supavibe-panel
+sudo bash scripts/install.sh
+```
+
+For a fork:
 
 ```bash
 git clone https://github.com/<owner>/<repo>.git supavibe-panel
@@ -112,7 +136,7 @@ cd supavibe-panel
 sudo bash scripts/install.sh
 ```
 
-Useful installer variables:
+Useful installer variables for local/manual installs:
 
 ```bash
 sudo PANEL_PORT=3099 PANEL_HOST=0.0.0.0 TRUSTED_CIDR=100.64.0.0/10 bash scripts/install.sh
