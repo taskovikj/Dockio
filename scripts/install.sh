@@ -29,7 +29,7 @@ SETUP_TOKEN="${SVP_SETUP_TOKEN:-$(node -e 'console.log(require("crypto").randomB
 id "$RUN_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /bin/bash "$RUN_USER"
 usermod -aG docker "$RUN_USER" || true
 
-mkdir -p "$APP_DIR" "$DATA_DIR" "$ENV_DIR" /etc/caddy/conf.d
+mkdir -p "$APP_DIR" "$DATA_DIR" "$ENV_DIR" /etc/caddy/conf.d /etc/caddy/supavibe/sites
 chown -R "$RUN_USER:$RUN_USER" "$(dirname "$APP_DIR")" "$DATA_DIR"
 
 if [ "$(pwd)" != "$APP_DIR" ]; then
@@ -39,6 +39,9 @@ fi
 
 if ! grep -q 'import /etc/caddy/conf.d/\*.caddy' /etc/caddy/Caddyfile 2>/dev/null; then
   printf '\nimport /etc/caddy/conf.d/*.caddy\n' >> /etc/caddy/Caddyfile
+fi
+if ! grep -q 'import /etc/caddy/supavibe/sites/\*.caddy' /etc/caddy/Caddyfile 2>/dev/null; then
+  printf '\nimport /etc/caddy/supavibe/sites/*.caddy\n' >> /etc/caddy/Caddyfile
 fi
 
 cat > "$ENV_DIR/panel.env" <<EOF
@@ -58,9 +61,9 @@ chmod 640 "$ENV_DIR/panel.env"
 cat > /etc/sudoers.d/supavibe-panel <<EOF
 $RUN_USER ALL=(root) NOPASSWD: /usr/sbin/ufw status, /usr/sbin/ufw status *, /usr/sbin/ufw allow *, /usr/sbin/ufw deny *, /usr/sbin/ufw --force delete *, /usr/sbin/ufw --force enable
 $RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload, /bin/systemctl daemon-reload, /usr/bin/systemctl reload caddy, /bin/systemctl reload caddy, /usr/bin/systemctl enable --now svp-*.service, /bin/systemctl enable --now svp-*.service, /usr/bin/systemctl restart svp-*.service, /bin/systemctl restart svp-*.service, /usr/bin/systemctl disable --now svp-*.service, /bin/systemctl disable --now svp-*.service
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/install -m 0644 -o root -g root * /etc/caddy/conf.d/svp_*.caddy, /usr/bin/install -m 0644 -o root -g root * /etc/systemd/system/svp-*.service
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/mkdir -p /etc/caddy/conf.d, /bin/mkdir -p /etc/caddy/conf.d
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/rm -f /etc/caddy/conf.d/svp_*.caddy, /bin/rm -f /etc/caddy/conf.d/svp_*.caddy
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/install -m 0644 -o root -g root * /etc/caddy/conf.d/svp_*.caddy, /usr/bin/install -m 0644 -o root -g root * /etc/caddy/supavibe/sites/preview-*.caddy, /usr/bin/install -m 0644 -o root -g root * /etc/systemd/system/svp-*.service
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/mkdir -p /etc/caddy/conf.d, /bin/mkdir -p /etc/caddy/conf.d, /usr/bin/mkdir -p /etc/caddy/supavibe/sites, /bin/mkdir -p /etc/caddy/supavibe/sites
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/rm -f /etc/caddy/conf.d/svp_*.caddy, /bin/rm -f /etc/caddy/conf.d/svp_*.caddy, /usr/bin/rm -f /etc/caddy/supavibe/sites/preview-*.caddy, /bin/rm -f /etc/caddy/supavibe/sites/preview-*.caddy
 $RUN_USER ALL=(root) NOPASSWD: /usr/bin/caddy validate --config /etc/caddy/Caddyfile, /usr/sbin/caddy validate --config /etc/caddy/Caddyfile
 EOF
 chmod 440 /etc/sudoers.d/supavibe-panel
@@ -86,7 +89,7 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
-ReadWritePaths=$DATA_DIR /etc/caddy/conf.d /etc/systemd/system
+ReadWritePaths=$DATA_DIR /etc/caddy/conf.d /etc/caddy/supavibe/sites /etc/systemd/system
 
 [Install]
 WantedBy=multi-user.target

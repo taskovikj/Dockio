@@ -40,6 +40,18 @@ type GitMode = "dockerfile" | "node" | "static";
 type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
 type DeployProvider = "git" | "image" | "compose" | "compose-yaml";
 type DeployStep = "source" | "details" | "build" | "runtime";
+type PreviewDomainMode = "sslip" | "custom" | "disabled";
+
+interface PanelSettings {
+  publicServerIp?: string;
+  previewDomainMode: PreviewDomainMode;
+  previewBaseDomain?: string;
+  autoPreviewDomainsEnabled: boolean;
+  caddySitesDir: string;
+  caddyMainConfig: string;
+  localProxyPortRangeStart: number;
+  localProxyPortRangeEnd: number;
+}
 
 interface AuthState {
   setupRequired: boolean;
@@ -67,6 +79,16 @@ interface ManagedApp {
   publicPreview?: boolean;
   previewUrl?: string;
   portBind?: "localhost" | "public";
+  internalPort?: number;
+  localProxyPort?: number;
+  publicPreviewPort?: number;
+  previewDomainEnabled?: boolean;
+  previewDomainHostname?: string;
+  previewDomainStatus?: "disabled" | "pending" | "active" | "error";
+  previewDomainError?: string;
+  previewDomainMode?: "sslip" | "custom";
+  previewCaddyFile?: string;
+  previewCaddyReloadStatus?: string;
   commitSha?: string;
   deployMode?: GitMode | "compose";
   buildCommand?: string;
@@ -172,6 +194,7 @@ interface RepoAnalysis {
 
 interface StatePayload {
   setupRequired: boolean;
+  settings: PanelSettings;
   projects: ProjectRecord[];
   apps: ManagedApp[];
   databases: DatabaseResource[];
@@ -242,11 +265,22 @@ export function PanelShell() {
     envText: "",
     corsOrigins: [] as string[],
     databaseId: "",
-    publicPreview: true
+    previewDomainEnabled: true,
+    publicPreview: false
   });
-  const [imageForm, setImageForm] = useState({ name: "Docker Image App", projectId: "", serviceRole: "fullstack" as ServiceRole, image: "nginx:1.27-alpine", containerPort: "80", healthPath: "/", envText: "", publicPreview: false });
+  const [imageForm, setImageForm] = useState({ name: "Docker Image App", projectId: "", serviceRole: "fullstack" as ServiceRole, image: "nginx:1.27-alpine", containerPort: "80", healthPath: "/", envText: "", previewDomainEnabled: true, publicPreview: false });
   const [composeForm, setComposeForm] = useState({ name: "Compose Stack", projectId: "", repoUrl: "", branch: "main", envText: "" });
   const [composeYamlForm, setComposeYamlForm] = useState({ name: "Pasted Compose Stack", projectId: "", composeYaml: "services:\n  web:\n    image: nginx:1.27-alpine\n    restart: unless-stopped\n", envText: "" });
+  const [previewSettingsForm, setPreviewSettingsForm] = useState<PanelSettings>({
+    publicServerIp: "",
+    previewDomainMode: "sslip",
+    previewBaseDomain: "",
+    autoPreviewDomainsEnabled: true,
+    caddySitesDir: "/etc/caddy/supavibe/sites",
+    caddyMainConfig: "/etc/caddy/Caddyfile",
+    localProxyPortRangeStart: 31000,
+    localProxyPortRangeEnd: 39999
+  });
   const [domainForm, setDomainForm] = useState({ appId: "", domain: "" });
   const [firewallForm, setFirewallForm] = useState({ panelPort: "3099", trustedCidr: "100.64.0.0/10" });
   const [firewallRuleForm, setFirewallRuleForm] = useState({ action: "allow" as "allow" | "deny", port: "8080", protocol: "tcp" as "tcp" | "udp", sourceCidr: "" });
@@ -280,6 +314,7 @@ export function PanelShell() {
     ]);
     setState(nextState);
     setStatus(nextStatus);
+    setPreviewSettingsForm(nextState.settings);
     const defaultApp = selectedProjectId ? nextState.apps.find((app) => app.projectId === selectedProjectId) : nextState.apps[0];
     setDomainForm((form) => ({
       ...form,
@@ -351,7 +386,8 @@ export function PanelShell() {
         body: { ...gitForm, projectId: selectedProjectId || gitForm.projectId }
       });
       setDomainForm((form) => ({ ...form, appId: result.app.id }));
-      setNotice(result.app.publicPreview ? `${result.app.name} ${editingAppId ? "redeployed" : "deployed"}. Preview: ${previewUrl(result.app, publicIp(status))}` : `${result.app.name} ${editingAppId ? "redeployed" : "deployed"} from ${gitForm.branch}.`);
+      const url = previewUrl(result.app, publicIp(status));
+      setNotice(url ? `${result.app.name} ${editingAppId ? "redeployed" : "deployed"}. Preview: ${url}` : `${result.app.name} ${editingAppId ? "redeployed" : "deployed"} from ${gitForm.branch}.`);
       setEditingAppId("");
       await refresh();
       setDeployStep("runtime");
@@ -397,7 +433,8 @@ export function PanelShell() {
         body: { ...imageForm, projectId: selectedProjectId || imageForm.projectId, containerPort: Number(imageForm.containerPort) }
       });
       setDomainForm((form) => ({ ...form, appId: result.app.id }));
-      setNotice(result.app.publicPreview ? `${result.app.name} deployed. Preview: ${previewUrl(result.app, publicIp(status))}` : `${result.app.name} deployed from ${imageForm.image}.`);
+      const url = previewUrl(result.app, publicIp(status));
+      setNotice(url ? `${result.app.name} deployed. Preview: ${url}` : `${result.app.name} deployed from ${imageForm.image}.`);
       await refresh();
       setDeployStep("runtime");
     });
@@ -503,6 +540,7 @@ export function PanelShell() {
       envText: "",
       corsOrigins: app.corsOrigins || [],
       databaseId: app.databaseId || "",
+      previewDomainEnabled: app.previewDomainEnabled !== false,
       publicPreview: Boolean(app.publicPreview)
     }));
     setNotice(`Editing ${app.name}. Existing saved env is preserved unless you paste replacement env values.`);
@@ -654,6 +692,36 @@ export function PanelShell() {
     await run("Configuring domain", async () => {
       await api(`/api/apps/${domainForm.appId}/domain`, { method: "POST", csrfToken, body: { domain: domainForm.domain } });
       setNotice("Domain configured. Make sure DNS points to this VPS public IP.");
+      await refresh();
+    });
+  }
+
+  async function savePreviewSettings() {
+    await run("Saving preview settings", async () => {
+      const result = await api<{ settings: PanelSettings }>("/api/settings/preview", {
+        method: "POST",
+        csrfToken,
+        body: previewSettingsForm
+      });
+      setPreviewSettingsForm(result.settings);
+      setNotice("Auto preview domain settings saved.");
+      await refresh();
+    });
+  }
+
+  async function regeneratePreview(appId: string) {
+    await run("Regenerating preview domain", async () => {
+      const result = await api<{ app: ManagedApp }>(`/api/apps/${appId}/preview/regenerate`, { method: "POST", csrfToken });
+      const url = previewUrl(result.app, publicIp(status));
+      setNotice(url ? `Preview URL ready: ${url}` : result.app.previewDomainError || "Preview domain updated.");
+      await refresh();
+    });
+  }
+
+  async function disablePreview(appId: string) {
+    await run("Disabling preview domain", async () => {
+      await api<{ app: ManagedApp }>(`/api/apps/${appId}/preview/disable`, { method: "POST", csrfToken });
+      setNotice("Auto preview domain disabled for this service.");
       await refresh();
     });
   }
@@ -1013,6 +1081,7 @@ export function PanelShell() {
                     <StatusPill ok={selectedService.status === "running"} label={selectedService.status} />
                     <span className="svp-badge">{selectedService.serviceRole || "fullstack"}</span>
                     <span className="svp-badge">{selectedService.deployMode || selectedService.strategy}</span>
+                    {selectedService.previewDomainStatus && <span className="svp-badge">preview {selectedService.previewDomainStatus}</span>}
                     {selectedService.portBind === "public" && <span className="svp-badge">public preview</span>}
                   </div>
                 )}
@@ -1122,9 +1191,9 @@ export function PanelShell() {
 
             <Panel title="URLs" icon={Globe2}>
               <div className="grid gap-3 lg:grid-cols-3">
-                <UrlCard title="Preview port" url={previewUrl(selectedService, vpsIp)} help={selectedService.publicPreview ? "Public quick-test URL opened through UFW." : "Preview port is disabled. Use Edit Build Settings to enable it on redeploy."} />
+                <UrlCard title="Auto preview domain" url={previewUrl(selectedService, vpsIp)} help={previewHelp(selectedService)} />
                 <UrlCard title="Domain" url={selectedService.domain ? `https://${selectedService.domain}` : ""} help="Production URL through Caddy on ports 80/443." />
-                <Info title="Internal route" body={selectedService.port ? `${selectedService.portBind === "public" ? "0.0.0.0" : "127.0.0.1"}:${selectedService.port} -> :${selectedService.containerPort || selectedService.port}` : "No runtime port"} />
+                <Info title="Internal route" body={selectedService.localProxyPort || selectedService.port ? `127.0.0.1:${selectedService.localProxyPort || selectedService.port} -> :${selectedService.internalPort || selectedService.containerPort || selectedService.port}` : "No runtime port"} />
               </div>
             </Panel>
           </div>
@@ -1194,7 +1263,7 @@ export function PanelShell() {
                     </div>
                     <div className="mt-4 grid gap-2 text-sm text-zinc-400">
                       <p>Source: {activeApp.repoUrl ? `${activeApp.repoUrl} @ ${activeApp.branch || "main"}` : activeApp.source || activeApp.sourceType || "manual"}</p>
-                      <p>Route: {activeApp.domain ? activeApp.domain : activePreviewUrl || `${activeApp.portBind === "public" ? "0.0.0.0" : "127.0.0.1"}:${activeApp.port}`}</p>
+                      <p>Route: {activeApp.domain ? activeApp.domain : activePreviewUrl || `127.0.0.1:${activeApp.localProxyPort || activeApp.port}`}</p>
                       <p>Database: {activeApp.databaseId ? databaseName(databases, activeApp.databaseId) : "No database bound"}</p>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -1669,8 +1738,12 @@ export function PanelShell() {
                         <Select label="Database" value={gitForm.databaseId} onChange={(databaseId) => setGitForm({ ...gitForm, databaseId })} options={[{ value: "", label: "No database" }, ...databases.map((database) => ({ value: database.id, label: `${database.name} (${database.envKey})` }))]} />
                         <TextArea label="Environment variables" value={gitForm.envText} onChange={(envText) => setGitForm({ ...gitForm, envText })} placeholder={"DATABASE_URL=...\nJWT_SECRET=..."} />
                         <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
+                          <input className="mt-1" type="checkbox" checked={gitForm.previewDomainEnabled} onChange={(event) => setGitForm({ ...gitForm, previewDomainEnabled: event.target.checked })} />
+                          <span><span className="block font-bold text-ink">Create auto preview domain</span><span className="mt-1 block text-xs text-zinc-500">Recommended. Supavibe creates an sslip.io or custom wildcard hostname through Caddy on 80/443.</span></span>
+                        </label>
+                        <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
                           <input className="mt-1" type="checkbox" checked={gitForm.publicPreview} onChange={(event) => setGitForm({ ...gitForm, publicPreview: event.target.checked })} />
-                          <span><span className="block font-bold text-ink">Create public port preview</span><span className="mt-1 block text-xs text-zinc-500">Opens a generated high port in UFW. For production, add a domain and use Caddy on 80/443.</span></span>
+                          <span><span className="block font-bold text-ink">Also open public debug port</span><span className="mt-1 block text-xs text-zinc-500">Fallback only. This opens a generated high port in UFW; leave off for Caddy/domain-only access.</span></span>
                         </label>
                       </>
                     )}
@@ -1678,8 +1751,12 @@ export function PanelShell() {
                       <>
                         <TextArea label="Image env" value={imageForm.envText} onChange={(envText) => setImageForm({ ...imageForm, envText })} />
                         <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
+                          <input className="mt-1" type="checkbox" checked={imageForm.previewDomainEnabled} onChange={(event) => setImageForm({ ...imageForm, previewDomainEnabled: event.target.checked })} />
+                          <span><span className="block font-bold text-ink">Create auto preview domain</span><span className="mt-1 block text-xs text-zinc-500">Routes through Caddy to the private localhost service port.</span></span>
+                        </label>
+                        <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
                           <input className="mt-1" type="checkbox" checked={imageForm.publicPreview} onChange={(event) => setImageForm({ ...imageForm, publicPreview: event.target.checked })} />
-                          <span><span className="block font-bold text-ink">Create public port preview</span><span className="mt-1 block text-xs text-zinc-500">Useful for smoke tests. The panel opens the generated port in UFW.</span></span>
+                          <span><span className="block font-bold text-ink">Also open public debug port</span><span className="mt-1 block text-xs text-zinc-500">Useful for smoke tests only. The panel opens the generated port in UFW.</span></span>
                         </label>
                       </>
                     )}
@@ -1688,7 +1765,7 @@ export function PanelShell() {
                   </div>
                   <div className="space-y-3">
                     <Info title="Project" body={`Deploying into ${currentProject.name}. Other projects are hidden while you work here.`} />
-                    <Info title="Firewall" body="Preview ports are explicit. Domains should go through Caddy on ports 80/443." />
+                    <Info title="Routing" body="Auto preview domains and custom domains go through Caddy on 80/443. Public debug ports are optional." />
                     <button
                       className="svp-button-primary w-full justify-center"
                       onClick={() => {
@@ -1729,26 +1806,45 @@ export function PanelShell() {
 
         {tab === "preview" && selectedService && (
           <div className="space-y-4">
-            <Panel title="Preview Port" icon={Eye}>
+            <Panel title="Auto Preview Domain" icon={Eye}>
               <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
                 <div className="grid gap-3">
                   <UrlCard
                     title="Preview URL"
                     url={previewUrl(selectedService, vpsIp)}
-                    help={selectedService.publicPreview ? "This is a quick public test URL on a generated VPS port." : "Preview is disabled. Use Edit Build Settings and enable public preview, then redeploy."}
+                    help={previewHelp(selectedService)}
                   />
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <Info title="Internal container port" body={selectedService.containerPort ? `:${selectedService.containerPort}` : "Not configured"} />
-                    <Info title="Assigned VPS port" body={selectedService.port ? `${selectedService.portBind === "public" ? "public" : "localhost"} :${selectedService.port}` : "Not assigned"} />
+                  {selectedService.previewDomainError && (
+                    <div className="rounded-md border border-yellow-900 bg-yellow-950/30 p-3 text-sm text-yellow-100">
+                      <p className="font-bold">Preview domain error</p>
+                      <p className="mt-1 break-words text-yellow-200/80">{selectedService.previewDomainError}</p>
+                    </div>
+                  )}
+                  <div className="grid gap-3 md:grid-cols-4">
+                    <Info title="Status" body={selectedService.previewDomainStatus || "disabled"} />
+                    <Info title="Mode" body={selectedService.previewDomainMode || state?.settings.previewDomainMode || "sslip"} />
+                    <Info title="Internal port" body={selectedService.internalPort || selectedService.containerPort ? `:${selectedService.internalPort || selectedService.containerPort}` : "Not configured"} />
+                    <Info title="Local proxy" body={selectedService.localProxyPort || selectedService.port ? `127.0.0.1:${selectedService.localProxyPort || selectedService.port}` : "Not assigned"} />
                     <Info title="Health path" body={selectedService.healthPath || "/"} />
+                    <Info title="Caddy reload" body={selectedService.previewCaddyReloadStatus || "not run"} />
+                    <Info title="Caddy file" body={selectedService.previewCaddyFile || "not written"} />
+                    <Info title="Public debug port" body={previewPortUrl(selectedService, vpsIp) || "disabled"} />
                   </div>
                 </div>
                 <div className="grid content-start gap-3">
-                  <Info title="Preview vs domain" body="Preview ports are for quick testing. Production traffic should use Domains so Caddy handles HTTPS on 80/443." />
-                  <Info title="Firewall" body={selectedService.publicPreview ? "Supavibe attempts to allow this port in UFW during deploy." : "No public preview port is currently exposed."} />
+                  <Info title="How it works" body="The app container binds to 127.0.0.1. Caddy serves the preview hostname on 80/443 and reverse proxies to that local port." />
+                  <Info title="Caddy import" body={previewImportMessage(status)} />
+                  <button className="svp-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.status !== "running"}>
+                    <RefreshCw size={15} />
+                    Regenerate Preview URL
+                  </button>
+                  <button className="svp-button" onClick={() => void disablePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.previewDomainStatus === "disabled"}>
+                    <Square size={15} />
+                    Disable Preview Domain
+                  </button>
                   <button className="svp-button" onClick={() => editGitDeployment(selectedService)} disabled={selectedService.source !== "git" && selectedService.sourceType !== "git-url"}>
                     <Wrench size={15} />
-                    Change Preview Setting
+                    Edit Deploy Settings
                   </button>
                 </div>
               </div>
@@ -1782,7 +1878,7 @@ export function PanelShell() {
               <div className="space-y-3 text-sm text-zinc-400">
                 <p>Point domains to this VPS public IP, then configure Caddy here. Caddy will request HTTPS certificates automatically.</p>
                 <pre className="svp-code overflow-auto rounded-md p-3 text-xs">{`A     ${domainForm.domain || "app.example.com"} -> ${vpsIp || "YOUR_VPS_PUBLIC_IP"}\nAAAA  optional if this VPS has IPv6`}</pre>
-                {selectedDomainApp && <Info title="Selected app" body={`${selectedDomainApp.name} via ${selectedDomainApp.strategy}${selectedDomainApp.port ? ` on 127.0.0.1:${selectedDomainApp.port}` : ""}`} />}
+                {selectedDomainApp && <Info title="Selected app" body={`${selectedDomainApp.name} via ${selectedDomainApp.strategy}${selectedDomainApp.localProxyPort || selectedDomainApp.port ? ` on 127.0.0.1:${selectedDomainApp.localProxyPort || selectedDomainApp.port}` : ""}`} />}
               </div>
             </Panel>
           </div>
@@ -1795,7 +1891,7 @@ export function PanelShell() {
                 <Info title="Container" body={selectedService.containerName || selectedService.composeProject || selectedService.serviceName || "Not created yet"} />
                 <Info title="Image / release" body={selectedService.imageTag || selectedService.dockerImage || "Not available"} />
                 <Info title="Root directory" body={selectedService.rootDir || "Managed by Supavibe"} />
-                <Info title="Public exposure" body={selectedService.publicPreview ? `Preview port ${selectedService.port} is public` : selectedService.domain ? "Public only through Caddy domain" : "No public route configured"} />
+                <Info title="Public exposure" body={selectedService.previewDomainHostname ? `Caddy preview ${selectedService.previewDomainHostname}` : selectedService.publicPreview ? `Public debug port ${selectedService.publicPreviewPort || selectedService.port}` : selectedService.domain ? "Public only through Caddy domain" : "No public route configured"} />
               </div>
             </Panel>
 
@@ -1827,6 +1923,45 @@ export function PanelShell() {
                     <RefreshCw size={16} />
                     Refresh Status
                   </button>
+                </div>
+              </div>
+            </Panel>
+            <Panel title="Auto Preview Domains" icon={Globe2}>
+              <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+                <div className="grid gap-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Select
+                      label="Preview mode"
+                      value={previewSettingsForm.previewDomainMode}
+                      onChange={(previewDomainMode) => setPreviewSettingsForm({ ...previewSettingsForm, previewDomainMode: previewDomainMode as PreviewDomainMode })}
+                      options={[
+                        { value: "sslip", label: "sslip.io zero-config" },
+                        { value: "custom", label: "Custom wildcard domain" },
+                        { value: "disabled", label: "Disabled" }
+                      ]}
+                    />
+                    <Field label="Public server IPv4" value={previewSettingsForm.publicServerIp || ""} onChange={(publicServerIp) => setPreviewSettingsForm({ ...previewSettingsForm, publicServerIp })} placeholder={vpsIp || "95.217.10.20"} />
+                    <Field label="Custom preview base domain" value={previewSettingsForm.previewBaseDomain || ""} onChange={(previewBaseDomain) => setPreviewSettingsForm({ ...previewSettingsForm, previewBaseDomain })} placeholder="preview.example.com" />
+                    <label className="flex items-start gap-3 rounded-md border border-line bg-[#050505] p-3 text-sm text-zinc-300">
+                      <input className="mt-1" type="checkbox" checked={previewSettingsForm.autoPreviewDomainsEnabled} onChange={(event) => setPreviewSettingsForm({ ...previewSettingsForm, autoPreviewDomainsEnabled: event.target.checked })} />
+                      <span><span className="block font-bold text-ink">Enable by default for new services</span><span className="mt-1 block text-xs text-zinc-500">Each Git/Image deploy gets a Caddy preview hostname unless disabled in the deploy wizard.</span></span>
+                    </label>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Field label="Local proxy port start" value={String(previewSettingsForm.localProxyPortRangeStart)} onChange={(value) => setPreviewSettingsForm({ ...previewSettingsForm, localProxyPortRangeStart: Number(value) || 31000 })} />
+                    <Field label="Local proxy port end" value={String(previewSettingsForm.localProxyPortRangeEnd)} onChange={(value) => setPreviewSettingsForm({ ...previewSettingsForm, localProxyPortRangeEnd: Number(value) || 39999 })} />
+                    <Field label="Caddy sites directory" value={previewSettingsForm.caddySitesDir} onChange={(caddySitesDir) => setPreviewSettingsForm({ ...previewSettingsForm, caddySitesDir })} />
+                    <Field label="Caddy main config" value={previewSettingsForm.caddyMainConfig} onChange={(caddyMainConfig) => setPreviewSettingsForm({ ...previewSettingsForm, caddyMainConfig })} />
+                  </div>
+                  <button className="svp-button-primary w-fit" onClick={() => void savePreviewSettings()} disabled={Boolean(busy)}>
+                    <Wrench size={16} />
+                    Save Preview Settings
+                  </button>
+                </div>
+                <div className="grid content-start gap-3">
+                  <Info title="Hostname format" body={previewSettingsForm.previewDomainMode === "custom" ? "service-project-id.preview.example.com. Configure wildcard DNS once: *.preview.example.com -> this VPS IP." : "service-project-id.95-217-10-20.sslip.io. No DNS setup needed when the public IPv4 is correct."} />
+                  <Info title="Caddy import" body={previewImportMessage(status)} />
+                  <Info title="Caddy sites dir" body={String((status?.previewDomains as { caddySitesDir?: string } | undefined)?.caddySitesDir || previewSettingsForm.caddySitesDir)} />
                 </div>
               </div>
             </Panel>
@@ -2160,8 +2295,8 @@ function AppGrid({
             <div className="min-w-0">
               <button className="truncate text-left font-bold text-ink hover:underline" onClick={() => onOpen(app)}>{app.name}</button>
               <p className="text-xs text-zinc-500">
-                {projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"} - {app.deployMode || app.strategy} {app.sourceType || app.source ? `- ${app.sourceType || app.source}` : ""} {app.port ? `- ${app.portBind === "public" ? "0.0.0.0" : "127.0.0.1"}:${app.port}` : ""}
-                {app.containerPort ? ` -> :${app.containerPort}` : ""}
+                {projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"} - {app.deployMode || app.strategy} {app.sourceType || app.source ? `- ${app.sourceType || app.source}` : ""} {app.localProxyPort || app.port ? `- 127.0.0.1:${app.localProxyPort || app.port}` : ""}
+                {app.internalPort || app.containerPort ? ` -> :${app.internalPort || app.containerPort}` : ""}
               </p>
               {app.repoUrl && <p className="mt-1 truncate text-xs text-zinc-600">{app.repoUrl} {app.branch ? `@ ${app.branch}` : ""}</p>}
               {app.appDirectory && <p className="mt-1 truncate text-xs text-zinc-600">directory {app.appDirectory}</p>}
@@ -2169,6 +2304,7 @@ function AppGrid({
               {app.commitSha && <p className="mt-1 text-xs text-zinc-600">commit {app.commitSha}</p>}
               {app.domain && <a className="mt-1 block break-all text-xs font-bold text-action" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>}
               {appPreview && <a className="mt-1 block break-all text-xs font-bold text-action" href={appPreview} target="_blank" rel="noreferrer">Preview {appPreview}</a>}
+              {app.previewDomainStatus === "error" && <p className="mt-1 break-words text-xs text-yellow-300">Preview error: {app.previewDomainError}</p>}
               {app.databaseId && <p className="mt-1 text-xs text-zinc-600">db {databaseName(databases, app.databaseId)}</p>}
             </div>
             <StatusPill ok={app.status === "running"} label={app.status} />
@@ -2548,10 +2684,31 @@ function commandOutputText(value: unknown) {
 }
 
 function previewUrl(app: ManagedApp, vpsIp: string) {
-  if (!app.publicPreview || !app.port) return "";
   if (app.previewUrl && !app.previewUrl.includes("SERVER_IP")) return app.previewUrl;
+  if (app.previewDomainHostname) return `https://${app.previewDomainHostname}`;
+  return previewPortUrl(app, vpsIp);
+}
+
+function previewPortUrl(app: ManagedApp, vpsIp: string) {
+  if (!app.publicPreview || !(app.publicPreviewPort || app.port)) return "";
+  if (app.previewUrl && app.previewUrl.startsWith("http://") && !app.previewUrl.includes("SERVER_IP")) return app.previewUrl;
   const host = vpsIp || "SERVER_IP";
-  return `http://${host}:${app.port}`;
+  return `http://${host}:${app.publicPreviewPort || app.port}`;
+}
+
+function previewHelp(app: ManagedApp) {
+  if (app.previewDomainStatus === "active") return "Generated Caddy hostname on ports 80/443. Caddy handles HTTPS automatically when DNS resolves.";
+  if (app.previewDomainStatus === "error") return app.publicPreview ? "Generated domain failed, but a public debug port fallback is available." : "Generated domain failed. Open the Preview tab for the Caddy error.";
+  if (app.previewDomainStatus === "pending") return "Preview domain will be written during the next deploy or regenerate action.";
+  if (app.publicPreview) return "Auto preview domain is disabled; this is the public debug port fallback.";
+  return "Preview is disabled for this service.";
+}
+
+function previewImportMessage(status: Record<string, unknown> | null) {
+  const preview = status?.previewDomains as { importConfigured?: boolean; message?: string; importLine?: string } | undefined;
+  if (!preview) return "Refresh server status to check whether Caddy imports generated preview routes.";
+  if (preview.importConfigured) return preview.message || "Caddy imports generated preview routes.";
+  return preview.message || `Missing Caddy import: ${preview.importLine || "import /etc/caddy/supavibe/sites/*.caddy"}`;
 }
 
 function roleOptions() {

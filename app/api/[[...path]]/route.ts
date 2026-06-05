@@ -21,6 +21,7 @@ import {
   deleteProject,
   deleteApp,
   deleteFirewallRule,
+  disablePreviewDomain,
   deployComposeApp,
   deployComposeYamlApp,
   deployDockerImageApp,
@@ -29,6 +30,7 @@ import {
   readAppLogs,
   readDeploymentLogs,
   redeployApp,
+  regeneratePreviewDomain,
   restartApp,
   setAppEnvironment,
   serverStatus,
@@ -37,7 +39,8 @@ import {
   systemPrune,
   testDatabase,
   updateGitAppDeployment,
-  updateAppSettings
+  updateAppSettings,
+  updatePreviewSettings
 } from "../../lib/system";
 import { redact, UserFacingError } from "../../lib/validate";
 
@@ -73,7 +76,8 @@ const gitDeploySchema = z.object({
   envText: z.string().max(20_000).optional().default(""),
   corsOrigins: z.array(z.string().max(220)).optional().default([]),
   databaseId: z.string().optional().default(""),
-  publicPreview: z.boolean().optional().default(false)
+  publicPreview: z.boolean().optional().default(false),
+  previewDomainEnabled: z.boolean().optional().default(true)
 });
 
 const repoDetectSchema = z.object({
@@ -105,7 +109,19 @@ const imageDeploySchema = z.object({
   containerPort: z.coerce.number().int().min(1).max(65535).optional().default(3000),
   healthPath: z.string().max(120).optional().default("/"),
   envText: z.string().max(20_000).optional().default(""),
-  publicPreview: z.boolean().optional().default(false)
+  publicPreview: z.boolean().optional().default(false),
+  previewDomainEnabled: z.boolean().optional().default(true)
+});
+
+const previewSettingsSchema = z.object({
+  publicServerIp: z.string().max(64).optional().default(""),
+  previewDomainMode: z.enum(["sslip", "custom", "disabled"]).optional().default("sslip"),
+  previewBaseDomain: z.string().max(253).optional().default(""),
+  autoPreviewDomainsEnabled: z.boolean().optional().default(true),
+  caddySitesDir: z.string().max(220).optional().default("/etc/caddy/supavibe/sites"),
+  caddyMainConfig: z.string().max(220).optional().default("/etc/caddy/Caddyfile"),
+  localProxyPortRangeStart: z.coerce.number().int().min(1024).max(65535).optional().default(31000),
+  localProxyPortRangeEnd: z.coerce.number().int().min(1024).max(65535).optional().default(39999)
 });
 
 const domainSchema = z.object({
@@ -210,6 +226,10 @@ async function route(request: Request, context: RouteContext) {
     if (segments[0] === "system" && segments[1] === "status" && request.method === "GET") {
       return ok(await serverStatus(), 200, requestId);
     }
+    if (segments[0] === "settings" && segments[1] === "preview" && request.method === "POST") {
+      rateLimit(request, { key: "preview-settings", limit: 10, windowMs: 60_000 });
+      return ok({ settings: await updatePreviewSettings(previewSettingsSchema.parse(await request.json())) }, 200, requestId);
+    }
     if (segments[0] === "system" && segments[1] === "prune" && request.method === "POST") {
       rateLimit(request, { key: "system-prune", limit: 3, windowMs: 60_000 });
       return ok({ result: await systemPrune() }, 200, requestId);
@@ -282,6 +302,14 @@ async function route(request: Request, context: RouteContext) {
     if (segments[0] === "apps" && segments[1] && segments[2] === "domain" && request.method === "POST") {
       const body = domainSchema.parse(await request.json());
       return ok({ app: await configureDomain({ appId: segments[1], domain: body.domain }) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "preview" && segments[3] === "regenerate" && request.method === "POST") {
+      rateLimit(request, { key: "preview-regenerate", limit: 20, windowMs: 60_000 });
+      return ok({ app: await regeneratePreviewDomain(segments[1]) }, 200, requestId);
+    }
+    if (segments[0] === "apps" && segments[1] && segments[2] === "preview" && segments[3] === "disable" && request.method === "POST") {
+      rateLimit(request, { key: "preview-disable", limit: 20, windowMs: 60_000 });
+      return ok({ app: await disablePreviewDomain(segments[1]) }, 200, requestId);
     }
     if (segments[0] === "apps" && segments[1] && segments[2] === "settings" && request.method === "POST") {
       const body = appSettingsSchema.parse(await request.json());

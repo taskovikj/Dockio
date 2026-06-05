@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import {
   appendDeploymentLog,
   audit,
+  defaultPanelSettings,
   deploymentEvent,
   finishDeployment,
   getAppsDir,
@@ -20,6 +21,8 @@ import {
   type AppStrategy,
   type DatabaseResource,
   type ManagedApp,
+  type PanelSettings,
+  type PreviewDomainMode,
   type ServiceRole
 } from "./state";
 import {
@@ -81,6 +84,8 @@ export interface RepoAnalysis {
   recommendedServiceId?: string;
   warnings: string[];
 }
+
+const PREVIEW_IMPORT_LINE = "import /etc/caddy/supavibe/sites/*.caddy";
 
 export async function createProject(input: { name: string; description?: string }) {
   const name = assertSafeAppName(input.name);
@@ -195,6 +200,7 @@ export async function analyzeGitRepo(input: { repoUrl: string; branch?: string; 
 }
 
 export async function serverStatus() {
+  const settings = readState().settings;
   const [hostname, osRelease, disk, docker, caddy, ufw, publicIp] = await Promise.all([
     safeRun("hostnamectl", []),
     safeRead("/etc/os-release"),
@@ -216,10 +222,26 @@ export async function serverStatus() {
     caddy,
     ufw,
     publicIp,
+    previewDomains: await previewDomainSystemStatus(settings),
+    settings,
     dataDir: getDataDir(),
     node: process.version,
     platform: os.type() + " " + os.release() + " " + os.arch()
   };
+}
+
+export async function updatePreviewSettings(input: Partial<PanelSettings>) {
+  const settings = normalizePreviewSettings(input);
+  updateState((state) => {
+    state.settings = { ...state.settings, ...settings };
+  });
+  audit("settings.preview", "Updated auto preview domain settings.", {
+    mode: settings.previewDomainMode,
+    baseDomain: settings.previewBaseDomain,
+    publicServerIp: settings.publicServerIp,
+    portRange: [settings.localProxyPortRangeStart, settings.localProxyPortRangeEnd]
+  });
+  return readState().settings;
 }
 
 export async function deploySampleApp(input: { name: string; strategy: AppStrategy; projectId?: string; serviceRole?: ServiceRole }) {
@@ -311,6 +333,7 @@ export async function deployGitApp(input: {
   corsOrigins?: string[];
   databaseId?: string;
   publicPreview?: boolean;
+  previewDomainEnabled?: boolean;
 }) {
   const name = assertSafeAppName(input.name);
   const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
@@ -330,8 +353,11 @@ export async function deployGitApp(input: {
   const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), projectSlug, appSlug));
   fs.mkdirSync(appDir, { recursive: true, mode: 0o750 });
   const now = new Date().toISOString();
-  const port = await findOpenPort();
+  const internalPort = input.mode === "static" ? 80 : assertContainerPort(input.containerPort || 3000);
+  const localProxyPort = await findOpenProxyPort(state.settings);
   const publicPreview = Boolean(input.publicPreview);
+  const publicPreviewPort = publicPreview ? await findOpenPort() : undefined;
+  const previewDomainEnabled = input.previewDomainEnabled ?? (state.settings.autoPreviewDomainsEnabled && state.settings.previewDomainMode !== "disabled");
   const env = parseEnvText(input.envText || "");
   const app: ManagedApp = {
     id,
@@ -348,15 +374,19 @@ export async function deployGitApp(input: {
     deployMode: input.mode,
     buildCommand: cleanCommand(input.buildCommand || ""),
     startCommand: cleanCommand(input.startCommand || ""),
-    containerPort: input.mode === "static" ? 80 : assertContainerPort(input.containerPort || 3000),
+    containerPort: internalPort,
+    internalPort,
     healthPath: cleanHealthPath(input.healthPath || "/"),
     envKeys: uniqueStrings([...env.keys, ...(database ? [database.envKey] : [])]),
     corsOrigins,
     databaseId: databaseId || undefined,
-    port,
+    port: localProxyPort,
+    localProxyPort,
+    publicPreviewPort,
     publicPreview,
     portBind: publicPreview ? "public" : "localhost",
-    previewUrl: publicPreview ? await previewUrlForPort(port) : undefined,
+    previewDomainEnabled,
+    previewDomainStatus: previewDomainEnabled ? "pending" : "disabled",
     status: "created",
     rootDir: appDir,
     createdAt: now,
@@ -390,6 +420,7 @@ export async function updateGitAppDeployment(appId: string, input: {
   corsOrigins?: string[];
   databaseId?: string;
   publicPreview?: boolean;
+  previewDomainEnabled?: boolean;
 }) {
   const existing = getManagedApp(appId);
   if (existing.source !== "git" && existing.sourceType !== "git-url") {
@@ -407,6 +438,7 @@ export async function updateGitAppDeployment(appId: string, input: {
   const appDirectory = assertSafeRelativePath(input.appDirectory || "", "App directory");
   const mode = input.mode;
   const publicPreview = Boolean(input.publicPreview);
+  const previewDomainEnabled = input.previewDomainEnabled ?? existing.previewDomainEnabled ?? (state.settings.autoPreviewDomainsEnabled && state.settings.previewDomainMode !== "disabled");
   const env = parseEnvText(input.envText?.trim() ? input.envText : userEnvText(existing));
   const project = projectId ? state.projects.find((item) => item.id === projectId) : undefined;
   const appDir = existing.rootDir
@@ -431,14 +463,19 @@ export async function updateGitAppDeployment(appId: string, input: {
       buildCommand: cleanCommand(input.buildCommand || ""),
       startCommand: cleanCommand(input.startCommand || ""),
       containerPort: mode === "static" ? 80 : assertContainerPort(input.containerPort || app.containerPort || 3000),
+      internalPort: mode === "static" ? 80 : assertContainerPort(input.containerPort || app.containerPort || 3000),
       healthPath: cleanHealthPath(input.healthPath || app.healthPath || "/"),
       envKeys: uniqueStrings([...env.keys, ...(databaseId ? [state.databases.find((database) => database.id === databaseId)?.envKey || "DATABASE_URL"] : [])]),
       corsOrigins,
       databaseId: databaseId || undefined,
-      port: app.port || 0,
+      port: app.localProxyPort || app.port || 0,
+      localProxyPort: app.localProxyPort || app.port || 0,
       publicPreview,
+      publicPreviewPort: publicPreview ? app.publicPreviewPort : undefined,
       portBind: publicPreview ? "public" : "localhost",
-      previewUrl: publicPreview ? app.previewUrl : undefined,
+      previewDomainEnabled,
+      previewDomainStatus: previewDomainEnabled ? (app.previewDomainStatus === "active" ? "active" : "pending") : "disabled",
+      previewUrl: previewDomainEnabled ? app.previewUrl : publicPreview ? app.previewUrl : undefined,
       rootDir: appDir,
       status: "created",
       lastMessage: "Redeploy queued with updated settings.",
@@ -447,13 +484,14 @@ export async function updateGitAppDeployment(appId: string, input: {
   });
 
   let updated = getManagedApp(existing.id);
-  if (!updated.port) {
-    const port = await findOpenPort();
-    const previewUrl = updated.publicPreview ? await previewUrlForPort(port) : undefined;
-    markApp(updated.id, { port, previewUrl });
+  if (!updated.localProxyPort && !updated.port) {
+    const localProxyPort = await findOpenProxyPort(readState().settings);
+    markApp(updated.id, { port: localProxyPort, localProxyPort });
     updated = getManagedApp(updated.id);
-  } else if (updated.publicPreview && !updated.previewUrl) {
-    markApp(updated.id, { previewUrl: await previewUrlForPort(updated.port) });
+  }
+  if (updated.publicPreview && !updated.publicPreviewPort) {
+    const publicPreviewPort = await findOpenPort();
+    markApp(updated.id, { publicPreviewPort });
     updated = getManagedApp(updated.id);
   }
 
@@ -506,23 +544,26 @@ async function executeGitDeployment(input: {
     const dockerfile = prepareDockerfile(buildDir, appDir, app.deployMode, app);
     appendDeploymentLog(deploymentId, "building image", `Building ${image}.`);
     await safeRunForDeployment(deploymentId, "docker build", "docker", ["build", "-t", image, "-f", dockerfile, buildDir]);
-    appendDeploymentLog(deploymentId, "starting service", `Starting container on ${app.publicPreview ? "0.0.0.0" : "127.0.0.1"}:${app.port}.`);
+    appendDeploymentLog(deploymentId, "starting service", `Starting container on 127.0.0.1:${app.localProxyPort || app.port} for Caddy preview routing.`);
     await replaceDockerContainer(app, image, envFile);
     await waitForAppHealth(app, deploymentId);
+    await ensurePreviewDomain(app.id, deploymentId);
     if (app.publicPreview) {
-      await openPreviewFirewallPort(app.port, deploymentId);
+      await openPreviewFirewallPort(getPublicPreviewPort(app), deploymentId);
     }
+    const finalApp = getManagedApp(app.id);
+    const previewText = finalApp.previewUrl || (finalApp.publicPreview ? await previewUrlForPort(getPublicPreviewPort(finalApp)) : "");
     markApp(app.id, {
       status: "running",
       imageTag: image,
       containerName: "svp_" + app.id,
       commitSha: commit.ok ? commit.stdout.trim() : undefined,
-      lastMessage: app.publicPreview
-        ? `Git ${app.deployMode} app deployed from ${branch}. Preview: ${app.previewUrl || `port ${app.port}`}`
-        : `Git ${app.deployMode} app deployed from ${branch}. Add a domain or enable public preview to expose it.`
+      lastMessage: previewText
+        ? `Git ${app.deployMode} app deployed from ${branch}. Preview: ${previewText}`
+        : `Git ${app.deployMode} app deployed from ${branch}. Add a domain or enable preview domains to expose it.`
     });
-    finishDeployment(deploymentId, "succeeded", app.publicPreview ? `Deployed ${app.name}. Preview: ${app.previewUrl || `port ${app.port}`}` : `Deployed ${app.name} from ${branch}.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined, imageTag: image });
-    audit("app.deploy_git", input.auditMessage, { appId: app.id, name: app.name, repoUrl, branch, appDirectory, mode: app.deployMode, publicPreview: app.publicPreview, envKeys: input.env.keys });
+    finishDeployment(deploymentId, "succeeded", previewText ? `Deployed ${app.name}. Preview: ${previewText}` : `Deployed ${app.name} from ${branch}.`, { commitSha: commit.ok ? commit.stdout.trim() : undefined, imageTag: image });
+    audit("app.deploy_git", input.auditMessage, { appId: app.id, name: app.name, repoUrl, branch, appDirectory, mode: app.deployMode, publicPreview: app.publicPreview, previewDomainEnabled: finalApp.previewDomainEnabled, envKeys: input.env.keys });
     return readState().apps.find((item) => item.id === app.id) || app;
   } catch (error) {
     const message = error instanceof Error ? redact(error.message) : "Deploy failed.";
@@ -670,6 +711,7 @@ export async function deployDockerImageApp(input: {
   envText?: string;
   healthPath?: string;
   publicPreview?: boolean;
+  previewDomainEnabled?: boolean;
 }) {
   const name = assertSafeAppName(input.name);
   const projectId = input.projectId ? assertSafeId(input.projectId, "projectId") : "";
@@ -681,6 +723,8 @@ export async function deployDockerImageApp(input: {
   const image = assertSafeDockerImage(input.image);
   const containerPort = assertContainerPort(input.containerPort || 3000);
   const publicPreview = Boolean(input.publicPreview);
+  const previewDomainEnabled = input.previewDomainEnabled ?? (state.settings.autoPreviewDomainsEnabled && state.settings.previewDomainMode !== "disabled");
+  const localProxyPort = await findOpenProxyPort(state.settings);
   const env = parseEnvText(input.envText || "");
   const id = appSlug + "-" + crypto.randomBytes(3).toString("hex");
   const appDir = assertManagedPath(getAppsDir(), path.join(getAppsDir(), projectSlug, appSlug));
@@ -698,15 +742,19 @@ export async function deployDockerImageApp(input: {
     containerPort,
     healthPath: cleanHealthPath(input.healthPath || "/"),
     envKeys: env.keys,
-    port: await findOpenPort(),
+    port: localProxyPort,
+    localProxyPort,
+    publicPreviewPort: publicPreview ? await findOpenPort() : undefined,
+    internalPort: containerPort,
     publicPreview,
     portBind: publicPreview ? "public" : "localhost",
+    previewDomainEnabled,
+    previewDomainStatus: previewDomainEnabled ? "pending" : "disabled",
     status: "created",
     rootDir: appDir,
     createdAt: now,
     updatedAt: now
   };
-  app.previewUrl = publicPreview ? await previewUrlForPort(app.port) : undefined;
   updateState((state) => {
     state.apps.unshift(app);
   });
@@ -715,20 +763,23 @@ export async function deployDockerImageApp(input: {
     const envFile = writeAppEnvFile(app, env.env, deploymentId);
     appendDeploymentLog(deploymentId, "pulling image", image);
     await safeRunOrThrow("docker", ["pull", image]);
-    appendDeploymentLog(deploymentId, "starting service", `Starting container on ${app.publicPreview ? "0.0.0.0" : "127.0.0.1"}:${app.port}.`);
+    appendDeploymentLog(deploymentId, "starting service", `Starting container on 127.0.0.1:${app.localProxyPort || app.port}.`);
     await replaceDockerContainer(app, image, envFile);
     await waitForAppHealth(app, deploymentId);
+    await ensurePreviewDomain(app.id, deploymentId);
     if (app.publicPreview) {
-      await openPreviewFirewallPort(app.port, deploymentId);
+      await openPreviewFirewallPort(getPublicPreviewPort(app), deploymentId);
     }
+    const finalApp = getManagedApp(app.id);
+    const previewText = finalApp.previewUrl || (finalApp.publicPreview ? await previewUrlForPort(getPublicPreviewPort(finalApp)) : "");
     markApp(app.id, {
       status: "running",
       containerName: "svp_" + app.id,
       imageTag: image,
-      lastMessage: app.publicPreview ? `Docker image is running. Preview: ${app.previewUrl || `port ${app.port}`}` : "Docker image is running on a localhost port."
+      lastMessage: previewText ? `Docker image is running. Preview: ${previewText}` : "Docker image is running on a localhost port."
     });
-    finishDeployment(deploymentId, "succeeded", app.publicPreview ? `Docker image ${image} deployed. Preview: ${app.previewUrl || `port ${app.port}`}` : `Docker image ${image} deployed.`, { imageTag: image });
-    audit("app.deploy_image", "Docker image deployed.", { appId: app.id, name, image, publicPreview, envKeys: env.keys });
+    finishDeployment(deploymentId, "succeeded", previewText ? `Docker image ${image} deployed. Preview: ${previewText}` : `Docker image ${image} deployed.`, { imageTag: image });
+    audit("app.deploy_image", "Docker image deployed.", { appId: app.id, name, image, publicPreview, previewDomainEnabled, envKeys: env.keys });
     return readState().apps.find((item) => item.id === app.id) || app;
   } catch (error) {
     const message = error instanceof Error ? redact(error.message) : "Docker image deploy failed.";
@@ -745,13 +796,14 @@ export async function configureDomain(input: { appId: string; domain: string }) 
   if (!app) throw new Error("App not found.");
   const rootDir = app.rootDir ? assertManagedPath(getAppsDir(), app.rootDir) : "";
   if (app.strategy === "static" && !rootDir) throw new Error("Static app root directory is missing.");
-  if (app.strategy !== "static") assertSafePort(app.port);
+  const targetPort = app.localProxyPort || app.port;
+  if (app.strategy !== "static") assertSafePort(targetPort);
 
   const caddyDir = "/etc/caddy/conf.d";
   const content =
     app.strategy === "static"
       ? domain + " {\n    encode gzip\n    root * " + rootDir + "\n    file_server\n}\n"
-      : domain + " {\n    encode gzip\n    reverse_proxy 127.0.0.1:" + app.port + "\n}\n";
+      : domain + " {\n    encode gzip\n    reverse_proxy 127.0.0.1:" + targetPort + "\n}\n";
   const temp = await writeTemp("svp_" + app.id + ".caddy", content);
   await safeRunOrThrow("sudo", ["mkdir", "-p", caddyDir]);
   await safeRunOrThrow("sudo", ["install", "-m", "0644", "-o", "root", "-g", "root", temp, path.join(caddyDir, "svp_" + app.id + ".caddy")]);
@@ -898,7 +950,8 @@ export async function redeployApp(appId: string) {
       envText,
       corsOrigins: app.corsOrigins,
       databaseId: app.databaseId,
-      publicPreview: app.publicPreview
+      publicPreview: app.publicPreview,
+      previewDomainEnabled: app.previewDomainEnabled
     });
   }
   if (app.source === "compose" && app.repoUrl) {
@@ -915,7 +968,8 @@ export async function redeployApp(appId: string) {
       containerPort: app.containerPort || 3000,
       healthPath: app.healthPath,
       envText,
-      publicPreview: app.publicPreview
+      publicPreview: app.publicPreview,
+      previewDomainEnabled: app.previewDomainEnabled
     });
   }
   throw new Error("Redeploy is available for Git, Compose repository, and Docker image apps only.");
@@ -933,10 +987,11 @@ export async function deleteApp(appId: string) {
 
 export async function checkAppHealth(appId: string) {
   const app = getManagedApp(appId);
-  if (!app.port) return { ok: false, message: "No localhost port is registered for this app." };
+  const localPort = app.localProxyPort || app.port;
+  if (!localPort) return { ok: false, message: "No localhost port is registered for this app." };
   const pathName = cleanHealthPath(app.healthPath || "/");
   try {
-    const result = await fetchLocalHealth(app.port, pathName);
+    const result = await fetchLocalHealth(localPort, pathName);
     const ok = result.status >= 200 && result.status < 500;
     const message = `HTTP ${result.status} from ${pathName}`;
     markApp(app.id, { lastMessage: message, status: ok ? "running" : "failed" });
@@ -1307,6 +1362,41 @@ export async function deleteFirewallRule(input: { ruleNumber: number }) {
   return result;
 }
 
+export async function regeneratePreviewDomain(appId: string) {
+  const app = getManagedApp(appId);
+  await removePreviewDomainRoute(app);
+  markApp(app.id, {
+    previewDomainEnabled: true,
+    previewDomainHostname: undefined,
+    previewDomainStatus: "pending",
+    previewDomainError: undefined,
+    previewUrl: app.publicPreview ? await previewUrlForPort(getPublicPreviewPort(app)) : undefined,
+    lastMessage: "Preview domain regeneration requested."
+  });
+  await ensurePreviewDomain(app.id);
+  audit("preview.regenerate", "Regenerated preview domain.", { appId: app.id });
+  return getManagedApp(app.id);
+}
+
+export async function disablePreviewDomain(appId: string) {
+  const app = getManagedApp(appId);
+  await removePreviewDomainRoute(app);
+  const fallbackUrl = app.publicPreview ? await previewUrlForPort(getPublicPreviewPort(app)) : undefined;
+  markApp(app.id, {
+    previewDomainEnabled: false,
+    previewDomainHostname: undefined,
+    previewDomainStatus: "disabled",
+    previewDomainError: undefined,
+    previewDomainMode: undefined,
+    previewCaddyFile: undefined,
+    previewCaddyReloadStatus: undefined,
+    previewUrl: fallbackUrl,
+    lastMessage: fallbackUrl ? "Auto preview domain disabled. Public preview port remains available." : "Auto preview domain disabled."
+  });
+  audit("preview.disable", "Disabled preview domain.", { appId: app.id });
+  return getManagedApp(app.id);
+}
+
 async function openPreviewFirewallPort(port: number, deploymentId?: string) {
   const safePort = assertNetworkPort(port);
   const result = await safeRun("sudo", ["ufw", "allow", `${safePort}/tcp`]);
@@ -1321,8 +1411,72 @@ async function openPreviewFirewallPort(port: number, deploymentId?: string) {
   return result;
 }
 
+async function ensurePreviewDomain(appId: string, deploymentId?: string) {
+  const initial = getManagedApp(appId);
+  const settings = readState().settings;
+  if (!initial.previewDomainEnabled || !settings.autoPreviewDomainsEnabled || settings.previewDomainMode === "disabled") {
+    markApp(initial.id, { previewDomainStatus: "disabled", previewDomainError: undefined });
+    return getManagedApp(initial.id);
+  }
+  if (!initial.localProxyPort && !initial.port) {
+    markApp(initial.id, { previewDomainStatus: "error", previewDomainError: "No localhost proxy port is assigned yet." });
+    return getManagedApp(initial.id);
+  }
+
+  markApp(initial.id, { previewDomainStatus: "pending", previewDomainError: undefined });
+  try {
+    if (deploymentId) appendDeploymentLog(deploymentId, "preview domain", "Configuring Caddy preview hostname.");
+    const support = await previewDomainSystemStatus(settings);
+    if (!support.importConfigured) {
+      throw new UserFacingError(`Caddy is missing ${PREVIEW_IMPORT_LINE}. Re-run the installer or add that import to ${settings.caddyMainConfig}.`, 500);
+    }
+    const app = getManagedApp(initial.id);
+    const hostname = await previewHostnameForApp(app, settings);
+    const caddyFile = previewCaddyFileForApp(app, settings);
+    const content = [
+      hostname + " {",
+      "    encode gzip zstd",
+      "    reverse_proxy 127.0.0.1:" + assertSafePort(app.localProxyPort || app.port),
+      "}",
+      ""
+    ].join("\n");
+    const temp = await writeTemp(path.basename(caddyFile), content);
+    await safeRunOrThrow("sudo", ["mkdir", "-p", assertSafeCaddySitesDir(settings.caddySitesDir)]);
+    await safeRunOrThrow("sudo", ["install", "-m", "0644", "-o", "root", "-g", "root", temp, caddyFile]);
+    const validation = await safeRun("sudo", ["caddy", "validate", "--config", assertSafeCaddyMainConfig(settings.caddyMainConfig)]);
+    if (!validation.ok) throw new Error("Caddy validation failed: " + (validation.stderr || validation.stdout));
+    const reload = await safeRun("sudo", ["systemctl", "reload", "caddy"]);
+    if (!reload.ok) throw new Error("Caddy reload failed: " + (reload.stderr || reload.stdout));
+    markApp(app.id, {
+      previewUrl: "https://" + hostname,
+      previewDomainEnabled: true,
+      previewDomainHostname: hostname,
+      previewDomainStatus: "active",
+      previewDomainError: undefined,
+      previewDomainMode: settings.previewDomainMode === "custom" ? "custom" : "sslip",
+      previewCaddyFile: caddyFile,
+      previewCaddyReloadStatus: "validated and reloaded",
+      lastMessage: `Preview domain active: https://${hostname}`
+    });
+    if (deploymentId) appendDeploymentLog(deploymentId, "preview domain", `Preview domain active: https://${hostname}`);
+  } catch (error) {
+    const app = getManagedApp(initial.id);
+    const message = error instanceof Error ? redact(error.message) : "Preview domain failed.";
+    const fallbackUrl = app.publicPreview ? await previewUrlForPort(getPublicPreviewPort(app)) : undefined;
+    markApp(app.id, {
+      previewUrl: fallbackUrl,
+      previewDomainStatus: "error",
+      previewDomainError: message,
+      previewCaddyReloadStatus: "failed",
+      lastMessage: fallbackUrl ? `Preview domain failed. Public fallback: ${fallbackUrl}` : `Preview domain failed: ${message}`
+    });
+    if (deploymentId) appendDeploymentLog(deploymentId, "preview domain warning", `Preview domain failed but deploy will stay successful: ${message}`);
+  }
+  return getManagedApp(initial.id);
+}
+
 async function waitForAppHealth(app: ManagedApp, deploymentId: string) {
-  const safePort = assertSafePort(app.port);
+  const safePort = assertSafePort(app.localProxyPort || app.port);
   const pathName = cleanHealthPath(app.healthPath || "/");
   appendDeploymentLog(deploymentId, "health check", `Waiting for ${pathName} on 127.0.0.1:${safePort}.`);
   let lastMessage = "No response yet.";
@@ -1409,8 +1563,8 @@ async function deployDockerSample(app: ManagedApp) {
 
 async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: string) {
   const container = "svp_" + app.id;
-  const containerPort = app.deployMode === "static" ? 80 : assertContainerPort(app.containerPort || 3000);
-  const hostBind = app.publicPreview ? "0.0.0.0" : "127.0.0.1";
+  const containerPort = app.deployMode === "static" ? 80 : assertContainerPort(app.internalPort || app.containerPort || 3000);
+  const localProxyPort = assertSafePort(app.localProxyPort || app.port);
   const project = app.projectId ? readState().projects.find((item) => item.id === app.projectId) : undefined;
   await ensureDockerNetwork();
   await safeRun("docker", ["rm", "-f", container]);
@@ -1444,8 +1598,11 @@ async function replaceDockerContainer(app: ManagedApp, image: string, envFile?: 
     "--network",
     "supavibe",
     "-p",
-    hostBind + ":" + app.port + ":" + containerPort
+    "127.0.0.1:" + localProxyPort + ":" + containerPort
   ];
+  if (app.publicPreview) {
+    args.push("-p", "0.0.0.0:" + getPublicPreviewPort(app) + ":" + containerPort);
+  }
   if (envFile) args.push("--env-file", envFile);
   args.push(image);
   await safeRunOrThrow("docker", args);
@@ -1538,6 +1695,7 @@ async function cleanupAppResources(app: ManagedApp) {
     await safeRun("sudo", ["rm", "-f", path.join("/etc/caddy/conf.d", "svp_" + app.id + ".caddy")]);
     await safeRun("sudo", ["systemctl", "reload", "caddy"]);
   }
+  await removePreviewDomainRoute(app);
   if (app.rootDir) {
     try {
       fs.rmSync(assertManagedPath(getAppsDir(), app.rootDir), { recursive: true, force: true });
@@ -1578,6 +1736,127 @@ function removeDeploymentFiles(deployments: Array<{ logsPath?: string }>) {
 function assertSupavibeDockerResource(value: string) {
   if (!/^svp_[a-z0-9_-]{2,120}$/.test(value)) throw new Error("Managed Docker resource name is invalid.");
   return value;
+}
+
+function normalizePreviewSettings(input: Partial<PanelSettings>) {
+  const current = readState().settings || defaultPanelSettings;
+  const candidate = { ...current, ...input };
+  const mode: PreviewDomainMode = ["sslip", "custom", "disabled"].includes(candidate.previewDomainMode) ? candidate.previewDomainMode : "sslip";
+  const start = assertSafePort(Number(candidate.localProxyPortRangeStart || defaultPanelSettings.localProxyPortRangeStart));
+  const end = assertSafePort(Number(candidate.localProxyPortRangeEnd || defaultPanelSettings.localProxyPortRangeEnd));
+  if (end <= start) throw new Error("Local proxy port range end must be greater than the start.");
+  if (end - start > 20_000) throw new Error("Local proxy port range is too large.");
+  const publicServerIp = (candidate.publicServerIp || "").trim();
+  if (publicServerIp) normalizeIpv4(publicServerIp);
+  const previewBaseDomain = (candidate.previewBaseDomain || "").trim().toLowerCase();
+  if (mode === "custom" && !previewBaseDomain) throw new Error("Custom preview mode needs a preview base domain.");
+  if (previewBaseDomain) assertSafeDomain(previewBaseDomain.replace(/^\*\./, ""));
+  return {
+    publicServerIp,
+    previewDomainMode: mode,
+    previewBaseDomain: previewBaseDomain.replace(/^\*\./, ""),
+    autoPreviewDomainsEnabled: candidate.autoPreviewDomainsEnabled !== false,
+    caddySitesDir: assertSafeCaddySitesDir(candidate.caddySitesDir || defaultPanelSettings.caddySitesDir),
+    caddyMainConfig: assertSafeCaddyMainConfig(candidate.caddyMainConfig || defaultPanelSettings.caddyMainConfig),
+    localProxyPortRangeStart: start,
+    localProxyPortRangeEnd: end
+  };
+}
+
+async function previewDomainSystemStatus(settings: PanelSettings) {
+  const normalized = normalizePreviewSettings(settings);
+  const main = await safeRead(normalized.caddyMainConfig);
+  const sitesDirExists = fs.existsSync(normalized.caddySitesDir);
+  const mainOutput = main.ok ? main.output || "" : "";
+  const importConfigured = main.ok && mainOutput.includes(PREVIEW_IMPORT_LINE);
+  return {
+    enabled: normalized.autoPreviewDomainsEnabled && normalized.previewDomainMode !== "disabled",
+    mode: normalized.previewDomainMode,
+    publicServerIp: normalized.publicServerIp,
+    baseDomain: normalized.previewBaseDomain,
+    caddyMainConfig: normalized.caddyMainConfig,
+    caddySitesDir: normalized.caddySitesDir,
+    sitesDirExists,
+    importLine: PREVIEW_IMPORT_LINE,
+    importConfigured,
+    status: importConfigured ? "ready" : "missing-import",
+    message: importConfigured ? "Caddy imports generated preview routes." : `Add "${PREVIEW_IMPORT_LINE}" to ${normalized.caddyMainConfig} or re-run the installer.`
+  };
+}
+
+async function previewHostnameForApp(app: ManagedApp, settings: PanelSettings) {
+  const project = app.projectId ? readState().projects.find((item) => item.id === app.projectId) : undefined;
+  const mode = settings.previewDomainMode === "custom" ? "custom" : "sslip";
+  const serviceSlug = slug(app.slug || app.name);
+  const projectSlug = slug(project?.slug || project?.name || "default");
+  const shortId = previewShortId(app.previewDomainHostname || app.id);
+  const left = slug(`${serviceSlug}-${projectSlug}-${shortId}`).slice(0, 63);
+  if (mode === "custom") {
+    const baseDomain = assertSafeDomain((settings.previewBaseDomain || "").replace(/^\*\./, ""));
+    return assertSafeDomain(`${left}.${baseDomain}`);
+  }
+  const ip = settings.publicServerIp?.trim() || (await fetchPublicIp()).ip || "";
+  const ipv4 = normalizeIpv4(ip);
+  return assertSafeDomain(`${left}.${ipv4.replace(/\./g, "-")}.sslip.io`);
+}
+
+function previewCaddyFileForApp(app: ManagedApp, settings: PanelSettings) {
+  const file = `preview-${slug(app.id)}.caddy`;
+  return assertSafeCaddyPreviewFile(assertSafeCaddySitesDir(settings.caddySitesDir).replace(/\/+$/, "") + "/" + file, settings);
+}
+
+async function removePreviewDomainRoute(app: ManagedApp) {
+  const settings = readState().settings;
+  const caddyFile = app.previewCaddyFile || previewCaddyFileForApp(app, settings);
+  try {
+    await safeRun("sudo", ["rm", "-f", assertSafeCaddyPreviewFile(caddyFile, settings)]);
+    await safeRun("sudo", ["systemctl", "reload", "caddy"]);
+  } catch {
+    // Route cleanup should not block app/project deletion.
+  }
+}
+
+function assertSafeCaddySitesDir(value: string) {
+  const dir = value.trim().replace(/\/+$/, "");
+  if (!dir.startsWith("/etc/caddy/") || dir.includes("..") || /[\0\r\n]/.test(dir)) {
+    throw new Error("Caddy sites directory must stay under /etc/caddy.");
+  }
+  return dir;
+}
+
+function assertSafeCaddyMainConfig(value: string) {
+  const file = value.trim();
+  if (file !== "/etc/caddy/Caddyfile") throw new Error("Only /etc/caddy/Caddyfile is supported as the main Caddy config.");
+  return file;
+}
+
+function assertSafeCaddyPreviewFile(value: string, settings: PanelSettings) {
+  const sitesDir = assertSafeCaddySitesDir(settings.caddySitesDir);
+  const file = value.trim();
+  if (!file.startsWith(sitesDir + "/") || !/^preview-[a-z0-9-]{2,90}\.caddy$/.test(file.slice(sitesDir.length + 1))) {
+    throw new Error("Preview Caddy file path is invalid.");
+  }
+  return file;
+}
+
+function normalizeIpv4(value: string) {
+  const ip = value.trim();
+  const parts = ip.split(".");
+  if (parts.length !== 4) throw new Error("sslip.io preview mode needs an IPv4 public server IP.");
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    throw new Error("Public server IP must be a valid IPv4 address.");
+  }
+  return octets.join(".");
+}
+
+function previewShortId(value: string) {
+  const clean = value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return (clean.slice(-6) || crypto.randomBytes(3).toString("hex")).slice(0, 6);
+}
+
+function getPublicPreviewPort(app: ManagedApp) {
+  return assertSafePort(app.publicPreviewPort || app.port);
 }
 
 async function safeRun(command: string, args: string[], cwd?: string): Promise<CommandOutput> {
@@ -1681,6 +1960,20 @@ async function findOpenPort() {
     if (await canListen(port)) return port;
   }
   throw new Error("Could not find an open local port.");
+}
+
+async function findOpenProxyPort(settings: PanelSettings) {
+  const start = assertSafePort(settings.localProxyPortRangeStart || defaultPanelSettings.localProxyPortRangeStart);
+  const end = assertSafePort(settings.localProxyPortRangeEnd || defaultPanelSettings.localProxyPortRangeEnd);
+  const span = Math.max(1, end - start + 1);
+  for (let attempt = 0; attempt < Math.min(span, 120); attempt += 1) {
+    const port = start + crypto.randomInt(span);
+    if (await canListen(port)) return port;
+  }
+  for (let port = start; port <= end; port += 1) {
+    if (await canListen(port)) return port;
+  }
+  throw new Error(`Could not find an open localhost proxy port in ${start}-${end}.`);
 }
 
 function canListen(port: number) {

@@ -8,6 +8,19 @@ export type AppStatus = "created" | "running" | "failed" | "stopped";
 export type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
 export type DatabaseKind = "managed-postgres" | "external-postgres" | "managed-redis";
 export type DeploymentStatus = "running" | "succeeded" | "failed";
+export type PreviewDomainMode = "sslip" | "custom" | "disabled";
+export type PreviewDomainStatus = "disabled" | "pending" | "active" | "error";
+
+export interface PanelSettings {
+  publicServerIp?: string;
+  previewDomainMode: PreviewDomainMode;
+  previewBaseDomain?: string;
+  autoPreviewDomainsEnabled: boolean;
+  caddySitesDir: string;
+  caddyMainConfig: string;
+  localProxyPortRangeStart: number;
+  localProxyPortRangeEnd: number;
+}
 
 export interface AdminAccount {
   email: string;
@@ -45,6 +58,16 @@ export interface ManagedApp {
   publicPreview?: boolean;
   previewUrl?: string;
   portBind?: "localhost" | "public";
+  internalPort?: number;
+  localProxyPort?: number;
+  publicPreviewPort?: number;
+  previewDomainEnabled?: boolean;
+  previewDomainHostname?: string;
+  previewDomainStatus?: PreviewDomainStatus;
+  previewDomainError?: string;
+  previewDomainMode?: Exclude<PreviewDomainMode, "disabled">;
+  previewCaddyFile?: string;
+  previewCaddyReloadStatus?: string;
   commitSha?: string;
   deployMode?: "dockerfile" | "node" | "static" | "compose";
   buildCommand?: string;
@@ -133,7 +156,18 @@ export interface PanelState {
   databases: DatabaseResource[];
   audit: AuditEvent[];
   deployments: DeploymentEvent[];
+  settings: PanelSettings;
 }
+
+export const defaultPanelSettings: PanelSettings = {
+  previewDomainMode: "sslip",
+  previewBaseDomain: "",
+  autoPreviewDomainsEnabled: true,
+  caddySitesDir: "/etc/caddy/supavibe/sites",
+  caddyMainConfig: "/etc/caddy/Caddyfile",
+  localProxyPortRangeStart: 31000,
+  localProxyPortRangeEnd: 39999
+};
 
 const initialState: PanelState = {
   version: 1,
@@ -143,7 +177,8 @@ const initialState: PanelState = {
   apps: [],
   databases: [],
   audit: [],
-  deployments: []
+  deployments: [],
+  settings: defaultPanelSettings
 };
 
 export function getDataDir() {
@@ -181,12 +216,18 @@ export function readState(): PanelState {
   ensureDataDir();
   try {
     const parsed = JSON.parse(fs.readFileSync(getStatePath(), "utf8")) as PanelState;
+    let changed = false;
     const next = {
       ...initialState,
       ...parsed,
+      settings: normalizeSettings(parsed.settings),
       sessions: (parsed.sessions || []).filter((session) => new Date(session.expiresAt).getTime() > Date.now()),
       projects: (parsed.projects || []).map((project) => ({ ...project, slug: project.slug || slug(project.name || project.id) })),
-      apps: (parsed.apps || []).map((app) => ({ ...app, slug: app.slug || slug(app.name || app.id) })),
+      apps: (parsed.apps || []).map((app) => {
+        const normalized = normalizeApp(app);
+        if (JSON.stringify(normalized) !== JSON.stringify(app)) changed = true;
+        return normalized;
+      }),
       databases: (parsed.databases || []).map((database) => ({ ...database, slug: database.slug || slug(database.name || database.id) })),
       audit: parsed.audit || [],
       deployments: parsed.deployments || []
@@ -195,6 +236,8 @@ export function readState(): PanelState {
       const now = new Date().toISOString();
       next.projects = [{ id: "default", name: "Default Project", slug: "default", description: next.apps.length > 0 ? "Imported prototype apps" : "First project workspace", createdAt: now, updatedAt: now }];
       next.apps = next.apps.map((app) => ({ ...app, projectId: app.projectId || "default" }));
+      writeState(next);
+    } else if (changed || !parsed.settings) {
       writeState(next);
     }
     return next;
@@ -209,6 +252,46 @@ export function readState(): PanelState {
     writeState(initialState);
     return initialState;
   }
+}
+
+function normalizeSettings(settings?: Partial<PanelSettings>): PanelSettings {
+  const start = Number(settings?.localProxyPortRangeStart || defaultPanelSettings.localProxyPortRangeStart);
+  const end = Number(settings?.localProxyPortRangeEnd || defaultPanelSettings.localProxyPortRangeEnd);
+  const mode = settings?.previewDomainMode || defaultPanelSettings.previewDomainMode;
+  return {
+    ...defaultPanelSettings,
+    ...settings,
+    previewDomainMode: ["sslip", "custom", "disabled"].includes(mode) ? mode : "sslip",
+    publicServerIp: settings?.publicServerIp || "",
+    previewBaseDomain: settings?.previewBaseDomain || "",
+    autoPreviewDomainsEnabled: settings?.autoPreviewDomainsEnabled !== false,
+    caddySitesDir: settings?.caddySitesDir || defaultPanelSettings.caddySitesDir,
+    caddyMainConfig: settings?.caddyMainConfig || defaultPanelSettings.caddyMainConfig,
+    localProxyPortRangeStart: Number.isInteger(start) ? start : defaultPanelSettings.localProxyPortRangeStart,
+    localProxyPortRangeEnd: Number.isInteger(end) ? end : defaultPanelSettings.localProxyPortRangeEnd
+  };
+}
+
+function normalizeApp(app: ManagedApp): ManagedApp {
+  const slugged = app.slug || slug(app.name || app.id);
+  const internalPort = app.internalPort || app.containerPort || (app.deployMode === "static" ? 80 : undefined);
+  const localProxyPort = app.localProxyPort || app.port || undefined;
+  const publicPreviewPort = app.publicPreviewPort || (app.publicPreview && app.portBind === "public" ? app.port : undefined);
+  const previewDomainEnabled = app.previewDomainEnabled ?? (app.source === "git" || app.sourceType === "git-url");
+  const previewDomainStatus =
+    app.previewDomainStatus ||
+    (app.previewDomainHostname ? "active" : previewDomainEnabled ? "pending" : "disabled");
+  return {
+    ...app,
+    slug: slugged,
+    internalPort,
+    localProxyPort,
+    publicPreviewPort,
+    previewDomainEnabled,
+    previewDomainStatus,
+    port: localProxyPort || app.port || 0,
+    portBind: app.publicPreview ? "public" : "localhost"
+  };
 }
 
 export function writeState(state: PanelState) {
@@ -250,6 +333,7 @@ export function publicState() {
   const state = readState();
   return {
     setupRequired: !state.admin,
+    settings: state.settings,
     projects: state.projects,
     apps: state.apps.map(({ rootDir: _rootDir, ...app }) => app),
     databases: state.databases.map(({ secretPath: _secretPath, ...database }) => database),
