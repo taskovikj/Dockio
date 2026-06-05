@@ -1095,6 +1095,12 @@ export function PanelShell() {
                         Open URL
                       </a>
                     )}
+                    {!activePreviewUrl && selectedService.status === "running" && (
+                      <button className="svp-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy)}>
+                        <RefreshCw size={15} />
+                        {selectedService.previewDomainStatus === "error" ? "Fix Preview" : "Generate Preview URL"}
+                      </button>
+                    )}
                     <button className="svp-button" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
                       <RefreshCw size={15} />
                       Redeploy
@@ -1191,7 +1197,14 @@ export function PanelShell() {
 
             <Panel title="URLs" icon={Globe2}>
               <div className="grid gap-3 lg:grid-cols-3">
-                <UrlCard title="Auto preview domain" url={previewUrl(selectedService, vpsIp)} help={previewHelp(selectedService)} />
+                <UrlCard
+                  title="Auto preview domain"
+                  url={previewUrl(selectedService, vpsIp)}
+                  help={previewHelp(selectedService)}
+                  actionLabel={selectedService.previewDomainStatus === "error" ? "Fix Preview" : "Generate Preview URL"}
+                  onAction={() => void regeneratePreview(selectedService.id)}
+                  actionDisabled={Boolean(busy) || selectedService.status !== "running"}
+                />
                 <UrlCard title="Domain" url={selectedService.domain ? `https://${selectedService.domain}` : ""} help="Production URL through Caddy on ports 80/443." />
                 <Info title="Internal route" body={selectedService.localProxyPort || selectedService.port ? `127.0.0.1:${selectedService.localProxyPort || selectedService.port} -> :${selectedService.internalPort || selectedService.containerPort || selectedService.port}` : "No runtime port"} />
               </div>
@@ -1353,7 +1366,7 @@ export function PanelShell() {
         {tab === "services" && (
           <div className="space-y-4">
             <Panel title="Services" icon={Server}>
-              <AppGrid apps={apps} projects={projects} databases={databases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} onEdit={editGitDeployment} onOpen={openService} />
+              <AppGrid apps={apps} projects={projects} databases={databases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} onPreview={regeneratePreview} onEdit={editGitDeployment} onOpen={openService} />
             </Panel>
             <Panel title="Service Roles" icon={Boxes}>
               <div className="grid gap-3 md:grid-cols-4">
@@ -2097,7 +2110,21 @@ function ComingSoonItem({ label }: { label: string }) {
   );
 }
 
-function UrlCard({ title, url, help }: { title: string; url: string; help: string }) {
+function UrlCard({
+  title,
+  url,
+  help,
+  actionLabel,
+  onAction,
+  actionDisabled
+}: {
+  title: string;
+  url: string;
+  help: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  actionDisabled?: boolean;
+}) {
   return (
     <div className="rounded-md border border-line bg-panel p-3">
       <p className="font-black text-ink">{title}</p>
@@ -2117,6 +2144,12 @@ function UrlCard({ title, url, help }: { title: string; url: string; help: strin
         </>
       ) : (
         <p className="mt-2 text-sm text-zinc-500">Not configured</p>
+      )}
+      {actionLabel && onAction && (
+        <button className="svp-button-primary mt-3" onClick={onAction} disabled={actionDisabled}>
+          <RefreshCw size={14} />
+          {actionLabel}
+        </button>
       )}
       <p className="mt-3 text-xs text-zinc-500">{help}</p>
     </div>
@@ -2271,6 +2304,7 @@ function AppGrid({
   onLogs,
   onStop,
   onAction,
+  onPreview,
   onEdit,
   onOpen
 }: {
@@ -2281,6 +2315,7 @@ function AppGrid({
   onLogs: (id: string) => Promise<void>;
   onStop: (id: string) => Promise<void>;
   onAction: (id: string, action: "start" | "restart" | "redeploy" | "health" | "delete") => Promise<void>;
+  onPreview: (id: string) => Promise<void>;
   onEdit: (app: ManagedApp) => void;
   onOpen: (app: ManagedApp) => void;
 }) {
@@ -2315,6 +2350,17 @@ function AppGrid({
               <Terminal size={14} />
               Logs
             </button>
+            {appPreview ? (
+              <a className="svp-button-primary" href={appPreview} target="_blank" rel="noreferrer">
+                <ExternalLink size={14} />
+                Open Preview
+              </a>
+            ) : app.status === "running" ? (
+              <button className="svp-button-primary" onClick={() => void onPreview(app.id)}>
+                <RefreshCw size={14} />
+                {app.previewDomainStatus === "error" ? "Fix Preview" : "Generate Preview"}
+              </button>
+            ) : null}
             <button className="svp-button" onClick={() => onOpen(app)}>
               <Settings size={14} />
               Manage
