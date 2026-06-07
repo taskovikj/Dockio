@@ -704,7 +704,11 @@ export function PanelShell() {
   }
 
   async function startGitHubManifestConnection() {
-    const publicDockioUrl = (githubManifestForm.publicDockioUrl || githubConnectionForm.publicDockioUrl || state?.settings.publicDockioUrl || window.location.origin).trim();
+    const publicDockioUrl = (githubManifestForm.publicDockioUrl || githubConnectionForm.publicDockioUrl || safeBrowserOrigin()).trim();
+    if (!publicDockioUrl) {
+      setNotice("Enter the real panel URL first, for example http://94.130.177.226:3099. Do not use 0.0.0.0.");
+      return;
+    }
     await run("Opening GitHub", async () => {
       const result = await api<GitHubManifestStartResult>("/api/git/github/manifest/start", {
         method: "POST",
@@ -1538,10 +1542,15 @@ export function PanelShell() {
                               Dockio creates a private GitHub App with read-only repository access, then you choose which repositories it can deploy.
                             </p>
                             <div className="mt-4 grid gap-3 md:grid-cols-2">
-                              <Field label="Dockio public URL" value={githubManifestForm.publicDockioUrl || state?.settings.publicDockioUrl || ""} onChange={(publicDockioUrl) => setGithubManifestForm({ ...githubManifestForm, publicDockioUrl })} placeholder={typeof window !== "undefined" ? window.location.origin : "https://panel.example.com"} />
+                              <Field label="Dockio public URL" value={githubManifestForm.publicDockioUrl || state?.settings.publicDockioUrl || ""} onChange={(publicDockioUrl) => setGithubManifestForm({ ...githubManifestForm, publicDockioUrl })} placeholder={safeBrowserOrigin() || "http://SERVER_IP:3099"} />
                               <Field label="GitHub App name" value={githubManifestForm.name} onChange={(name) => setGithubManifestForm({ ...githubManifestForm, name })} />
                               <Field label="Organization optional" value={githubManifestForm.owner} onChange={(owner) => setGithubManifestForm({ ...githubManifestForm, owner })} placeholder="leave blank for personal account" />
                             </div>
+                            {isWildcardPanelUrl(githubManifestForm.publicDockioUrl || state?.settings.publicDockioUrl || "") && (
+                              <p className="mt-3 rounded-md border border-red-900/70 bg-red-950/20 p-3 text-xs text-red-100">
+                                Use the real server IP or domain, for example http://94.130.177.226:3099. GitHub cannot redirect a browser to 0.0.0.0.
+                              </p>
+                            )}
                             {(githubManifestForm.publicDockioUrl || state?.settings.publicDockioUrl || "").startsWith("http://") && (
                               <p className="mt-3 rounded-md border border-yellow-900/70 bg-yellow-950/20 p-3 text-xs text-yellow-100">
                                 HTTP is okay for a quick private test. Use HTTPS before relying on webhooks or exposing the panel publicly.
@@ -3544,12 +3553,38 @@ function isGitManagedService(app?: ManagedApp) {
   return app.source === "git" || ["git-url", "public_git", "github-app"].includes(app.sourceType || "");
 }
 
+function safeBrowserOrigin() {
+  if (typeof window === "undefined") return "";
+  try {
+    const url = new URL(window.location.href);
+    return isWildcardHostname(url.hostname) ? "" : url.origin;
+  } catch {
+    return "";
+  }
+}
+
+function isWildcardPanelUrl(value: string) {
+  const raw = value.trim();
+  if (!raw) return false;
+  try {
+    return isWildcardHostname(new URL(raw).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isWildcardHostname(hostname: string) {
+  const host = hostname.toLowerCase();
+  return host === "0.0.0.0" || host === "::" || host === "[::]" || host === "0:0:0:0:0:0:0:0";
+}
+
 function webhookUrlFromSettings(publicDockioUrl: string) {
   const value = publicDockioUrl.trim().replace(/\/+$/, "");
   if (!value) return "";
   try {
     const parsed = new URL(value);
     if (!["http:", "https:"].includes(parsed.protocol)) return "";
+    if (isWildcardHostname(parsed.hostname)) return "";
     return `${value}/api/webhooks/github`;
   } catch {
     return "";

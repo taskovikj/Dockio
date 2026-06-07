@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ZodError } from "zod";
 import { authState, createAdmin, login, logout, requireAuth, requireCsrf } from "../../lib/auth";
 import { ensureSameOrigin, rateLimit, requireSetupCode, requireTrustedNetwork, securityHeaders } from "../../lib/security";
-import { publicState } from "../../lib/state";
+import { publicState, readState } from "../../lib/state";
 import {
   analyzeGitRepo,
   applyFirewallBaseline,
@@ -489,7 +489,7 @@ async function githubManifestCallback(request: Request, requestId: string) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code") || "";
   const state = url.searchParams.get("state") || "";
-  const target = new URL("/", request.url);
+  const target = new URL("/", browserRedirectOrigin(request));
   target.hash = "tab=git";
   try {
     await completeGitHubManifestFlow({ code, state });
@@ -501,6 +501,31 @@ async function githubManifestCallback(request: Request, requestId: string) {
     target.searchParams.set("message", redact(message).slice(0, 180));
     return redirect(target, requestId);
   }
+}
+
+function browserRedirectOrigin(request: Request) {
+  const configured = readState().settings.publicDockioUrl || process.env.DIO_PUBLIC_ORIGIN || process.env.DIO_PUBLIC_BASE_URL || "";
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || new URL(request.url).protocol.replace(":", "");
+  const forwardedOrigin = forwardedHost ? `${forwardedProto}://${forwardedHost}` : "";
+  const host = request.headers.get("host")?.split(",")[0]?.trim();
+  const hostOrigin = host ? `${forwardedProto}://${host}` : "";
+  return usableBrowserOrigin(configured) || usableBrowserOrigin(forwardedOrigin) || usableBrowserOrigin(hostOrigin) || usableBrowserOrigin(new URL(request.url).origin) || new URL(request.url).origin;
+}
+
+function usableBrowserOrigin(value: string) {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    return isWildcardHost(url.hostname) ? "" : url.origin;
+  } catch {
+    return "";
+  }
+}
+
+function isWildcardHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return host === "0.0.0.0" || host === "::" || host === "[::]" || host === "0:0:0:0:0:0:0:0";
 }
 
 async function authRoute(request: Request, segments: string[], requestId: string) {

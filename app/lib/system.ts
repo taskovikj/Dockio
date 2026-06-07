@@ -2776,6 +2776,10 @@ function recordGitWebhookEvent(input: {
 
 function cleanPublicUrl(value: string) {
   const origin = assertSafeOrigin(value);
+  const hostname = new URL(origin).hostname.toLowerCase();
+  if (["0.0.0.0", "::", "[::]", "0:0:0:0:0:0:0:0"].includes(hostname)) {
+    throw new UserFacingError("Use the real panel IP or domain for Dockio public URL, not 0.0.0.0.", 400);
+  }
   return origin.replace(/\/$/, "");
 }
 
