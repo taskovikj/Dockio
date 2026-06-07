@@ -172,30 +172,28 @@ Set `DIO_KEEP_DEV_DEPS=true` only if you need to debug/build inside `/opt/dockio
 
 ## GitHub App / Private Repos
 
-Dockio supports a manual GitHub App setup flow for private repositories and push-to-deploy.
+Dockio supports a guided GitHub App connection for private repositories and optional push-to-deploy.
 
 Short version:
 
-1. Create a GitHub App in GitHub.
-2. Set repository permissions:
-   - Contents: read-only
-   - Metadata: read-only
-3. Subscribe to the Push event.
-4. Set the webhook URL to:
+1. Open **Git** in Dockio.
+2. Enter the Dockio public URL.
+3. Click **Connect GitHub**.
+4. GitHub opens the App manifest flow. Create the App and install it on selected repositories.
+5. Back in Dockio, click **Refresh Installations** and **Refresh Repositories**.
+6. Create a service and choose **GitHub App** as the source.
+7. Pick repository, branch, and root directory.
+8. Detect stack, confirm build settings, and deploy.
+
+The generated GitHub App uses read-only repository contents and metadata permissions. Dockio stores the generated private key and webhook secret encrypted locally.
+
+Manual fallback:
 
 ```txt
 https://YOUR_PUBLIC_DOCKIO_URL/api/webhooks/github
 ```
 
-5. Generate a private key for the GitHub App.
-6. In Dockio, open **Git** and save:
-   - App ID
-   - private key PEM
-   - webhook secret
-   - public Dockio URL
-   - optional install/app URLs
-7. Refresh installations, then refresh repositories.
-8. Create a service and choose **GitHub App** as the source.
+You can still create a GitHub App yourself and paste App ID, private key PEM, webhook secret, and optional app/install URLs under **Manual GitHub App setup fallback**.
 
 Manual deploys work without a public Dockio URL. Auto-deploy on push requires GitHub to reach Dockio over public HTTPS.
 

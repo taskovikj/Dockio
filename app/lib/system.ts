@@ -28,6 +28,7 @@ import {
 } from "./state";
 import {
   branchFromGitHubRef,
+  convertGitHubManifestCode,
   getInstallationAccessToken,
   githubWebhookUrl,
   listInstallationRepositories,
@@ -285,6 +286,135 @@ export async function updateAppSettings(input: {
   });
   audit("app.settings", "Updated app settings.", { appId, projectId, role, corsOrigins, databaseId });
   return readState().apps.find((item) => item.id === appId);
+}
+
+export async function createGitHubManifestFlow(input: {
+  name?: string;
+  publicDockioUrl: string;
+  owner?: string;
+}) {
+  const publicDockioUrl = cleanPublicUrl(input.publicDockioUrl);
+  const name = assertSafeAppName(input.name || "Dockio Panel GitHub");
+  const owner = cleanOptionalText(input.owner, 80);
+  if (owner && !/^[A-Za-z0-9_.-]{1,80}$/.test(owner)) {
+    throw new UserFacingError("GitHub organization/user owner contains invalid characters.", 400);
+  }
+  const stateToken = crypto.randomBytes(24).toString("base64url");
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+  const redirectUrl = joinPublicUrl(publicDockioUrl, "/api/git/github/manifest/callback");
+  const webhookUrl = githubWebhookUrl(publicDockioUrl);
+  const setupUrl = joinPublicUrl(publicDockioUrl, "/#tab=git");
+  const manifest = {
+    name,
+    url: publicDockioUrl,
+    hook_attributes: {
+      url: webhookUrl,
+      active: true
+    },
+    redirect_url: redirectUrl,
+    callback_urls: [publicDockioUrl],
+    setup_url: setupUrl,
+    public: false,
+    default_permissions: {
+      contents: "read",
+      metadata: "read"
+    },
+    default_events: ["push"]
+  };
+  const actionBase = owner
+    ? `https://github.com/organizations/${encodeURIComponent(owner)}/settings/apps/new`
+    : "https://github.com/settings/apps/new";
+  const actionUrl = `${actionBase}?state=${encodeURIComponent(stateToken)}`;
+  updateState((state) => {
+    state.gitManifestSessions = (state.gitManifestSessions || []).filter((session) => {
+      return session.status === "pending" && new Date(session.expiresAt).getTime() > Date.now();
+    });
+    state.gitManifestSessions.unshift({
+      id: "ghmanifest-" + crypto.randomBytes(5).toString("hex"),
+      provider: "github",
+      stateHash: manifestStateHash(stateToken),
+      name,
+      publicDockioUrl,
+      createdAt: now.toISOString(),
+      expiresAt,
+      status: "pending"
+    });
+    state.settings.publicDockioUrl = publicDockioUrl;
+  });
+  audit("git.github.manifest_start", "Started GitHub App manifest connection.", {
+    publicDockioUrl,
+    owner: owner || "personal",
+    webhookUrl
+  });
+  return {
+    actionUrl,
+    manifest,
+    expiresAt,
+    webhookUrl,
+    redirectUrl,
+    warning: publicDockioUrl.startsWith("https://")
+      ? ""
+      : "GitHub can register this App over HTTP, but production webhooks and public panel access should use HTTPS."
+  };
+}
+
+export async function completeGitHubManifestFlow(input: { code: string; state: string }) {
+  const stateToken = input.state.trim();
+  if (!/^[A-Za-z0-9_-]{20,200}$/.test(stateToken)) throw new UserFacingError("GitHub manifest state is invalid.", 400);
+  const stateHash = manifestStateHash(stateToken);
+  const now = Date.now();
+  const session = readState().gitManifestSessions.find((item) => item.stateHash === stateHash);
+  if (!session || session.status !== "pending") {
+    throw new UserFacingError("GitHub connection request was not found or was already used.", 400);
+  }
+  if (new Date(session.expiresAt).getTime() <= now) {
+    updateState((state) => {
+      const current = state.gitManifestSessions.find((item) => item.id === session.id);
+      if (current) current.status = "expired";
+    });
+    throw new UserFacingError("GitHub connection request expired. Start Connect GitHub again.", 400);
+  }
+
+  try {
+    const conversion = await convertGitHubManifestCode(input.code.trim());
+    const appUrl = conversion.htmlUrl || (conversion.slug ? `https://github.com/apps/${conversion.slug}` : undefined);
+    const installUrl = conversion.slug ? `https://github.com/apps/${conversion.slug}/installations/new` : undefined;
+    const connection = await saveGitHubConnection({
+      name: conversion.name || session.name,
+      appId: String(conversion.id),
+      clientId: conversion.clientId || "",
+      clientSecret: conversion.clientSecret || "",
+      appSlug: conversion.slug || "",
+      appUrl,
+      installUrl,
+      privateKey: conversion.pem,
+      webhookSecret: conversion.webhookSecret,
+      publicDockioUrl: session.publicDockioUrl
+    });
+    updateState((state) => {
+      const current = state.gitManifestSessions.find((item) => item.id === session.id);
+      if (current) {
+        current.status = "completed";
+        current.completedConnectionId = connection?.id;
+      }
+    });
+    audit("git.github.manifest_complete", "Completed GitHub App manifest connection.", {
+      connectionId: connection?.id,
+      appId: conversion.id,
+      appSlug: conversion.slug
+    });
+    return connection;
+  } catch (error) {
+    updateState((state) => {
+      const current = state.gitManifestSessions.find((item) => item.id === session.id);
+      if (current) {
+        current.status = "error";
+        current.errorMessage = error instanceof Error ? redact(error.message).slice(0, 500) : "GitHub manifest conversion failed.";
+      }
+    });
+    throw error;
+  }
 }
 
 export async function saveGitHubConnection(input: {
@@ -2647,6 +2777,24 @@ function recordGitWebhookEvent(input: {
 function cleanPublicUrl(value: string) {
   const origin = assertSafeOrigin(value);
   return origin.replace(/\/$/, "");
+}
+
+function joinPublicUrl(origin: string, pathname: string) {
+  const url = new URL(origin);
+  if (pathname.startsWith("/#")) {
+    url.pathname = "/";
+    url.search = "";
+    url.hash = pathname.slice(2);
+    return url.toString();
+  }
+  url.pathname = pathname;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function manifestStateHash(value: string) {
+  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
 function cleanOptionalUrl(value?: string) {

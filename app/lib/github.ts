@@ -43,6 +43,17 @@ export interface GitHubBranchSummary {
   protected?: boolean;
 }
 
+export interface GitHubManifestConversion {
+  id: number;
+  name: string;
+  slug?: string;
+  htmlUrl?: string;
+  pem: string;
+  webhookSecret: string;
+  clientId?: string;
+  clientSecret?: string;
+}
+
 type Json = Record<string, unknown>;
 
 const API = "https://api.github.com";
@@ -113,6 +124,31 @@ export async function listRepositoryBranches(token: string, fullName: string): P
   }).filter((branch) => branch.name);
 }
 
+export async function convertGitHubManifestCode(code: string): Promise<GitHubManifestConversion> {
+  if (!/^[A-Za-z0-9_-]{8,200}$/.test(code)) {
+    throw new UserFacingError("GitHub manifest callback code is invalid.", 400);
+  }
+  const json = await githubPublicRequest<Json>(`/app-manifests/${encodeURIComponent(code)}/conversions`, {
+    method: "POST"
+  });
+  const id = Number(json.id);
+  const pem = String(json.pem || "");
+  const webhookSecret = String(json.webhook_secret || "");
+  if (!Number.isInteger(id) || !pem || !webhookSecret) {
+    throw new UserFacingError("GitHub did not return a complete App manifest conversion.", 502);
+  }
+  return {
+    id,
+    name: String(json.name || "GitHub"),
+    slug: typeof json.slug === "string" ? json.slug : undefined,
+    htmlUrl: typeof json.html_url === "string" ? json.html_url : undefined,
+    pem,
+    webhookSecret,
+    clientId: typeof json.client_id === "string" ? json.client_id : undefined,
+    clientSecret: typeof json.client_secret === "string" ? json.client_secret : undefined
+  };
+}
+
 export function verifyGitHubSignature(rawBody: string, secret: string, signatureHeader: string | null) {
   if (!signatureHeader) return false;
   const expected = "sha256=" + crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
@@ -166,6 +202,32 @@ async function githubRequest<T>(path: string, options: { method?: string; token:
     headers: {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${options.token}`,
+      "User-Agent": "Dockio-Panel/0.1",
+      "X-GitHub-Api-Version": "2022-11-28",
+      ...(options.body ? { "Content-Type": "application/json" } : {})
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: AbortSignal.timeout(30_000)
+  });
+  const text = await response.text();
+  let parsed: unknown = {};
+  try {
+    parsed = text ? JSON.parse(text) as unknown : {};
+  } catch {
+    parsed = { message: text.slice(0, 300) };
+  }
+  if (!response.ok) {
+    const message = typeof parsed === "object" && parsed && "message" in parsed ? String((parsed as { message?: string }).message) : response.statusText;
+    throw new UserFacingError(`GitHub API error: ${redact(message)}`, response.status >= 500 ? 502 : 400);
+  }
+  return parsed as T;
+}
+
+async function githubPublicRequest<T>(path: string, options: { method?: string; body?: unknown }): Promise<T> {
+  const response = await fetch(API + path, {
+    method: options.method || "GET",
+    headers: {
+      Accept: "application/vnd.github+json",
       "User-Agent": "Dockio-Panel/0.1",
       "X-GitHub-Api-Version": "2022-11-28",
       ...(options.body ? { "Content-Type": "application/json" } : {})

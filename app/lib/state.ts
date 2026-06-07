@@ -234,6 +234,19 @@ export interface GitWebhookEvent {
   createdAt: string;
 }
 
+export interface GitManifestSession {
+  id: string;
+  provider: "github";
+  stateHash: string;
+  name: string;
+  publicDockioUrl: string;
+  createdAt: string;
+  expiresAt: string;
+  status: "pending" | "completed" | "expired" | "error";
+  completedConnectionId?: string;
+  errorMessage?: string;
+}
+
 export interface PanelState {
   version: 1;
   admin: AdminAccount | null;
@@ -248,6 +261,7 @@ export interface PanelState {
   gitInstallations: GitInstallation[];
   gitRepositories: GitRepository[];
   gitWebhookEvents: GitWebhookEvent[];
+  gitManifestSessions: GitManifestSession[];
 }
 
 export const defaultPanelSettings: PanelSettings = {
@@ -274,7 +288,8 @@ const initialState: PanelState = {
   gitConnections: [],
   gitInstallations: [],
   gitRepositories: [],
-  gitWebhookEvents: []
+  gitWebhookEvents: [],
+  gitManifestSessions: []
 };
 
 export function getDataDir() {
@@ -330,7 +345,8 @@ export function readState(): PanelState {
       gitConnections: (parsed.gitConnections || []).map(normalizeGitConnection),
       gitInstallations: (parsed.gitInstallations || []).map(normalizeGitInstallation),
       gitRepositories: (parsed.gitRepositories || []).map(normalizeGitRepository),
-      gitWebhookEvents: (parsed.gitWebhookEvents || []).slice(0, 200)
+      gitWebhookEvents: (parsed.gitWebhookEvents || []).slice(0, 200),
+      gitManifestSessions: (parsed.gitManifestSessions || []).map(normalizeGitManifestSession).slice(0, 50)
     };
     if (next.projects.length === 0) {
       const now = new Date().toISOString();
@@ -450,6 +466,19 @@ function normalizeGitRepository(repository: GitRepository): GitRepository {
     private: Boolean(repository.private),
     archived: Boolean(repository.archived),
     disabled: Boolean(repository.disabled)
+  };
+}
+
+function normalizeGitManifestSession(session: GitManifestSession): GitManifestSession {
+  const status = ["pending", "completed", "expired", "error"].includes(session.status) ? session.status : "pending";
+  return {
+    ...session,
+    provider: "github",
+    status,
+    name: session.name || "Dockio GitHub",
+    publicDockioUrl: session.publicDockioUrl || "",
+    createdAt: session.createdAt || new Date().toISOString(),
+    expiresAt: session.expiresAt || new Date(Date.now() + 60 * 60 * 1000).toISOString()
   };
 }
 

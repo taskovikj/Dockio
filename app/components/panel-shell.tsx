@@ -261,6 +261,15 @@ interface GitWebhookEvent {
   createdAt: string;
 }
 
+interface GitHubManifestStartResult {
+  actionUrl: string;
+  manifest: Record<string, unknown>;
+  expiresAt: string;
+  webhookUrl: string;
+  redirectUrl: string;
+  warning?: string;
+}
+
 interface DetectedService {
   id: string;
   name: string;
@@ -432,6 +441,11 @@ export function PanelShell() {
     webhookSecret: "",
     publicDockioUrl: ""
   });
+  const [githubManifestForm, setGithubManifestForm] = useState({
+    name: "Dockio Panel GitHub",
+    owner: "",
+    publicDockioUrl: ""
+  });
   const [imageForm, setImageForm] = useState({ name: "Docker Image App", projectId: "", serviceRole: "fullstack" as ServiceRole, image: "nginx:1.27-alpine", containerPort: "80", healthPath: "/", envText: "", previewDomainEnabled: true, publicPreview: false });
   const [composeForm, setComposeForm] = useState({ name: "Compose Stack", projectId: "", repoUrl: "", branch: "main", envText: "" });
   const [composeYamlForm, setComposeYamlForm] = useState({ name: "Pasted Compose Stack", projectId: "", composeYaml: "services:\n  web:\n    image: nginx:1.27-alpine\n    restart: unless-stopped\n", envText: "" });
@@ -465,6 +479,21 @@ export function PanelShell() {
 
   useEffect(() => {
     void boot();
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const github = params.get("github");
+    if (!github) return;
+    if (github === "connected") {
+      setNotice("GitHub App connected. Install it on repositories if needed, then refresh installations and repositories.");
+    } else if (github === "error") {
+      setNotice(params.get("message") || "GitHub connection failed.");
+    }
+    params.delete("github");
+    params.delete("message");
+    const nextSearch = params.toString();
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`);
   }, []);
 
   useEffect(() => {
@@ -532,6 +561,7 @@ export function PanelShell() {
     setStatus(nextStatus);
     setPreviewSettingsForm(nextState.settings);
     setGithubConnectionForm((form) => ({ ...form, publicDockioUrl: form.publicDockioUrl || nextState.settings.publicDockioUrl || "" }));
+    setGithubManifestForm((form) => ({ ...form, publicDockioUrl: form.publicDockioUrl || nextState.settings.publicDockioUrl || "" }));
     const defaultApp = selectedProjectId ? nextState.apps.find((app) => app.projectId === selectedProjectId) : nextState.apps[0];
     setDomainForm((form) => ({
       ...form,
@@ -671,6 +701,36 @@ export function PanelShell() {
       setNotice("GitHub App connection saved. Refresh installations next.");
       await refresh();
     });
+  }
+
+  async function startGitHubManifestConnection() {
+    const publicDockioUrl = (githubManifestForm.publicDockioUrl || githubConnectionForm.publicDockioUrl || state?.settings.publicDockioUrl || window.location.origin).trim();
+    await run("Opening GitHub", async () => {
+      const result = await api<GitHubManifestStartResult>("/api/git/github/manifest/start", {
+        method: "POST",
+        csrfToken,
+        body: {
+          ...githubManifestForm,
+          publicDockioUrl
+        }
+      });
+      setNotice(result.warning || "Opening GitHub to create the App. Choose the account and approve repository access there.");
+      submitGitHubManifest(result.actionUrl, result.manifest);
+    });
+  }
+
+  function submitGitHubManifest(actionUrl: string, manifest: Record<string, unknown>) {
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = actionUrl;
+    form.style.display = "none";
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "manifest";
+    input.value = JSON.stringify(manifest);
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
   }
 
   async function disconnectGitHub(connectionId: string) {
@@ -1469,44 +1529,73 @@ export function PanelShell() {
               {tab === "git" && (
                 <div className="space-y-5">
                   <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-                    <Panel title="GitHub App Connection" icon={Github}>
-                      <div className="grid gap-4 lg:grid-cols-2">
-                        <div className="grid gap-3">
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <Field label="Connection name" value={githubConnectionForm.name} onChange={(name) => setGithubConnectionForm({ ...githubConnectionForm, name })} />
-                            <Field label="GitHub App ID" value={githubConnectionForm.appId} onChange={(appId) => setGithubConnectionForm({ ...githubConnectionForm, appId })} placeholder="123456" />
-                            <Field label="Client ID optional" value={githubConnectionForm.clientId} onChange={(clientId) => setGithubConnectionForm({ ...githubConnectionForm, clientId })} placeholder="Iv1..." />
-                            <Field label="App slug optional" value={githubConnectionForm.appSlug} onChange={(appSlug) => setGithubConnectionForm({ ...githubConnectionForm, appSlug })} placeholder="dockio-panel" />
-                            <Field label="App URL optional" value={githubConnectionForm.appUrl} onChange={(appUrl) => setGithubConnectionForm({ ...githubConnectionForm, appUrl })} placeholder="https://github.com/apps/your-app" />
-                            <Field label="Install URL optional" value={githubConnectionForm.installUrl} onChange={(installUrl) => setGithubConnectionForm({ ...githubConnectionForm, installUrl })} placeholder="https://github.com/apps/your-app/installations/new" />
+                    <Panel title="Connect GitHub" icon={Github}>
+                      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+                        <div className="grid gap-4">
+                          <div className="rounded-md border border-action/50 bg-action/10 p-4">
+                            <p className="text-sm font-black text-ink">Recommended: guided GitHub App setup</p>
+                            <p className="mt-1 text-sm text-zinc-400">
+                              Dockio creates a private GitHub App with read-only repository access, then you choose which repositories it can deploy.
+                            </p>
+                            <div className="mt-4 grid gap-3 md:grid-cols-2">
+                              <Field label="Dockio public URL" value={githubManifestForm.publicDockioUrl || state?.settings.publicDockioUrl || ""} onChange={(publicDockioUrl) => setGithubManifestForm({ ...githubManifestForm, publicDockioUrl })} placeholder={typeof window !== "undefined" ? window.location.origin : "https://panel.example.com"} />
+                              <Field label="GitHub App name" value={githubManifestForm.name} onChange={(name) => setGithubManifestForm({ ...githubManifestForm, name })} />
+                              <Field label="Organization optional" value={githubManifestForm.owner} onChange={(owner) => setGithubManifestForm({ ...githubManifestForm, owner })} placeholder="leave blank for personal account" />
+                            </div>
+                            {(githubManifestForm.publicDockioUrl || state?.settings.publicDockioUrl || "").startsWith("http://") && (
+                              <p className="mt-3 rounded-md border border-yellow-900/70 bg-yellow-950/20 p-3 text-xs text-yellow-100">
+                                HTTP is okay for a quick private test. Use HTTPS before relying on webhooks or exposing the panel publicly.
+                              </p>
+                            )}
+                            <div className="mt-4 flex flex-wrap items-center gap-2">
+                              <button className="dio-button-primary" onClick={() => void startGitHubManifestConnection()} disabled={Boolean(busy)}>
+                                <Github size={16} />
+                                Connect GitHub
+                              </button>
+                              <span className="text-xs text-zinc-500">GitHub will ask where to install the App and which repositories to allow.</span>
+                            </div>
                           </div>
-                          <Field label="Public Dockio URL for webhooks" value={githubConnectionForm.publicDockioUrl || state?.settings.publicDockioUrl || ""} onChange={(publicDockioUrl) => setGithubConnectionForm({ ...githubConnectionForm, publicDockioUrl })} placeholder="https://panel.example.com" />
-                          <TextArea label="Private key PEM" value={githubConnectionForm.privateKey} onChange={(privateKey) => setGithubConnectionForm({ ...githubConnectionForm, privateKey })} placeholder={"-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"} />
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <Field label="Webhook secret" value={githubConnectionForm.webhookSecret} onChange={(webhookSecret) => setGithubConnectionForm({ ...githubConnectionForm, webhookSecret })} placeholder="long random secret" />
-                            <Field label="Client secret optional" value={githubConnectionForm.clientSecret} onChange={(clientSecret) => setGithubConnectionForm({ ...githubConnectionForm, clientSecret })} type="password" />
-                          </div>
-                          <button className="dio-button-primary w-fit" onClick={() => void saveGitHubConnection()} disabled={Boolean(busy) || !githubConnectionForm.appId.trim() || !githubConnectionForm.privateKey.trim() || !githubConnectionForm.webhookSecret.trim()}>
-                            <KeyRound size={16} />
-                            Save GitHub App
-                          </button>
+
+                          <details className="rounded-md border border-line bg-panel p-4">
+                            <summary className="cursor-pointer text-sm font-bold text-ink">Manual GitHub App setup fallback</summary>
+                            <div className="mt-4 grid gap-3">
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <Field label="Connection name" value={githubConnectionForm.name} onChange={(name) => setGithubConnectionForm({ ...githubConnectionForm, name })} />
+                                <Field label="GitHub App ID" value={githubConnectionForm.appId} onChange={(appId) => setGithubConnectionForm({ ...githubConnectionForm, appId })} placeholder="123456" />
+                                <Field label="Client ID optional" value={githubConnectionForm.clientId} onChange={(clientId) => setGithubConnectionForm({ ...githubConnectionForm, clientId })} placeholder="Iv1..." />
+                                <Field label="App slug optional" value={githubConnectionForm.appSlug} onChange={(appSlug) => setGithubConnectionForm({ ...githubConnectionForm, appSlug })} placeholder="dockio-panel" />
+                                <Field label="App URL optional" value={githubConnectionForm.appUrl} onChange={(appUrl) => setGithubConnectionForm({ ...githubConnectionForm, appUrl })} placeholder="https://github.com/apps/your-app" />
+                                <Field label="Install URL optional" value={githubConnectionForm.installUrl} onChange={(installUrl) => setGithubConnectionForm({ ...githubConnectionForm, installUrl })} placeholder="https://github.com/apps/your-app/installations/new" />
+                              </div>
+                              <Field label="Public Dockio URL for webhooks" value={githubConnectionForm.publicDockioUrl || state?.settings.publicDockioUrl || ""} onChange={(publicDockioUrl) => setGithubConnectionForm({ ...githubConnectionForm, publicDockioUrl })} placeholder="https://panel.example.com" />
+                              <TextArea label="Private key PEM" value={githubConnectionForm.privateKey} onChange={(privateKey) => setGithubConnectionForm({ ...githubConnectionForm, privateKey })} placeholder={"-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"} />
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <Field label="Webhook secret" value={githubConnectionForm.webhookSecret} onChange={(webhookSecret) => setGithubConnectionForm({ ...githubConnectionForm, webhookSecret })} placeholder="long random secret" />
+                                <Field label="Client secret optional" value={githubConnectionForm.clientSecret} onChange={(clientSecret) => setGithubConnectionForm({ ...githubConnectionForm, clientSecret })} type="password" />
+                              </div>
+                              <button className="dio-button w-fit" onClick={() => void saveGitHubConnection()} disabled={Boolean(busy) || !githubConnectionForm.appId.trim() || !githubConnectionForm.privateKey.trim() || !githubConnectionForm.webhookSecret.trim()}>
+                                <KeyRound size={16} />
+                                Save Manual App
+                              </button>
+                            </div>
+                          </details>
                         </div>
                         <div className="grid content-start gap-3">
-                          <Info title="GitHub App permissions" body="Set Repository Contents read-only, Metadata read-only, and subscribe to Push events. Webhooks must point to the Dockio URL below." />
-                          <Info title="Webhook URL" body={webhookUrl || "Set a public HTTPS Dockio URL to show the webhook endpoint."} />
+                          <Info title="What Dockio requests" body="Repository contents read-only and metadata read-only. Push events are used only when you enable auto-deploy for a service." />
+                          <Info title="Webhook URL" body={webhookUrl || "Set the Dockio public URL above to generate the webhook endpoint."} />
                           {webhookUrl && (
                             <button className="dio-button w-fit" onClick={() => void navigator.clipboard?.writeText(webhookUrl)}>
                               <Copy size={14} />
                               Copy Webhook URL
                             </button>
                           )}
-                          <Info title="Security" body="Private keys and webhook secrets are encrypted locally. Installation tokens are generated only when syncing, detecting, or deploying." />
+                          <Info title="Security" body="Private keys, webhook secrets, and optional client secrets are encrypted locally. Clone tokens are short-lived and passed through temporary askpass files." />
                         </div>
                       </div>
                     </Panel>
                     <Panel title="Connected GitHub" icon={Github}>
                       <div className="grid gap-3">
-                        {gitConnections.length === 0 && <p className="text-sm text-zinc-500">No GitHub App connection yet. Save the manual setup form first.</p>}
+                        {gitConnections.length === 0 && <p className="text-sm text-zinc-500">No GitHub App connection yet. Use Connect GitHub above, then install it on selected repositories.</p>}
                         {gitConnections.map((connection) => (
                           <div key={connection.id} className="rounded-md border border-line bg-panel p-3">
                             <div className="flex items-start justify-between gap-3">
@@ -2717,8 +2806,8 @@ export function PanelShell() {
                     {gitConnections.length === 0 ? (
                       <div className="rounded-md border border-yellow-900/70 bg-yellow-950/20 p-4 text-sm text-yellow-100">
                         <p className="font-bold">GitHub App is not connected yet.</p>
-                        <p className="mt-1 text-yellow-200/80">Open the Git page, save a GitHub App connection, then refresh installations and repositories.</p>
-                        <button className="dio-button mt-3" onClick={() => openGlobalTab("git")}>Open Git Settings</button>
+                        <p className="mt-1 text-yellow-200/80">Open Git, click Connect GitHub, install the App on your repositories, then come back here to pick repo and branch.</p>
+                        <button className="dio-button mt-3" onClick={() => openGlobalTab("git")}>Connect GitHub</button>
                       </div>
                     ) : (
                       <>

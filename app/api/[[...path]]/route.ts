@@ -32,6 +32,8 @@ import {
   gitIntegrationStatus,
   handleGitHubWebhook,
   analyzeGitHubRepository,
+  completeGitHubManifestFlow,
+  createGitHubManifestFlow,
   readAppLogs,
   readDeploymentLogs,
   redeployApp,
@@ -150,6 +152,12 @@ const githubConnectionSchema = z.object({
   publicDockioUrl: z.string().max(240).optional().default("")
 });
 
+const githubManifestStartSchema = z.object({
+  name: z.string().min(1).max(80).optional().default("Dockio Panel GitHub"),
+  publicDockioUrl: z.string().url().max(240),
+  owner: z.string().max(80).optional().default("")
+});
+
 const githubDeploySchema = gitDeploySchema.omit({ repoUrl: true }).extend({
   gitInstallationId: z.string().min(1).max(120),
   gitRepositoryId: z.string().min(1).max(120),
@@ -263,6 +271,10 @@ async function route(request: Request, context: RouteContext) {
       rateLimit(request, { key: "github-webhook", limit: 120, windowMs: 60_000 });
       return ok(await handleGitHubWebhook(request), 202, requestId);
     }
+    if (segments[0] === "git" && segments[1] === "github" && segments[2] === "manifest" && segments[3] === "callback" && request.method === "GET") {
+      requireTrustedNetwork(request);
+      return await githubManifestCallback(request, requestId);
+    }
     requireTrustedNetwork(request);
     ensureSameOrigin(request);
 
@@ -285,6 +297,10 @@ async function route(request: Request, context: RouteContext) {
     }
     if (segments[0] === "git" && segments[1] === "status" && request.method === "GET") {
       return ok(gitIntegrationStatus(), 200, requestId);
+    }
+    if (segments[0] === "git" && segments[1] === "github" && segments[2] === "manifest" && segments[3] === "start" && request.method === "POST") {
+      rateLimit(request, { key: "github-manifest-start", limit: 8, windowMs: 60_000 });
+      return ok(await createGitHubManifestFlow(githubManifestStartSchema.parse(await request.json())), 201, requestId);
     }
     if (segments[0] === "git" && segments[1] === "github" && segments[2] === "connections" && request.method === "POST") {
       rateLimit(request, { key: "github-connection", limit: 8, windowMs: 60_000 });
@@ -469,6 +485,24 @@ async function route(request: Request, context: RouteContext) {
   }
 }
 
+async function githubManifestCallback(request: Request, requestId: string) {
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code") || "";
+  const state = url.searchParams.get("state") || "";
+  const target = new URL("/", request.url);
+  target.hash = "tab=git";
+  try {
+    await completeGitHubManifestFlow({ code, state });
+    target.searchParams.set("github", "connected");
+    return redirect(target, requestId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "GitHub connection failed.";
+    target.searchParams.set("github", "error");
+    target.searchParams.set("message", redact(message).slice(0, 180));
+    return redirect(target, requestId);
+  }
+}
+
 async function authRoute(request: Request, segments: string[], requestId: string) {
   if (segments[1] === "state" && request.method === "GET") return ok(await authState(), 200, requestId);
   if (segments[1] === "setup" && request.method === "POST") {
@@ -502,6 +536,16 @@ function ok(data: unknown, status = 200, requestId: string = cryptoRandomId()) {
 
 function fail(error: string, status = 400, requestId: string = cryptoRandomId()) {
   return Response.json({ error: redact(error), requestId }, { status, headers: securityHeaders({ "X-Request-Id": requestId }) });
+}
+
+function redirect(url: URL, requestId: string) {
+  return new Response(null, {
+    status: 303,
+    headers: securityHeaders({
+      Location: url.toString(),
+      "X-Request-Id": requestId
+    })
+  });
 }
 
 function errorResponse(error: unknown, requestId: string) {
