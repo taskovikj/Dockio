@@ -226,6 +226,7 @@ interface GitInstallation {
   permissions?: Record<string, unknown>;
   events?: string[];
   status: string;
+  errorMessage?: string;
   lastSyncedAt?: string;
 }
 
@@ -753,7 +754,7 @@ export function PanelShell() {
       const result = await api<{ installations: GitInstallation[] }>(`/api/git/github/connections/${connectionId}/sync-installations`, { method: "POST", csrfToken });
       const first = result.installations[0];
       setGithubForm((form) => ({ ...form, connectionId, installationId: first?.id || form.installationId }));
-      setNotice(result.installations.length ? `Found ${result.installations.length} GitHub installation(s). Refresh repositories next.` : "No GitHub installations found. Install the app on at least one repository.");
+      setNotice(result.installations.length ? `Found ${result.installations.length} GitHub installation(s). Refresh repositories next.` : "No installations found yet. Click Install App, choose the repositories Dockio can deploy, then refresh installations.");
       await refresh();
     });
   }
@@ -764,7 +765,7 @@ export function PanelShell() {
       const result = await api<{ repositories: GitRepository[] }>(`/api/git/github/installations/${installationId}/sync-repositories`, { method: "POST", csrfToken });
       const first = result.repositories[0];
       setGithubForm((form) => ({ ...form, installationId, repositoryId: first?.id || form.repositoryId }));
-      setNotice(result.repositories.length ? `Synced ${result.repositories.length} repositories.` : "No repositories are available to this GitHub App installation.");
+      setNotice(result.repositories.length ? `Synced ${result.repositories.length} repositories.` : "No repositories are available. Open the GitHub App installation and allow at least one repository.");
       await refresh();
     });
   }
@@ -1612,6 +1613,7 @@ export function PanelShell() {
                                 <p className="truncate font-bold text-ink">{connection.name}</p>
                                 <p className="text-xs text-zinc-500">App ID {connection.appId} - {connection.status}</p>
                                 <p className="text-xs text-zinc-600">Secrets configured: {connection.privateKeyConfigured && connection.webhookSecretConfigured ? "yes" : "needs setup"}</p>
+                                {connection.errorMessage && <p className="mt-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs text-yellow-100">{connection.errorMessage}</p>}
                               </div>
                               <StatusPill ok={connection.status === "connected"} label={connection.status} />
                             </div>
@@ -1647,12 +1649,13 @@ export function PanelShell() {
                   <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
                     <Panel title="Installations" icon={Layers3}>
                       <div className="grid gap-2">
-                        {gitInstallations.length === 0 && <p className="text-sm text-zinc-500">Refresh installations after saving a GitHub App connection.</p>}
+                        {gitInstallations.length === 0 && <p className="text-sm text-zinc-500">No installations synced yet. Use Install App on the connected GitHub card, select repositories, then click Refresh Installations.</p>}
                         {gitInstallations.filter((installation) => !selectedGitConnection || installation.providerConnectionId === selectedGitConnection.id).map((installation) => (
                           <button key={installation.id} className={`rounded-md border p-3 text-left ${githubForm.installationId === installation.id ? "border-action bg-action/10" : "border-line bg-panel"}`} onClick={() => setGithubForm((form) => ({ ...form, installationId: installation.id, repositoryId: "" }))}>
                             <p className="font-bold text-ink">{installation.accountLogin}</p>
                             <p className="text-xs text-zinc-500">{installation.accountType} - repositories {installation.repositorySelection || "selected"}</p>
                             <p className="text-xs text-zinc-600">Last sync {installation.lastSyncedAt ? new Date(installation.lastSyncedAt).toLocaleString() : "never"}</p>
+                            {installation.errorMessage && <p className="mt-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs text-yellow-100">{installation.errorMessage}</p>}
                           </button>
                         ))}
                         {selectedGitInstallation && (

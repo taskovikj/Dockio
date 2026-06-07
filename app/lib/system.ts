@@ -479,74 +479,137 @@ export async function disconnectGitHubConnection(connectionId: string) {
 
 export async function syncGitHubInstallations(connectionId: string) {
   const connection = getGitHubConnection(connectionId);
-  const auth = githubAuthForConnection(connection);
-  const installations = await listInstallations(auth);
-  const now = new Date().toISOString();
-  updateState((state) => {
-    for (const installation of installations) {
-      const id = `ghinst-${connection.id}-${installation.installationId}`;
-      const existing = state.gitInstallations.find((item) => item.id === id);
-      const next = {
-        id,
-        providerConnectionId: connection.id,
-        installationId: installation.installationId,
-        accountLogin: installation.accountLogin,
-        accountType: installation.accountType,
-        accountAvatarUrl: installation.accountAvatarUrl,
-        targetType: installation.targetType,
-        repositorySelection: installation.repositorySelection,
-        permissions: installation.permissions,
-        events: installation.events,
-        status: "active" as const,
-        createdAt: existing?.createdAt || now,
-        updatedAt: now,
-        lastSyncedAt: now
-      };
-      if (existing) Object.assign(existing, next);
-      else state.gitInstallations.unshift(next);
-    }
-  });
-  audit("git.github.sync_installations", "Synced GitHub App installations.", { connectionId: connection.id, count: installations.length });
-  return readState().gitInstallations.filter((installation) => installation.providerConnectionId === connection.id);
+  try {
+    const auth = githubAuthForConnection(connection);
+    const installations = await listInstallations(auth);
+    const now = new Date().toISOString();
+    updateState((state) => {
+      const currentConnection = state.gitConnections.find((item) => item.id === connection.id);
+      if (currentConnection) {
+        currentConnection.status = "connected";
+        currentConnection.errorMessage = undefined;
+        currentConnection.updatedAt = now;
+      }
+      for (const installation of installations) {
+        const id = `ghinst-${connection.id}-${installation.installationId}`;
+        const existing = state.gitInstallations.find((item) => item.id === id);
+        const next = {
+          id,
+          providerConnectionId: connection.id,
+          installationId: installation.installationId,
+          accountLogin: installation.accountLogin,
+          accountType: installation.accountType,
+          accountAvatarUrl: installation.accountAvatarUrl,
+          targetType: installation.targetType,
+          repositorySelection: installation.repositorySelection,
+          permissions: installation.permissions,
+          events: installation.events,
+          status: "active" as const,
+          errorMessage: undefined,
+          createdAt: existing?.createdAt || now,
+          updatedAt: now,
+          lastSyncedAt: now
+        };
+        if (existing) Object.assign(existing, next);
+        else state.gitInstallations.unshift(next);
+      }
+    });
+    audit("git.github.sync_installations", "Synced GitHub App installations.", { connectionId: connection.id, count: installations.length });
+    return readState().gitInstallations.filter((installation) => installation.providerConnectionId === connection.id);
+  } catch (error) {
+    const message = normalizeGitHubSyncError(error, "installations");
+    updateState((state) => {
+      const currentConnection = state.gitConnections.find((item) => item.id === connection.id);
+      if (currentConnection) {
+        currentConnection.status = "error";
+        currentConnection.errorMessage = message;
+        currentConnection.updatedAt = new Date().toISOString();
+      }
+    });
+    audit("git.github.sync_installations_failed", "GitHub App installation sync failed.", { connectionId: connection.id, error: message });
+    throw new UserFacingError(message, error instanceof UserFacingError ? error.status : 502);
+  }
 }
 
 export async function syncGitHubRepositories(installationRecordId: string) {
   const installation = getGitHubInstallation(installationRecordId);
   const connection = getGitHubConnection(installation.providerConnectionId);
-  const token = await getInstallationTokenForRecord(connection, installation.installationId);
-  const repos = await listInstallationRepositories(token.token);
-  const now = new Date().toISOString();
-  updateState((state) => {
-    const seen = new Set<number>();
-    for (const repo of repos) {
-      seen.add(repo.githubRepoId);
-      const id = `ghrepo-${repo.githubRepoId}`;
-      const existing = state.gitRepositories.find((item) => item.id === id);
-      const next: GitRepository = {
-        id,
-        installationId: installation.id,
-        provider: "github",
-        githubRepoId: repo.githubRepoId,
-        fullName: repo.fullName,
-        owner: repo.owner,
-        name: repo.name,
-        private: repo.private,
-        defaultBranch: repo.defaultBranch,
-        cloneUrl: repo.cloneUrl,
-        htmlUrl: repo.htmlUrl,
-        archived: repo.archived,
-        disabled: repo.disabled,
-        pushedAt: repo.pushedAt,
-        updatedAt: repo.updatedAt,
-        lastSyncedAt: now
-      };
-      if (existing) Object.assign(existing, next);
-      else state.gitRepositories.unshift(next);
-    }
-    state.gitRepositories = state.gitRepositories.filter((repo) => repo.installationId !== installation.id || seen.has(repo.githubRepoId));
-  });
-  audit("git.github.sync_repositories", "Synced GitHub repositories.", { installationId: installation.installationId, count: repos.length });
-  return readState().gitRepositories.filter((repo) => repo.installationId === installation.id);
+  try {
+    const token = await getInstallationTokenForRecord(connection, installation.installationId);
+    const repos = await listInstallationRepositories(token.token);
+    const now = new Date().toISOString();
+    updateState((state) => {
+      const seen = new Set<number>();
+      for (const repo of repos) {
+        seen.add(repo.githubRepoId);
+        const id = `ghrepo-${repo.githubRepoId}`;
+        const existing = state.gitRepositories.find((item) => item.id === id);
+        const next: GitRepository = {
+          id,
+          installationId: installation.id,
+          provider: "github",
+          githubRepoId: repo.githubRepoId,
+          fullName: repo.fullName,
+          owner: repo.owner,
+          name: repo.name,
+          private: repo.private,
+          defaultBranch: repo.defaultBranch,
+          cloneUrl: repo.cloneUrl,
+          htmlUrl: repo.htmlUrl,
+          archived: repo.archived,
+          disabled: repo.disabled,
+          pushedAt: repo.pushedAt,
+          updatedAt: repo.updatedAt,
+          lastSyncedAt: now
+        };
+        if (existing) Object.assign(existing, next);
+        else state.gitRepositories.unshift(next);
+      }
+      state.gitRepositories = state.gitRepositories.filter((repo) => repo.installationId !== installation.id || seen.has(repo.githubRepoId));
+      const current = state.gitInstallations.find((item) => item.id === installation.id);
+      if (current) {
+        current.status = "active";
+        current.errorMessage = undefined;
+        current.updatedAt = now;
+        current.lastSyncedAt = now;
+      }
+    });
+    audit("git.github.sync_repositories", "Synced GitHub repositories.", { installationId: installation.installationId, count: repos.length });
+    return readState().gitRepositories.filter((repo) => repo.installationId === installation.id);
+  } catch (error) {
+    const message = normalizeGitHubSyncError(error, "repositories");
+    updateState((state) => {
+      const current = state.gitInstallations.find((item) => item.id === installation.id);
+      if (current) {
+        current.status = "error";
+        current.errorMessage = message;
+        current.updatedAt = new Date().toISOString();
+      }
+    });
+    audit("git.github.sync_repositories_failed", "GitHub repository sync failed.", { installationId: installation.id, error: message });
+    throw new UserFacingError(message, error instanceof UserFacingError ? error.status : 502);
+  }
+}
+
+function normalizeGitHubSyncError(error: unknown, scope: "installations" | "repositories") {
+  const fallback = scope === "installations"
+    ? "GitHub installation sync failed. Click Install App, select repositories, then refresh installations."
+    : "GitHub repository sync failed. Check repository access in the GitHub App installation, then refresh repositories.";
+  const raw = error instanceof Error ? error.message : "";
+  const message = redact(raw || fallback).trim();
+  const lower = message.toLowerCase();
+  if (lower.includes("unexpected end of json input") || lower.includes("invalid json")) {
+    return scope === "installations"
+      ? "GitHub returned an empty or invalid installation response. Click Install App, select repositories, then refresh installations."
+      : "GitHub returned an empty or invalid repository response. Reinstall or update repository access, then refresh repositories.";
+  }
+  if (lower.includes("bad credentials") || lower.includes("integration not found") || lower.includes("jwt") || lower.includes("private key")) {
+    return "GitHub App authentication failed. Reconnect GitHub from the Git page or paste a fresh private key.";
+  }
+  if (lower.includes("not found") && scope === "repositories") {
+    return "GitHub cannot see repositories for this installation. Open Install App, select at least one repository, then refresh repositories.";
+  }
+  return message.startsWith("GitHub") ? message : `${fallback} ${message}`;
 }
 
 export async function getGitHubBranches(input: { installationId: string; repositoryId: string }) {

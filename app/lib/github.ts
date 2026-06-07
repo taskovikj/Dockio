@@ -59,6 +59,9 @@ type Json = Record<string, unknown>;
 const API = "https://api.github.com";
 
 export function createGitHubAppJwt(auth: GitHubAppAuth) {
+  if (!/^\d{1,20}$/.test(String(auth.appId || ""))) {
+    throw new UserFacingError("GitHub App ID is invalid. Reconnect the GitHub App from the Git page.", 400);
+  }
   const now = Math.floor(Date.now() / 1000);
   const header = base64UrlJson({ alg: "RS256", typ: "JWT" });
   const payload = base64UrlJson({
@@ -71,24 +74,35 @@ export function createGitHubAppJwt(auth: GitHubAppAuth) {
   signer.update(body);
   signer.end();
   const privateKey = normalizePrivateKey(auth.privateKey);
-  const signature = signer.sign(privateKey).toString("base64url");
+  let signature: string;
+  try {
+    signature = signer.sign(privateKey).toString("base64url");
+  } catch {
+    throw new UserFacingError("GitHub App private key could not sign API requests. Reconnect GitHub or paste a fresh private key.", 400);
+  }
   return `${body}.${signature}`;
 }
 
 export async function getInstallationAccessToken(auth: GitHubAppAuth, installationId: number): Promise<GitHubInstallationToken> {
-  const json = await githubRequest<Json>(`/app/installations/${installationId}/access_tokens`, {
+  const json = await githubRequest<unknown>(`/app/installations/${installationId}/access_tokens`, {
     method: "POST",
     token: createGitHubAppJwt(auth)
   });
+  if (!isRecord(json)) {
+    throw new UserFacingError("GitHub did not return an installation token response. Reinstall the GitHub App and try again.", 502);
+  }
   const token = String(json.token || "");
   if (!token) throw new UserFacingError("GitHub did not return an installation token.", 502);
   return { token, expiresAt: typeof json.expires_at === "string" ? json.expires_at : undefined };
 }
 
 export async function listInstallations(auth: GitHubAppAuth): Promise<GitHubInstallationSummary[]> {
-  const json = await githubRequest<unknown[]>(`/app/installations?per_page=100`, {
+  const json = await githubRequest<unknown>(`/app/installations?per_page=100`, {
     token: createGitHubAppJwt(auth)
   });
+  if (!Array.isArray(json)) {
+    throw new UserFacingError("GitHub did not return an installations list. Click Install App, select repositories, then refresh installations.", 502);
+  }
   return json.map((item) => {
     const row = item as Json;
     const account = (row.account || {}) as Json;
@@ -102,17 +116,23 @@ export async function listInstallations(auth: GitHubAppAuth): Promise<GitHubInst
       permissions: typeof row.permissions === "object" && row.permissions ? row.permissions as Record<string, unknown> : undefined,
       events: Array.isArray(row.events) ? row.events.map(String) : undefined
     };
-  });
+  }).filter((installation) => Number.isInteger(installation.installationId) && installation.installationId > 0);
 }
 
 export async function listInstallationRepositories(token: string): Promise<GitHubRepositorySummary[]> {
-  const json = await githubRequest<{ repositories?: unknown[] }>(`/installation/repositories?per_page=100`, { token });
-  return (json.repositories || []).map((item) => normalizeRepository(item as Json));
+  const json = await githubRequest<unknown>(`/installation/repositories?per_page=100`, { token });
+  if (!isRecord(json) || !Array.isArray(json.repositories)) {
+    throw new UserFacingError("GitHub did not return a repository list for this installation. Check repository access in the GitHub App install screen.", 502);
+  }
+  return json.repositories.map((item) => normalizeRepository(item as Json));
 }
 
 export async function listRepositoryBranches(token: string, fullName: string): Promise<GitHubBranchSummary[]> {
   const repo = normalizeGitHubRepoFullName(fullName);
-  const json = await githubRequest<unknown[]>(`/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/branches?per_page=100`, { token });
+  const json = await githubRequest<unknown>(`/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/branches?per_page=100`, { token });
+  if (!Array.isArray(json)) {
+    throw new UserFacingError("GitHub did not return branches for this repository. Check that the GitHub App can read repository contents.", 502);
+  }
   return json.map((item) => {
     const row = item as Json;
     const commit = (row.commit || {}) as Json;
@@ -197,56 +217,76 @@ export function githubWebhookUrl(publicDockioUrl: string) {
 }
 
 async function githubRequest<T>(path: string, options: { method?: string; token: string; body?: unknown }): Promise<T> {
-  const response = await fetch(API + path, {
-    method: options.method || "GET",
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${options.token}`,
-      "User-Agent": "Dockio-Panel/0.1",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(options.body ? { "Content-Type": "application/json" } : {})
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    signal: AbortSignal.timeout(30_000)
-  });
-  const text = await response.text();
-  let parsed: unknown = {};
+  let response: Response;
   try {
-    parsed = text ? JSON.parse(text) as unknown : {};
-  } catch {
-    parsed = { message: text.slice(0, 300) };
+    response = await fetch(API + path, {
+      method: options.method || "GET",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${options.token}`,
+        "User-Agent": "Dockio-Panel/0.1",
+        "X-GitHub-Api-Version": "2022-11-28",
+        ...(options.body ? { "Content-Type": "application/json" } : {})
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: AbortSignal.timeout(30_000)
+    });
+  } catch (error) {
+    throw new UserFacingError(`Could not reach GitHub API: ${redact(errorMessage(error))}`, 502);
   }
+  const parsed = await parseGitHubResponse(response, path);
   if (!response.ok) {
-    const message = typeof parsed === "object" && parsed && "message" in parsed ? String((parsed as { message?: string }).message) : response.statusText;
-    throw new UserFacingError(`GitHub API error: ${redact(message)}`, response.status >= 500 ? 502 : 400);
+    throw new UserFacingError(`GitHub API error: ${redact(githubApiMessage(parsed, response))}`, response.status >= 500 ? 502 : 400);
   }
   return parsed as T;
 }
 
 async function githubPublicRequest<T>(path: string, options: { method?: string; body?: unknown }): Promise<T> {
-  const response = await fetch(API + path, {
-    method: options.method || "GET",
-    headers: {
-      Accept: "application/vnd.github+json",
-      "User-Agent": "Dockio-Panel/0.1",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(options.body ? { "Content-Type": "application/json" } : {})
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    signal: AbortSignal.timeout(30_000)
-  });
-  const text = await response.text();
-  let parsed: unknown = {};
+  let response: Response;
   try {
-    parsed = text ? JSON.parse(text) as unknown : {};
-  } catch {
-    parsed = { message: text.slice(0, 300) };
+    response = await fetch(API + path, {
+      method: options.method || "GET",
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "Dockio-Panel/0.1",
+        "X-GitHub-Api-Version": "2022-11-28",
+        ...(options.body ? { "Content-Type": "application/json" } : {})
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: AbortSignal.timeout(30_000)
+    });
+  } catch (error) {
+    throw new UserFacingError(`Could not reach GitHub API: ${redact(errorMessage(error))}`, 502);
   }
+  const parsed = await parseGitHubResponse(response, path);
   if (!response.ok) {
-    const message = typeof parsed === "object" && parsed && "message" in parsed ? String((parsed as { message?: string }).message) : response.statusText;
-    throw new UserFacingError(`GitHub API error: ${redact(message)}`, response.status >= 500 ? 502 : 400);
+    throw new UserFacingError(`GitHub API error: ${redact(githubApiMessage(parsed, response))}`, response.status >= 500 ? 502 : 400);
   }
   return parsed as T;
+}
+
+async function parseGitHubResponse(response: Response, path: string): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    if (!response.ok) return { message: text.slice(0, 300) };
+    throw new UserFacingError(`GitHub returned an invalid JSON response for ${path}. Try again, then reconnect the GitHub App if it keeps happening.`, 502);
+  }
+}
+
+function githubApiMessage(parsed: unknown, response: Response) {
+  if (isRecord(parsed) && typeof parsed.message === "string" && parsed.message.trim()) return parsed.message;
+  return `${response.status} ${response.statusText}`.trim();
+}
+
+function isRecord(value: unknown): value is Json {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "request failed";
 }
 
 function normalizeRepository(row: Json): GitHubRepositorySummary {
