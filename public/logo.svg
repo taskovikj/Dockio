@@ -1,0 +1,21 @@
+<svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Dockio logo</title>
+  <desc id="desc">Minimal isometric cube above two layered chevrons.</desc>
+  <defs>
+    <linearGradient id="violetFace" x1="88" y1="62" x2="123" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6D6BFF"/>
+      <stop offset="1" stop-color="#4B48F4"/>
+    </linearGradient>
+    <linearGradient id="violetLayer" x1="28" y1="107" x2="132" y2="107" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6B70FF"/>
+      <stop offset="1" stop-color="#504BFF"/>
+    </linearGradient>
+  </defs>
+  <path d="M80 14L132 44V102L80 132L28 102V44L80 14Z" fill="#F9FAFF"/>
+  <path d="M80 14L132 44L80 74L28 44L80 14Z" stroke="#111827" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M28 44L80 74V132L28 102V44Z" stroke="#111827" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M132 44L80 74V132L132 102V44Z" stroke="#111827" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M99 83L124 68V97L99 112V83Z" fill="url(#violetFace)"/>
+  <path d="M28 111L80 141L132 111" stroke="url(#violetLayer)" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M28 133L80 157L132 133" stroke="#111827" stroke-width="10" stroke-linejoin="round"/>
+</svg>

@@ -8,7 +8,7 @@ WORK_DIR="${WORK_DIR:-}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run with sudo:"
-  echo "  curl -fsSL https://raw.githubusercontent.com/taskovikj/Dockio/main/scripts/install-from-github.sh | sudo bash"
+  echo "  curl -fsSL https://dockio.dev/install.sh | sudo bash"
   exit 1
 fi
 

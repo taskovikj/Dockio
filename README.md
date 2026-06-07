@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/logo.svg" alt="Dockio" width="96" />
+</p>
+
 # Dockio
 
 Self-hosted VPS deployment panel for teams and solo developers who want a simple way to run apps on their own server.
@@ -33,7 +37,7 @@ Dockio is intentionally single-server first. The installed panel, state, Docker,
 Run on Ubuntu 22.04/24.04, Debian 12, or a compatible VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/taskovikj/Dockio/main/scripts/install-from-github.sh | sudo bash
+curl -fsSL https://dockio.dev/install.sh | sudo bash
 ```
 
 Open:
@@ -63,7 +67,7 @@ Dockio installs:
 Restrict the panel port to a private/VPN CIDR:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/taskovikj/Dockio/main/scripts/install-from-github.sh \
+curl -fsSL https://dockio.dev/install.sh \
   | sudo env PANEL_PORT=3099 PANEL_HOST=0.0.0.0 TRUSTED_CIDR=100.64.0.0/10 bash
 ```
 
@@ -80,6 +84,12 @@ Install a fork:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install-from-github.sh \
   | sudo env REPO_URL=https://github.com/<owner>/<repo>.git bash
+```
+
+GitHub-hosted installer fallback:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/taskovikj/Dockio/main/scripts/install-from-github.sh | sudo bash
 ```
 
 Useful installer variables:

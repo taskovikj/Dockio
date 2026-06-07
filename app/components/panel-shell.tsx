@@ -3231,8 +3231,8 @@ export function PanelShell() {
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`flex items-center gap-3 ${compact ? "" : "mb-6"}`}>
-      <div className="flex h-10 w-10 items-center justify-center rounded-md border border-action/40 bg-action/20 text-white">
-        <Server size={20} />
+      <div className="flex h-11 w-11 items-center justify-center rounded-md border border-line bg-white p-1 shadow-sm shadow-action/20">
+        <img src="/logo.svg" alt="Dockio" className="h-full w-full" />
       </div>
       <div>
         <p className="font-black text-ink">Dockio</p>
