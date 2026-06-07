@@ -20,14 +20,12 @@ assignees: ""
 
 ## Environment
 
-- Dockio Panel commit/version:
+- Dockio commit/version:
 - VPS OS:
 - Install method:
 - Browser:
 
 ## Logs or screenshots
-
-Paste only redacted logs. Do not include real tokens, passwords, private keys, database URLs, setup codes, or private server details.
 
 ```txt
 

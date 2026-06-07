@@ -1,142 +1,97 @@
-# GitHub App Integration
+# GitHub App
 
-Dockio can deploy public Git URLs without GitHub auth. For private GitHub repositories and push-to-deploy, connect a GitHub App from the **Git** page.
+Dockio can deploy public Git repositories without GitHub authentication. For private repositories, connect a GitHub App.
 
-The recommended beta flow is **Connect GitHub**. Dockio creates a GitHub App from a manifest, GitHub redirects back to Dockio with a short-lived code, and Dockio stores the generated App credentials encrypted locally. Manual GitHub App setup is still available as an advanced fallback.
+## Guided Setup
 
-## What This Enables
-
-- Sync GitHub App installations.
-- List repositories the app can access.
-- Pick a private or public repo in the deploy wizard.
-- Pick a branch and app directory.
-- Detect stack/build settings.
-- Deploy manually from Dockio.
-- Enable auto-deploy on GitHub push.
-- Record webhook status and deployment history.
-
-## Recommended Connect Flow
-
-1. Open **Git** in the sidebar.
-2. Confirm the **Dockio public URL**. For a public install this is usually `http://SERVER_IP:3099` for testing or an HTTPS admin domain for production.
+1. Open **Git**.
+2. Set the Dockio public URL.
 3. Click **Connect GitHub**.
-4. GitHub opens the App creation screen. Choose your personal account or organization.
-5. Create the App, then install it on all repositories or selected repositories.
-6. Back in Dockio, click **Refresh Installations**.
-7. Choose the installation/account and click **Refresh Repositories**.
-8. Deploy from a repository card or create a service with source **GitHub App**.
+4. Create the generated GitHub App in GitHub.
+5. Install the App on all repositories or selected repositories.
+6. Return to Dockio.
+7. Click **Refresh Installations**.
+8. Select an installation/account.
+9. Click **Refresh Repositories**.
 
-The manifest requests only repository **Contents: read-only**, **Metadata: read-only**, and the **Push** event. Push webhooks are ignored unless a service explicitly enables auto-deploy.
+After repositories are synced, create a service with source **GitHub App**, select the repository and branch, detect the stack, and deploy.
 
-## Manual GitHub App Settings
+## Permissions
 
-Create a GitHub App in GitHub with these settings:
+The generated App requests:
 
-- Homepage URL: your Dockio URL, for example `https://panel.example.com`.
-- Webhook URL: `https://YOUR_PUBLIC_DOCKIO_URL/api/webhooks/github`.
-- Webhook secret: generate a long random value and save the same value in Dockio.
-- Repository permissions:
-  - Contents: read-only
-  - Metadata: read-only
-- Subscribe to events:
-  - Push
+- Repository contents: read-only
+- Metadata: read-only
+- Push event subscription
 
-Optional fields such as Client ID and Client Secret can be stored in Dockio, but they are not required for the current manual deploy flow.
+Push webhooks are recorded by Dockio. Auto-deploy only runs for services where auto-deploy is explicitly enabled.
 
-## Public URL Requirement
+## Public URL
 
-Manual deploys only need Dockio to reach GitHub.
+Manual deploys only require the Dockio VPS to reach GitHub.
 
-Auto-deploy requires GitHub to reach Dockio, so the panel needs a public HTTPS URL:
+Webhook delivery requires GitHub to reach Dockio:
 
 ```txt
-https://panel.example.com
+https://panel.example.com/api/webhooks/github
 ```
 
-Do not use `localhost` or a private Tailscale-only URL for GitHub webhooks. GitHub cannot reach those.
+HTTP works for local beta testing, but HTTPS is the expected production shape.
 
-If you do not want the panel broadly public, put it behind a restrictive firewall, reverse proxy access control, or a private admin domain. The webhook endpoint itself is unauthenticated but requires a valid GitHub HMAC signature.
+## Manual App Setup
 
-## Manual Dockio Setup
+Use the manual fallback if you already have a GitHub App.
 
-1. Open **Git** in the sidebar.
-2. Open **Manual GitHub App setup fallback**.
-3. Fill:
-   - Connection name
-   - GitHub App ID
-   - Private key PEM
-   - Webhook secret
-   - Public Dockio URL
-   - Optional App URL and Install URL
-4. Click **Save Manual App**.
-5. Click **Refresh Installations**.
-6. Install the GitHub App on at least one repository if no installations appear.
-7. Select an installation/account.
-8. Click **Refresh Repositories**.
-9. Use repository cards or the deployment wizard to deploy.
+Required fields:
 
-## Deploy A Private Repo
+- GitHub App ID
+- Private key PEM
+- Webhook secret
+- Dockio public URL
+
+Optional fields:
+
+- App URL
+- Install URL
+- Client ID
+- Client secret
+
+## Private Repo Deploy Flow
 
 1. Create or open a project.
 2. Click **Create Service**.
-3. Source: **GitHub App**.
-4. Select connection, installation/account, repository, branch, and optional root directory.
-5. Click **Detect Stack**.
-6. Confirm build mode:
-   - generated Dockerfile
-   - repo Dockerfile
-   - static build
+3. Choose **GitHub App**.
+4. Select connection, installation, repository, branch, and optional app directory.
+5. Detect stack.
+6. Confirm build mode, commands, port, and health path.
 7. Add env vars and optional database.
-8. Enable auto preview domain if you want a Caddy preview URL.
-9. Enable auto-deploy if you configured a public HTTPS Dockio URL and GitHub webhook.
-10. Deploy.
+8. Deploy.
 
-Dockio generates a short-lived GitHub installation token during sync/detect/deploy. It is passed to Git through a temporary `GIT_ASKPASS` helper and is not stored permanently or written into the Git remote URL.
+Dockio generates a short-lived GitHub installation token when syncing, detecting, or deploying. Git receives it through a temporary `GIT_ASKPASS` helper.
 
-## Auto-Deploy
+## Webhooks
 
-When GitHub sends a push webhook:
+For push webhooks:
 
-1. Dockio reads the raw body.
-2. Dockio verifies `X-Hub-Signature-256` with the encrypted webhook secret.
-3. Only `push` events are accepted.
-4. Dockio matches services by repository, installation, and branch.
-5. Matching services are queued for redeploy.
-6. Deployment history records `trigger: webhook` and `provider: github_app`.
-
-Branch mismatches and repos with no matching service are recorded as ignored webhook events.
-
-## Secret Storage
-
-Dockio encrypts GitHub private keys, webhook secrets, and optional client secrets with AES-256-GCM.
-
-By default the local encryption key is stored under the Dockio secrets directory in the data path. On installed servers that is normally:
-
-```txt
-/var/lib/dockio-panel/secrets/dockio-secret.key
-```
-
-Back up this key with your Dockio data. Losing it means encrypted GitHub secrets must be re-saved.
+1. Dockio verifies `X-Hub-Signature-256`.
+2. Only `push` events are accepted.
+3. Services are matched by installation, repository, and branch.
+4. Matching services with auto-deploy enabled are redeployed.
+5. Ignored and failed webhook deliveries are visible on the Git page.
 
 ## Troubleshooting
 
 Invalid App ID:
-Use the numeric GitHub App ID, not the app slug.
+Use the numeric GitHub App ID.
 
 Invalid private key:
-Paste the full PEM, including `BEGIN` and `END` lines. Escaped `\n` strings are also accepted.
+Use the full PEM private key generated by GitHub.
 
 No installations:
-Install the GitHub App on your user/org and select at least one repository.
+Install the App on a user/org and select at least one repository.
 
 No repositories:
-Refresh repositories after installing the app. Archived or disabled repos cannot deploy.
-
-Webhook 401:
-The webhook secret in GitHub and Dockio do not match, or the signature header is missing.
+Refresh repositories after installing the App or update repository access in GitHub.
 
 Webhook ignored:
-The push event did not match a GitHub App service with auto-deploy enabled on the pushed branch.
-
-Manual deploy works but auto-deploy does not:
-Check that the public Dockio URL is HTTPS and reachable by GitHub, and that the webhook URL is exactly `/api/webhooks/github`.
+The event did not match a service with auto-deploy enabled on that branch.

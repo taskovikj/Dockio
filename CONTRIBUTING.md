@@ -1,21 +1,8 @@
-# Contributing To Dockio Panel
+# Contributing
 
-Thanks for helping test and improve Dockio Panel. This repository is a beta project, so clear bug reports and small focused fixes are especially valuable.
+Dockio is a beta VPS deployment panel. Contributions are welcome, especially focused fixes that improve real deployment flows.
 
-## Before You Start
-
-- Do not include real API keys, private keys, database URLs, passwords, or production server details in issues, screenshots, commits, or pull requests.
-- Test on disposable VPSs where possible.
-- Keep pull requests focused. One feature or fix per PR is easiest to review.
-- Prefer simple working flows over large rewrites.
-
-## Local Development
-
-Requirements:
-
-- Node.js 22+
-- pnpm through Corepack
-- Docker if you want to test deployment actions locally
+## Local Setup
 
 ```bash
 corepack enable
@@ -23,50 +10,35 @@ pnpm install
 DIO_DATA_DIR=.data-dockio-panel pnpm dev
 ```
 
-Open:
-
-```txt
-http://localhost:3000
-```
-
-Useful checks:
+Run before opening a PR:
 
 ```bash
 pnpm typecheck
 pnpm build
-pnpm clean
 ```
 
-## Pull Request Checklist
+## Pull Requests
 
-- Explain what changed and why.
-- Mention what you tested.
+- Keep changes focused.
+- Include the deployment path you tested.
 - Add screenshots for UI changes.
 - Update docs when behavior changes.
-- Do not commit local data directories, `.next`, `node_modules`, logs, or generated secrets.
-- Do not add arbitrary shell execution endpoints.
-- Do not weaken auth, CSRF, validation, or redaction without discussing it first.
+- Keep local state, generated builds, and logs out of commits.
 
-## Areas That Need Help
+Useful areas:
 
-- Framework detection for more app types.
-- Better deployment error messages.
-- Domain and DNS validation UX.
-- Database backup/restore.
-- Safer Compose handling and clearer warnings.
-- UI polish and accessibility.
-- Tests for validation and redaction helpers.
+- framework detection
+- deployment error messages
+- GitHub App flow
+- domain/DNS UX
+- database backup/restore
+- Compose support
+- accessibility and responsive UI
+- tests for validation, GitHub, and deployment planning
 
-## Reporting Bugs
+## Project Style
 
-Please include:
-
-- Dockio Panel version or commit SHA.
-- VPS OS and version.
-- Install method.
-- What you clicked or ran.
-- Expected result.
-- Actual result.
-- Redacted logs or screenshots.
-
-Use placeholders such as `example.com`, `YOUR_SERVER_IP`, and `[redacted]` for sensitive values.
+- Prefer simple working flows over broad rewrites.
+- Keep server actions allowlisted and explicit.
+- Keep app/container defaults conservative.
+- Preserve the single-VPS install path.

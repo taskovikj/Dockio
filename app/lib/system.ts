@@ -294,7 +294,7 @@ export async function createGitHubManifestFlow(input: {
   owner?: string;
 }) {
   const publicDockioUrl = cleanPublicUrl(input.publicDockioUrl);
-  const name = assertSafeAppName(input.name || "Dockio Panel GitHub");
+  const name = assertSafeAppName(input.name || "Dockio GitHub");
   const owner = cleanOptionalText(input.owner, 80);
   if (owner && !/^[A-Za-z0-9_.-]{1,80}$/.test(owner)) {
     throw new UserFacingError("GitHub organization/user owner contains invalid characters.", 400);
@@ -2920,15 +2920,15 @@ function writeAppEnvFile(app: ManagedApp, userEnv: Record<string, string>, deplo
     ...userEnv,
     PORT: String(app.deployMode === "static" ? 80 : app.containerPort || app.port || 3000),
     HOST: "0.0.0.0",
-    SUPAVIBE_SERVICE_ID: app.id,
-    SUPAVIBE_SERVICE_SLUG: app.slug || slug(app.name)
+    DOCKIO_SERVICE_ID: app.id,
+    DOCKIO_SERVICE_SLUG: app.slug || slug(app.name)
   };
   if (app.projectId) {
     const project = readState().projects.find((item) => item.id === app.projectId);
-    runtimeEnv.SUPAVIBE_PROJECT_ID = app.projectId;
-    runtimeEnv.SUPAVIBE_PROJECT_SLUG = project?.slug || "default";
+    runtimeEnv.DOCKIO_PROJECT_ID = app.projectId;
+    runtimeEnv.DOCKIO_PROJECT_SLUG = project?.slug || "default";
   }
-  if (deploymentId) runtimeEnv.SUPAVIBE_DEPLOYMENT_ID = deploymentId;
+  if (deploymentId) runtimeEnv.DOCKIO_DEPLOYMENT_ID = deploymentId;
   if (app.databaseId) {
     const database = readState().databases.find((item) => item.id === app.databaseId);
     if (database?.secretPath) {
@@ -2963,7 +2963,7 @@ function upsertAppEnvValues(app: ManagedApp, values: Record<string, string>, rep
 function userEnvText(app: ManagedApp) {
   const env = readAppEnvObject(app);
   const userOnly = Object.entries(env).filter(([key]) => {
-    if (key.startsWith("SUPAVIBE_")) return false;
+    if (key.startsWith("DOCKIO_")) return false;
     if (["PORT", "HOST"].includes(key)) return false;
     return true;
   });

@@ -33,22 +33,12 @@ Default local folders are ignored by git:
 - `.data-dockio-panel`
 - `.data-local`
 
-Do not commit:
-
-- `.next`
-- `node_modules`
-- logs
-- local data
-- setup codes
-- generated secrets
-
 ## Coding Guidelines
 
 - Validate API input with Zod.
 - Use helpers from `app/lib/validate.ts` before using user-controlled IDs, paths, ports, domains, names, and env keys.
 - Redact command output before storing or returning it.
 - Keep server actions allowlisted.
-- Do not add arbitrary shell execution endpoints.
 - Keep app containers unprivileged.
 - Keep public app traffic through Caddy.
 

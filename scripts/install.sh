@@ -80,7 +80,7 @@ sudo -H -u "$RUN_USER" pnpm store prune >/dev/null 2>&1 || true
 
 cat > /etc/systemd/system/dockio-panel.service <<EOF
 [Unit]
-Description=Dockio VPS Panel
+Description=Dockio
 After=network-online.target docker.service caddy.service
 Wants=network-online.target
 
@@ -116,7 +116,7 @@ if [ -n "$TRUSTED_CIDR" ]; then
   ufw --force enable || true
 fi
 
-echo "Dockio Panel installed."
+echo "Dockio installed."
 echo "Open: http://SERVER_IP:$PANEL_PORT"
 echo "First admin setup code: $SETUP_TOKEN"
 echo "The setup code is stored in $ENV_DIR/panel.env as DIO_SETUP_TOKEN."

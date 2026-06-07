@@ -28,8 +28,6 @@ The installer prints the setup code. It is also stored in:
 sudo grep DIO_SETUP_TOKEN /etc/dockio-panel/panel.env
 ```
 
-Do not share this code publicly.
-
 ## Caddy Route Fails
 
 Validate Caddy:

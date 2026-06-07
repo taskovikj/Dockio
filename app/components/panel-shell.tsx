@@ -443,7 +443,7 @@ export function PanelShell() {
     publicDockioUrl: ""
   });
   const [githubManifestForm, setGithubManifestForm] = useState({
-    name: "Dockio Panel GitHub",
+    name: "Dockio GitHub",
     owner: "",
     publicDockioUrl: ""
   });
@@ -2023,7 +2023,7 @@ export function PanelShell() {
                   <div className="grid gap-4 xl:grid-cols-2">
                     <Panel title="Panel Runtime" icon={Settings}>
                       <div className="grid gap-3">
-                        <Info title="Product" body="Dockio Panel self-hosted VPS dashboard" />
+                        <Info title="Product" body="Dockio self-hosted VPS dashboard" />
                         <Info title="Data directory" body={state?.dataDir || "Not loaded yet"} />
                         <Info title="Signed in as" body={auth.user?.email || "Unknown"} />
                         <Info title="Public IP" body={vpsIp || "Detecting"} />
@@ -3235,7 +3235,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
         <Server size={20} />
       </div>
       <div>
-        <p className="font-black text-ink">Dockio VPS</p>
+        <p className="font-black text-ink">Dockio</p>
         <p className="text-xs text-zinc-500">Self-hosted panel</p>
       </div>
     </div>
@@ -3286,7 +3286,7 @@ function GlobalPageHeader({ title, subtitle, children }: { title: string; subtit
     <header className="border-b border-line bg-[#050505]/95 px-4 py-4 md:px-6">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="dio-label">Dockio Panel</p>
+          <p className="dio-label">Dockio</p>
           <h1 className="mt-1 text-2xl font-black tracking-normal text-ink">{title}</h1>
           <p className="mt-1 max-w-3xl text-sm text-zinc-400">{subtitle}</p>
         </div>

@@ -1,6 +1,6 @@
 # Architecture
 
-Dockio Panel is currently a single-server, self-hosted control panel.
+Dockio is currently a single-server, self-hosted control panel.
 
 ## High-Level Model
 

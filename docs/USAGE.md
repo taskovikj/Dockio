@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide assumes Dockio Panel is installed on a test VPS.
+This guide assumes Dockio is installed on a test VPS.
 
 ## First Run
 
@@ -9,7 +9,7 @@ This guide assumes Dockio Panel is installed on a test VPS.
 3. Create the admin account.
 4. Log in.
 
-Use a strong password. If the panel port is reachable from the internet, restrict it with firewall rules.
+If the panel port is reachable from the internet, restrict it with firewall rules.
 
 ## Create A Project
 

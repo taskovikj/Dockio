@@ -18,5 +18,3 @@ What problem should this solve?
 
 
 ## Notes
-
-Do not include private credentials, private repo URLs, production server details, or secrets.

@@ -1,207 +1,144 @@
-# Dockio Panel
+# Dockio
 
-> Public beta. This project is actively being built and tested. Some features work today, some are incomplete, and the API/state model may change before a stable release.
+Self-hosted VPS deployment panel for teams and solo developers who want a simple way to run apps on their own server.
 
-Dockio Panel is a self-hosted VPS control panel for deploying and managing apps on a single Linux server. It is meant to feel simpler than a full server control panel while still giving developers practical deployment tools: Git deploys, Docker image deploys, Compose stacks, Caddy routes, firewall helpers, logs, managed databases, and runtime controls.
+Dockio is currently a public beta. It is being actively developed and tested on real VPS deployments.
 
-Project domain: `dockio.dev`.
+Website: `dockio.dev`  
+Repository: `github.com/taskovikj/Dockio`
 
-The current version is intended for test VPSs, homelab servers, prototypes, and early feedback. Do not treat it as a finished production platform yet.
+## What It Does
 
-## Status
+Dockio installs on a Linux VPS and gives you a web dashboard for:
 
-Dockio Panel is currently in beta/WIP:
+- deploying public Git repositories
+- deploying private GitHub repositories through a GitHub App
+- deploying Docker images
+- deploying Docker Compose stacks
+- detecting Node, Next.js, Vite/static, Dockerfile, and Compose projects
+- creating Caddy preview URLs
+- adding custom domains through Caddy
+- managing Postgres and Redis containers
+- storing external Postgres connection records
+- editing environment variables
+- viewing runtime logs and deployment history
+- restarting, stopping, redeploying, and deleting services
+- applying UFW firewall rules
+- inspecting Docker resources and pruning managed resources
 
-- UI and workflows are still changing.
-- State is stored in local JSON files for now.
-- Public Git deploys work. GitHub App based private repo deploys and push webhooks are available in beta.
-- Some production features such as backup/restore, RBAC, teams, and hosted control-plane mode are planned but not finished.
-- Security defaults are intentionally conservative, but you should still install it behind a firewall or VPN while testing.
+Dockio is intentionally single-server first. The installed panel, state, Docker, Caddy, apps, databases, logs, and generated routes all live on the same VPS.
 
-## Features Available To Test
+## Install
 
-- First-run admin setup with a one-time setup code.
-- Login/logout with HTTP-only session cookies and CSRF protection.
-- Server overview: OS, disk, memory, Docker, Caddy, UFW, public IP.
-- Deploy from a public Git repository:
-  - repo `Dockerfile`
-  - generated Node/Next/Vite Dockerfile
-  - static build served through Caddy/nginx
-- Connect a GitHub App for private/public GitHub repositories:
-  - sync installations and repositories
-  - pick repo and branch in the deploy wizard
-  - deploy private repos with short-lived installation tokens
-  - enable verified push-to-deploy webhooks
-- Deploy an existing Docker image.
-- Deploy Docker Compose from Git or pasted Compose YAML.
-- Auto preview domains through Caddy using `sslip.io` or a custom wildcard domain.
-- Custom domain routing with Caddy.
-- Managed Postgres and Redis containers.
-- External Postgres connection records.
-- Environment variable management.
-- Runtime logs, health checks, restart, stop, redeploy, and delete.
-- UFW firewall baseline and rule helper.
-- Deployment history and audit log.
-- Docker system prune from the dashboard.
-
-## Safety Model
-
-Dockio Panel is not a web terminal and does not expose arbitrary shell execution. Server actions are implemented as allowlisted operations.
-
-Important defaults:
-
-- App containers bind to `127.0.0.1` unless an explicit debug port is enabled.
-- Public app traffic should go through Caddy on ports `80` and `443`.
-- App containers do not mount the Docker socket.
-- App containers are not privileged.
-- Domains, ports, app IDs, Docker names, CIDRs, env keys, and managed paths are validated.
-- Command output and API responses redact common secrets, tokens, database URLs, Authorization headers, private keys, and credentialed clone URLs.
-- The installer creates a dedicated runtime user and narrow sudoers rules for UFW, Caddy, and `dio-*` systemd services.
-
-Still, Git builds and Compose files run code on your VPS. Only deploy repositories and images you trust.
-
-## Requirements
-
-Recommended test server:
-
-- Ubuntu 22.04/24.04 or Debian 12
-- 2 GB RAM minimum, 4 GB recommended
-- Root access or a sudo user
-- Public ports `80` and `443` open for app domains
-- Panel port restricted to your IP or VPN where possible
-
-The installer installs:
-
-- Docker
-- Docker Compose plugin
-- Caddy
-- Node.js 22 if missing
-- pnpm through Corepack
-- Dockio Panel systemd service
-
-## Quick Install
-
-Run this on a fresh Ubuntu/Debian VPS:
+Run on Ubuntu 22.04/24.04, Debian 12, or a compatible VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/taskovikj/supavibe-panel/main/scripts/install-from-github.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/taskovikj/Dockio/main/scripts/install-from-github.sh | sudo bash
 ```
 
-The product installs as Dockio Panel, but the current source repository is still `taskovikj/supavibe-panel`.
-
-The default panel port is:
-
-```txt
-3099
-```
-
-Then open:
+Open:
 
 ```txt
 http://YOUR_SERVER_IP:3099
 ```
 
-The installer prints a first-admin setup code and stores it in:
+The installer prints a first-admin setup code. It is also stored in:
 
 ```txt
 /etc/dockio-panel/panel.env
 ```
 
-Use that code on the first screen to create the admin account.
+Dockio installs:
 
-If the panel port is public, create the admin account immediately and restrict access in **Firewall & Server**.
+- Docker and Docker Compose plugin
+- Caddy
+- Node.js 22 if missing
+- pnpm through Corepack
+- `dockio-panel` systemd service
+- a dedicated `dockio` runtime user
+- narrow sudoers rules for UFW, Caddy, and Dockio-managed systemd services
 
-## Install With A Custom Port Or VPN CIDR
+## Install Options
 
-Example with the panel restricted to a VPN/private CIDR:
+Restrict the panel port to a private/VPN CIDR:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/taskovikj/supavibe-panel/main/scripts/install-from-github.sh \
+curl -fsSL https://raw.githubusercontent.com/taskovikj/Dockio/main/scripts/install-from-github.sh \
   | sudo env PANEL_PORT=3099 PANEL_HOST=0.0.0.0 TRUSTED_CIDR=100.64.0.0/10 bash
 ```
 
-## Install A Fork
+Install from a local clone:
 
-If you fork this beta and want the installer to pull your fork, pass `REPO_URL`:
+```bash
+git clone https://github.com/taskovikj/Dockio.git dockio
+cd dockio
+sudo bash scripts/install.sh
+```
+
+Install a fork:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install-from-github.sh \
   | sudo env REPO_URL=https://github.com/<owner>/<repo>.git bash
 ```
 
-## Install From A Local Clone
+Useful installer variables:
 
 ```bash
-git clone https://github.com/taskovikj/supavibe-panel.git dockio-panel
-cd dockio-panel
-sudo bash scripts/install.sh
+PANEL_PORT=3099
+PANEL_HOST=0.0.0.0
+TRUSTED_CIDR=100.64.0.0/10
+DIO_KEEP_DEV_DEPS=false
 ```
 
-For a fork:
+## First Deploy
 
-```bash
-git clone https://github.com/<owner>/<repo>.git dockio-panel
-cd dockio-panel
-sudo bash scripts/install.sh
-```
-
-Useful installer variables for local/manual installs:
-
-```bash
-sudo PANEL_PORT=3099 PANEL_HOST=0.0.0.0 TRUSTED_CIDR=100.64.0.0/10 bash scripts/install.sh
-```
-
-Set `DIO_KEEP_DEV_DEPS=true` only if you need to debug/build inside `/opt/dockio-panel/app`. By default the installer builds the app, prunes development dependencies, and removes rebuildable Next.js caches to reduce disk usage.
-
-## Basic Usage
-
-1. Open the panel URL.
-2. Create the first admin account with the setup code.
-3. Open **Firewall & Server** and apply a safe firewall baseline.
-4. Create a project.
-5. Open the project and create a service.
-6. Choose a source:
-   - public Git repository
-   - GitHub App repository
+1. Create the admin account with the setup code.
+2. Open **Firewall** and apply the baseline rules.
+3. Create a project.
+4. Click **Create Service**.
+5. Choose a source:
+   - Public Git
+   - GitHub App
    - Docker image
-   - Docker Compose
-7. Confirm detected build settings.
-8. Add env vars and optional database resources.
-9. Deploy.
-10. Open the generated preview URL or add a custom domain.
+   - Compose from Git
+   - Compose YAML
+6. Confirm detected build/runtime settings.
+7. Add env vars and optional database.
+8. Deploy.
+9. Open the preview URL or add a custom domain.
 
-## GitHub App / Private Repos
+## GitHub App
 
-Dockio supports a guided GitHub App connection for private repositories and optional push-to-deploy.
+Dockio supports a guided GitHub App connection for private repositories.
 
-Short version:
-
-1. Open **Git** in Dockio.
-2. Enter the Dockio public URL.
+1. Open **Git**.
+2. Set the Dockio public URL.
 3. Click **Connect GitHub**.
-4. GitHub opens the App manifest flow. Create the App and install it on selected repositories.
-5. Back in Dockio, click **Refresh Installations** and **Refresh Repositories**.
-6. Create a service and choose **GitHub App** as the source.
-7. Pick repository, branch, and root directory.
-8. Detect stack, confirm build settings, and deploy.
+4. Create/install the generated GitHub App.
+5. Return to Dockio.
+6. Click **Refresh Installations**.
+7. Select an installation and click **Refresh Repositories**.
+8. Deploy from the selected repository.
 
-The generated GitHub App uses read-only repository contents and metadata permissions. Dockio stores the generated private key and webhook secret encrypted locally.
+The GitHub App requests read-only repository contents and metadata. Push events are used only by services that explicitly enable auto-deploy.
 
-Manual fallback:
+See [docs/GITHUB_APP.md](docs/GITHUB_APP.md).
+
+## Runtime Layout
 
 ```txt
-https://YOUR_PUBLIC_DOCKIO_URL/api/webhooks/github
+/opt/dockio-panel/app                 application code
+/var/lib/dockio-panel                 state, apps, logs, temp files, encrypted local data
+/etc/dockio-panel/panel.env           service configuration
+/etc/caddy/conf.d                     custom domain routes
+/etc/caddy/dockio/sites               preview routes
 ```
-
-You can still create a GitHub App yourself and paste App ID, private key PEM, webhook secret, and optional app/install URLs under **Manual GitHub App setup fallback**.
-
-Manual deploys work without a public Dockio URL. Auto-deploy on push requires GitHub to reach Dockio over public HTTPS.
-
-See [docs/GITHUB_APP.md](docs/GITHUB_APP.md) for the full setup and troubleshooting flow.
 
 ## Development
 
 ```bash
+corepack enable
 pnpm install
 DIO_DATA_DIR=.data-dockio-panel pnpm dev
 ```
@@ -212,57 +149,56 @@ Open:
 http://localhost:3000
 ```
 
-Useful commands:
+Checks:
 
 ```bash
 pnpm typecheck
 pnpm build
 pnpm clean
-pnpm clean -- --deps
 ```
 
 ## Repository Layout
 
 ```txt
-app/                     Next.js app, API routes, UI, server actions
-app/lib/                 auth, state, validation, system operations
+app/                     Next.js app, API routes, UI, server-side operations
+app/lib/                 auth, state, GitHub, validation, runtime helpers
 scripts/install.sh       VPS installer
 scripts/install-from-github.sh
-scripts/clean-local.mjs  local cache cleanup
-docs/                    project documentation
+scripts/clean-local.mjs
+docs/
 ```
 
-## Data Layout On Installed Servers
+## Beta Scope
 
-```txt
-/opt/dockio-panel/app       app code
-/var/lib/dockio-panel       state, app data, logs, temp files, secrets
-/etc/dockio-panel/panel.env service config
-/etc/caddy/conf.d             generated custom domain routes
-/etc/caddy/dockio/sites     generated preview routes
-```
+Available now:
+
+- public Git deploys
+- GitHub App private repo deploys
+- Docker image deploys
+- Compose deploys
+- Caddy preview domains
+- custom domains
+- managed Postgres and Redis
+- runtime logs and service controls
+- firewall helpers
+
+Still evolving:
+
+- database backup/restore workflow
+- richer DNS validation
+- project-level deployment jobs
+- RBAC/team model
+- hosted control-plane architecture
+- broader framework detection
 
 ## Contributing
 
-Contributions are welcome while the project is in beta. Good first contributions include:
-
-- bug reports with logs and screenshots
-- deploy tests against different app frameworks
-- better error messages
-- documentation fixes
-- UI/UX improvements
-- safer deployment defaults
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 
-Please do not open public issues with real tokens, private keys, database URLs, server IPs you want private, or credentials. See [SECURITY.md](SECURITY.md).
-
-## Roadmap
-
-See [docs/ROADMAP.md](docs/ROADMAP.md).
+See [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT.

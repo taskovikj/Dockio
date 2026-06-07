@@ -1,6 +1,6 @@
 # Roadmap
 
-Dockio Panel is in beta. This roadmap describes the intended direction, not guaranteed release dates.
+Dockio is in beta. This roadmap describes the intended direction, not guaranteed release dates.
 
 ## Current Focus
 
@@ -25,8 +25,8 @@ Dockio Panel is in beta. This roadmap describes the intended direction, not guar
 
 ## Later
 
-- Private Git provider integration.
-- GitHub App/OAuth flow.
+- Additional Git provider integrations.
+- GitHub OAuth flow.
 - Multi-user support and roles.
 - Resource limits per service.
 - Scheduled backups.

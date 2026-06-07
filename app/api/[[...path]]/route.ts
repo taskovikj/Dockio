@@ -153,7 +153,7 @@ const githubConnectionSchema = z.object({
 });
 
 const githubManifestStartSchema = z.object({
-  name: z.string().min(1).max(80).optional().default("Dockio Panel GitHub"),
+  name: z.string().min(1).max(80).optional().default("Dockio GitHub"),
   publicDockioUrl: z.string().url().max(240),
   owner: z.string().max(80).optional().default("")
 });
@@ -286,7 +286,7 @@ async function route(request: Request, context: RouteContext) {
       await requireCsrf(request);
     }
 
-    if (segments.length === 0) return ok({ app: "Dockio VPS Panel", mode: "single-vps" }, 200, requestId);
+    if (segments.length === 0) return ok({ app: "Dockio", mode: "single-vps" }, 200, requestId);
     if (segments[0] === "state" && request.method === "GET") return ok(publicState(), 200, requestId);
     if (segments[0] === "system" && segments[1] === "status" && request.method === "GET") {
       return ok(await serverStatus(), 200, requestId);
