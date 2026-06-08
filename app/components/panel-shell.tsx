@@ -1532,7 +1532,7 @@ export function PanelShell() {
                     <Panel title="Connect GitHub" icon={Github}>
                       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
                         <div className="grid gap-4">
-                          <div className="rounded-md border border-action/50 bg-action/10 p-4">
+                          <div className="rounded-md border border-line bg-panel p-4">
                             <p className="text-sm font-black text-ink">Guided GitHub App</p>
                             <div className="mt-4 grid gap-3 md:grid-cols-2">
                               <Field label="Dockio public URL" value={githubManifestForm.publicDockioUrl || state?.settings.publicDockioUrl || ""} onChange={(publicDockioUrl) => setGithubManifestForm({ ...githubManifestForm, publicDockioUrl })} placeholder={safeBrowserOrigin() || "http://SERVER_IP:3099"} />
@@ -1540,12 +1540,12 @@ export function PanelShell() {
                               <Field label="Organization optional" value={githubManifestForm.owner} onChange={(owner) => setGithubManifestForm({ ...githubManifestForm, owner })} placeholder="leave blank for personal account" />
                             </div>
                             {isWildcardPanelUrl(githubManifestForm.publicDockioUrl || state?.settings.publicDockioUrl || "") && (
-                              <p className="mt-3 rounded-md border border-red-900/70 bg-red-950/20 p-3 text-xs text-red-100">
+                              <p className="mt-3 rounded-md border border-line bg-[#080a12] p-3 text-xs text-zinc-400">
                                 Use the real server IP or domain, for example http://94.130.177.226:3099. GitHub cannot redirect a browser to 0.0.0.0.
                               </p>
                             )}
                             {(githubManifestForm.publicDockioUrl || state?.settings.publicDockioUrl || "").startsWith("http://") && (
-                              <p className="mt-3 rounded-md border border-yellow-900/70 bg-yellow-950/20 p-3 text-xs text-yellow-100">
+                              <p className="mt-3 rounded-md border border-line bg-[#080a12] p-3 text-xs text-zinc-400">
                                 HTTP is okay for a quick private test. Use HTTPS before relying on webhooks or exposing the panel publicly.
                               </p>
                             )}
@@ -1604,7 +1604,7 @@ export function PanelShell() {
                                 <p className="truncate font-bold text-ink">{connection.name}</p>
                                 <p className="text-xs text-zinc-500">App ID {connection.appId} - {connection.status}</p>
                                 <p className="text-xs text-zinc-600">Secrets configured: {connection.privateKeyConfigured && connection.webhookSecretConfigured ? "yes" : "needs setup"}</p>
-                                {connection.errorMessage && <p className="mt-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs text-yellow-100">{connection.errorMessage}</p>}
+                                {connection.errorMessage && <p className="mt-2 rounded-md border border-line bg-[#080a12] p-2 text-xs text-zinc-400">{connection.errorMessage}</p>}
                               </div>
                               <StatusPill ok={connection.status === "connected"} label={connection.status} />
                             </div>
@@ -1642,11 +1642,11 @@ export function PanelShell() {
                       <div className="grid gap-2">
                         {gitInstallations.length === 0 && <p className="text-sm text-zinc-500">No installations.</p>}
                         {gitInstallations.filter((installation) => !selectedGitConnection || installation.providerConnectionId === selectedGitConnection.id).map((installation) => (
-                          <button key={installation.id} className={`rounded-md border p-3 text-left ${githubForm.installationId === installation.id ? "border-action bg-action/10" : "border-line bg-panel"}`} onClick={() => setGithubForm((form) => ({ ...form, installationId: installation.id, repositoryId: "" }))}>
+                          <button key={installation.id} className={`rounded-md border p-3 text-left ${githubForm.installationId === installation.id ? "border-zinc-500 bg-[#111113]" : "border-line bg-panel"}`} onClick={() => setGithubForm((form) => ({ ...form, installationId: installation.id, repositoryId: "" }))}>
                             <p className="font-bold text-ink">{installation.accountLogin}</p>
                             <p className="text-xs text-zinc-500">{installation.accountType} - repositories {installation.repositorySelection || "selected"}</p>
                             <p className="text-xs text-zinc-600">Last sync {installation.lastSyncedAt ? new Date(installation.lastSyncedAt).toLocaleString() : "never"}</p>
-                            {installation.errorMessage && <p className="mt-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs text-yellow-100">{installation.errorMessage}</p>}
+                            {installation.errorMessage && <p className="mt-2 rounded-md border border-line bg-[#080a12] p-2 text-xs text-zinc-400">{installation.errorMessage}</p>}
                           </button>
                         ))}
                         {selectedGitInstallation && (
@@ -1670,7 +1670,7 @@ export function PanelShell() {
                               <div className="min-w-0">
                                 <p className="truncate font-bold text-ink">{repo.fullName}</p>
                                 <p className="text-xs text-zinc-500">{repo.private ? "private" : "public"} - default branch {repo.defaultBranch}</p>
-                                {repo.archived || repo.disabled ? <p className="mt-1 text-xs text-yellow-300">Archived or disabled repositories cannot deploy.</p> : null}
+                                {repo.archived || repo.disabled ? <p className="mt-1 text-xs text-zinc-500">Archived or disabled repositories cannot deploy.</p> : null}
                               </div>
                               <span className="dio-badge">{repo.private ? "private" : "public"}</span>
                             </div>
@@ -1718,7 +1718,7 @@ export function PanelShell() {
                               <StatusPill ok={event.status === "accepted"} label={event.status} />
                             </div>
                             <p className="mt-1 text-xs text-zinc-500">{event.branch || "no branch"} - {new Date(event.createdAt).toLocaleString()}</p>
-                            {event.status !== "accepted" && <p className="mt-1 truncate text-xs text-yellow-300">{compactError(event.message)}</p>}
+                            {event.status !== "accepted" && <p className="mt-1 line-clamp-2 text-xs text-zinc-500">{compactError(event.message)}</p>}
                           </div>
                         ))}
                       </div>
@@ -1806,7 +1806,7 @@ export function PanelShell() {
                     <div className="grid max-h-[calc(100vh-250px)] gap-2 overflow-auto pr-1">
                       {allApps.length === 0 && <EmptyState title="No services yet" body="Deploy an app first, then runtime logs will be available here." actionLabel="Deploy App" onAction={() => startGlobalDeployment()} icon={Terminal} />}
                       {allApps.map((app) => (
-                        <button key={app.id} className={`dio-button min-w-0 justify-start ${logsAppId === app.id ? "border-action bg-action/10 text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
+                        <button key={app.id} className={`dio-button min-w-0 justify-start ${logsAppId === app.id ? "border-zinc-500 bg-[#111113] text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
                           <Terminal size={14} />
                           <span className="min-w-0 truncate">{projectName(allProjects, app.projectId)} / {app.name}</span>
                         </button>
@@ -2267,9 +2267,9 @@ export function PanelShell() {
               {(selectedService.previewDomainError || selectedService.previewCaddyReloadStatus || selectedService.previewCaddyFile || previewPortUrl(selectedService, vpsIp)) && (
                 <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   {selectedService.previewDomainError && (
-                    <div className="rounded-md border border-yellow-900 bg-yellow-950/30 p-3 text-sm text-yellow-100 md:col-span-2">
+                    <div className="rounded-md border border-line bg-[#080a12] p-3 text-sm text-zinc-400 md:col-span-2">
                       <p className="font-bold">Preview domain error</p>
-                      <p className="mt-1 break-words text-yellow-200/80">{selectedService.previewDomainError}</p>
+                      <p className="mt-1 break-words text-zinc-500">{selectedService.previewDomainError}</p>
                     </div>
                   )}
                   <Info title="Caddy reload" body={selectedService.previewCaddyReloadStatus || "not run"} />
@@ -2676,7 +2676,7 @@ export function PanelShell() {
               <div className="grid max-h-[calc(100vh-250px)] gap-2 overflow-auto pr-1">
                 {visibleApps.length === 0 && <p className="text-sm text-zinc-500">Deploy an app first, then logs appear here.</p>}
                 {visibleApps.map((app) => (
-                  <button key={app.id} className={`dio-button min-w-0 justify-start ${logsAppId === app.id ? "border-action bg-action/10 text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
+                  <button key={app.id} className={`dio-button min-w-0 justify-start ${logsAppId === app.id ? "border-zinc-500 bg-[#111113] text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
                     <Terminal size={14} />
                     <span className="min-w-0">
                       <span className="block truncate">{app.name}</span>
@@ -2751,7 +2751,7 @@ export function PanelShell() {
           <div className="space-y-4">
             <Panel title={editingAppId ? "Edit & Redeploy Service" : "Create Service"} icon={editingAppId ? Wrench : PackagePlus}>
               {editingAppId && (
-                <div className="mb-4 rounded-md border border-action/40 bg-action/10 p-3 text-sm text-zinc-300">
+                <div className="mb-4 rounded-md border border-line bg-[#080a12] p-3 text-sm text-zinc-400">
                   Editing <span className="font-bold text-ink">{apps.find((app) => app.id === editingAppId)?.name || "service"}</span>. The existing service, preview port, logs, env keys, and history stay attached to the same service record.
                 </div>
               )}
@@ -2770,10 +2770,10 @@ export function PanelShell() {
                     return (
                       <button
                         key={item.id}
-                        className={`rounded-md border p-4 text-left transition hover:border-action ${deployProvider === item.id ? "border-action bg-action/10" : "border-line bg-panel"}`}
+                        className={`rounded-md border p-4 text-left transition hover:border-zinc-600 ${deployProvider === item.id ? "border-zinc-500 bg-[#111113]" : "border-line bg-panel"}`}
                         onClick={() => setDeployProvider(item.id)}
                       >
-                        <Icon size={18} className="text-action" />
+                        <Icon size={18} className="text-zinc-300" />
                         <p className="mt-3 font-black text-ink">{item.title}</p>
                         <p className="mt-1 text-sm text-zinc-500">{item.body}</p>
                       </button>
@@ -2807,9 +2807,9 @@ export function PanelShell() {
                 <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
                   <div className="grid gap-3">
                     {gitConnections.length === 0 ? (
-                      <div className="rounded-md border border-yellow-900/70 bg-yellow-950/20 p-4 text-sm text-yellow-100">
+                      <div className="rounded-md border border-line bg-[#080a12] p-4 text-sm text-zinc-400">
                         <p className="font-bold">GitHub App is not connected yet.</p>
-                        <p className="mt-1 text-yellow-200/80">Open Git, click Connect GitHub, install the App on your repositories, then come back here to pick repo and branch.</p>
+                        <p className="mt-1 text-zinc-500">Open Git, connect the App, then come back to pick a repo and branch.</p>
                         <button className="dio-button mt-3" onClick={() => openGlobalTab("git")}>Connect GitHub</button>
                       </div>
                     ) : (
@@ -2829,7 +2829,7 @@ export function PanelShell() {
                           {filteredGitRepositories.map((repo) => (
                             <button
                               key={repo.id}
-                              className={`rounded-md border p-3 text-left ${githubForm.repositoryId === repo.id ? "border-action bg-action/10" : "border-line bg-panel"}`}
+                              className={`rounded-md border p-3 text-left ${githubForm.repositoryId === repo.id ? "border-zinc-500 bg-[#111113]" : "border-line bg-panel"}`}
                               onClick={() => {
                                 setGithubForm({ ...githubForm, repositoryId: repo.id });
                                 setGitForm({ ...gitForm, repoUrl: repo.cloneUrl, branch: repo.defaultBranch, name: gitForm.name === "Git App" ? repo.name : gitForm.name });
@@ -3050,10 +3050,10 @@ export function PanelShell() {
             </Panel>
 
             <Panel title="Danger Zone" icon={Trash2}>
-              <div className="grid gap-3 rounded-md border border-red-900/60 bg-red-950/20 p-4 md:grid-cols-[1fr_auto] md:items-center">
+              <div className="grid gap-3 rounded-md border border-line bg-[#080a12] p-4 md:grid-cols-[1fr_auto] md:items-center">
                 <div>
-                  <p className="font-black text-red-100">Delete this service</p>
-                  <p className="mt-1 text-sm text-red-200/75">
+                  <p className="font-black text-ink">Delete this service</p>
+                  <p className="mt-1 text-sm text-zinc-500">
                     Removes runtime resources for this service. Deployment history stays in the project. Type-confirmation is required.
                   </p>
                 </div>
@@ -3183,13 +3183,13 @@ export function PanelShell() {
                   <p className="text-sm text-zinc-400">
                     Delete this full project, including its services, deployment records, managed database containers, stored secrets, Caddy route files, and managed app files. Database volumes are kept unless you explicitly include them.
                   </p>
-                  <p className="mt-3 text-sm font-bold text-red-300">Type {currentProject.slug} to confirm.</p>
+                  <p className="mt-3 text-sm font-bold text-zinc-300">Type {currentProject.slug} to confirm.</p>
                 </div>
                 <div className="grid gap-3">
                   <Field label="Confirmation" value={projectDeleteConfirm} onChange={setProjectDeleteConfirm} placeholder={currentProject.slug} />
-                  <label className="flex items-start gap-3 rounded-md border border-red-950/70 bg-red-950/20 p-3 text-sm text-red-100">
+                  <label className="flex items-start gap-3 rounded-md border border-line bg-[#080a12] p-3 text-sm text-zinc-300">
                     <input className="mt-1" type="checkbox" checked={projectDeleteVolumes} onChange={(event) => setProjectDeleteVolumes(event.target.checked)} />
-                    <span><span className="block font-bold">Also delete managed database volumes</span><span className="mt-1 block text-xs text-red-200/70">Leave off when you might need the data later.</span></span>
+                    <span><span className="block font-bold">Also delete managed database volumes</span><span className="mt-1 block text-xs text-zinc-500">Leave off when you might need the data later.</span></span>
                   </label>
                   <button className="dio-button-danger justify-center" onClick={() => void deleteCurrentProject()} disabled={Boolean(busy) || projectDeleteConfirm !== currentProject.slug}>
                     <Trash2 size={16} />
@@ -3222,12 +3222,12 @@ export function PanelShell() {
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`flex items-center gap-3 ${compact ? "" : "mb-6"}`}>
-      <div className="flex h-11 w-11 items-center justify-center rounded-md border border-line bg-white p-1 shadow-sm shadow-action/20">
+      <div className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-white p-1">
         <img src="/logo.svg" alt="Dockio" className="h-full w-full" />
       </div>
       <div>
         <p className="font-black text-ink">Dockio</p>
-        <p className="text-xs text-zinc-500">Self-hosted panel</p>
+        <p className="text-xs text-zinc-500">VPS panel</p>
       </div>
     </div>
   );
@@ -3298,8 +3298,8 @@ function SidebarGroup({ title, children }: { title: string; children: React.Reac
 
 function ActionCard({ title, body, icon: Icon, onClick }: { title: string; body: string; icon: LucideIcon; onClick: () => void }) {
   return (
-    <button className="group min-h-24 rounded-md border border-line bg-panel p-3 text-left transition hover:border-action hover:bg-action/10" onClick={onClick}>
-      <div className="grid h-8 w-8 place-items-center rounded-md border border-line bg-[#080a12] text-action">
+    <button className="group min-h-24 rounded-md border border-line bg-panel p-3 text-left transition hover:border-zinc-600 hover:bg-[#111113]" onClick={onClick}>
+      <div className="grid h-8 w-8 place-items-center rounded-md border border-line bg-[#080a12] text-zinc-300">
         <Icon size={17} />
       </div>
       <p className="mt-3 font-black text-ink">{title}</p>
@@ -3323,7 +3323,7 @@ function EmptyState({
 }) {
   return (
     <div className="rounded-md border border-dashed border-line bg-[#050505] p-5 text-center">
-      <Icon className="mx-auto text-action" size={22} />
+      <Icon className="mx-auto text-zinc-400" size={22} />
       <p className="mt-3 font-black text-ink">{title}</p>
       <p className="mx-auto mt-1 max-w-xl text-sm text-zinc-500">{body}</p>
       <button className="dio-button-primary mt-4" onClick={onAction}>
@@ -3343,7 +3343,7 @@ function ServerSnapshot({ status, vpsIp, dataDir }: { status: Record<string, unk
         <Info title="Caddy" body={outputLabel(status?.caddy)} />
         <Info title="Firewall" body={commandOutputText(status?.ufw) ? "UFW" : "unchecked"} />
         <Info title="Previews" body={isPreviewImportOk(status) ? "ready" : "check"} />
-        <Info title="Data" body={dataDir || "-"} />
+        <Info title="Data" body={dataDir ? "configured" : "-"} />
       </div>
     </Panel>
   );
@@ -3375,8 +3375,8 @@ function DomainGrid({
               <div className="min-w-0">
                 <p className="font-bold text-ink">{app.name}</p>
                 <p className="text-xs text-zinc-500">{projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"}</p>
-                {app.domain ? <a className="mt-2 block break-all text-sm font-bold text-action" href={`https://${app.domain}`} target="_blank" rel="noreferrer">https://{app.domain}</a> : <p className="mt-2 text-sm text-zinc-500">No custom domain</p>}
-                {appPreview ? <a className="mt-1 block break-all text-sm font-bold text-action" href={appPreview} target="_blank" rel="noreferrer">{appPreview}</a> : <p className="mt-1 text-sm text-zinc-500">No preview URL</p>}
+                {app.domain ? <a className="mt-2 block max-w-full truncate text-sm font-bold text-zinc-200 hover:underline" href={`https://${app.domain}`} target="_blank" rel="noreferrer">https://{app.domain}</a> : <p className="mt-2 text-sm text-zinc-500">No custom domain</p>}
+                {appPreview ? <a className="mt-1 block max-w-full truncate text-sm font-bold text-zinc-200 hover:underline" href={appPreview} target="_blank" rel="noreferrer">{appPreview}</a> : <p className="mt-1 text-sm text-zinc-500">No preview URL</p>}
               </div>
               <StatusPill ok={app.previewDomainStatus === "active" || Boolean(app.domain)} label={app.domain ? "custom" : app.previewDomainStatus || "no route"} />
             </div>
@@ -3461,7 +3461,7 @@ function UrlCard({
       <p className="font-black text-ink">{title}</p>
       {url ? (
         <>
-          <a className="mt-2 block break-all text-sm font-bold text-action" href={url} target="_blank" rel="noreferrer">{url}</a>
+          <a className="mt-2 block max-w-full truncate text-sm font-bold text-zinc-200 hover:underline" href={url} target="_blank" rel="noreferrer">{url}</a>
           <div className="mt-3 flex flex-wrap gap-2">
             <a className="dio-button" href={url} target="_blank" rel="noreferrer">
               <ExternalLink size={14} />
@@ -3499,7 +3499,7 @@ function DeploymentSteps({ active }: { active: DeployStep }) {
   return (
     <div className="mb-5 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
       {items.map((item, index) => (
-        <div key={`${item.id}-${item.label}`} className={`rounded-md border p-3 text-sm ${active === item.id ? "border-action bg-action/10 text-ink" : "border-line bg-panel text-zinc-500"}`}>
+        <div key={`${item.id}-${item.label}`} className={`rounded-md border p-3 text-sm ${active === item.id ? "border-zinc-500 bg-[#111113] text-ink" : "border-line bg-panel text-zinc-500"}`}>
           <span className="dio-badge mr-2">{index + 1}</span>
           {item.label}
         </div>
@@ -3614,7 +3614,7 @@ function AutoDeployCard({
             <p className="break-all">Webhook: {webhookUrl || "Configure a public Dockio URL first."}</p>
             <p>Last webhook: {app.lastWebhookAt ? `${new Date(app.lastWebhookAt).toLocaleString()} - ${app.lastWebhookStatus || "received"}` : "none received yet"}</p>
             {app.lastWebhookMessage && <p className="break-words">{app.lastWebhookMessage}</p>}
-            {!publicUrlReady && <p className="text-yellow-300">Auto-deploy needs a public HTTPS Dockio URL on the Git page. Manual deploy still works.</p>}
+            {!publicUrlReady && <p className="text-zinc-500">Auto-deploy needs a public HTTPS Dockio URL. Manual deploy still works.</p>}
           </div>
         </div>
         <div className="flex flex-wrap gap-2 lg:justify-end">
@@ -3636,11 +3636,11 @@ function AutoDeployCard({
 
 function SecurityBanner({ status }: { status: Record<string, unknown> | null }) {
   return (
-    <div className="rounded-md border border-yellow-900/70 bg-yellow-950/25 p-3 text-sm text-yellow-100">
+    <div className="rounded-md border border-line bg-panel p-3 text-sm text-zinc-400">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="font-black">If this port is public, keep login enabled and restrict the panel port by firewall.</p>
-          <p className="mt-1 text-yellow-200/80">Apps should be public through Caddy on 80/443. App runtimes should stay on localhost ports.</p>
+          <p className="mt-1 text-zinc-500">Apps go public through Caddy on 80/443. Runtime ports stay local unless you enable preview.</p>
         </div>
         <span className="dio-badge">Public IP: {publicIp(status) || "checking"}</span>
       </div>
@@ -3652,13 +3652,13 @@ function ProjectPreviewLinks({ items, onOpen }: { items: Array<{ app: ManagedApp
   return (
     <div className="grid gap-2 md:grid-cols-2">
       {items.map(({ app, url }) => (
-        <div key={app.id} className="grid gap-3 rounded-md border border-line bg-[#171322] p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+        <div key={app.id} className="grid gap-3 rounded-md border border-line bg-panel p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <p className="max-w-full truncate font-black text-ink">{app.name}</p>
               <StatusPill ok={app.status === "running"} label={app.status} />
             </div>
-            <a className="mt-1 block max-w-full truncate text-sm font-bold text-action hover:underline" href={url} target="_blank" rel="noreferrer">{url}</a>
+            <a className="mt-1 block max-w-full truncate text-sm font-bold text-zinc-200 hover:underline" href={url} target="_blank" rel="noreferrer">{url}</a>
           </div>
           <div className="flex flex-wrap gap-2 md:justify-end">
             <a className="dio-button-primary" href={url} target="_blank" rel="noreferrer">
@@ -3678,11 +3678,11 @@ function ProjectPreviewLinks({ items, onOpen }: { items: Array<{ app: ManagedApp
 
 function ServiceLogo({ app }: { app: ManagedApp }) {
   if (app.sourceType === "github-app" || app.repoUrl?.includes("github.com")) return <Github size={18} className="text-zinc-100" />;
-  if (app.strategy === "compose") return <Boxes size={18} className="text-[#6d6bff]" />;
+  if (app.strategy === "compose") return <Boxes size={18} className="text-zinc-300" />;
   if (app.sourceType === "docker-image" || app.dockerImage) return <DockerMark />;
-  if (app.deployMode === "static") return <Globe2 size={18} className="text-sky-300" />;
-  if (app.serviceRole === "backend") return <Terminal size={18} className="text-emerald-300" />;
-  if (app.serviceRole === "frontend") return <Globe2 size={18} className="text-violet-300" />;
+  if (app.deployMode === "static") return <Globe2 size={18} className="text-zinc-300" />;
+  if (app.serviceRole === "backend") return <Terminal size={18} className="text-zinc-300" />;
+  if (app.serviceRole === "frontend") return <Globe2 size={18} className="text-zinc-300" />;
   return <PackagePlus size={18} className="text-zinc-200" />;
 }
 
@@ -3693,7 +3693,7 @@ function DatabaseLogo({ database }: { database: DatabaseResource }) {
 
 function DockerMark() {
   return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] text-sky-300" aria-hidden="true">
+    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] text-zinc-300" aria-hidden="true">
       <path fill="currentColor" d="M4 11h3V8H4v3Zm4 0h3V8H8v3Zm4 0h3V8h-3v3Zm-4-4h3V4H8v3Zm4 0h3V4h-3v3Zm4 4h3V8h-3v3ZM3 12h18c-.2 1.9-1 3.5-2.4 4.8C17.2 18.2 15.3 19 13 19H9.4C6.2 19 3.7 16.8 3 12Z" />
     </svg>
   );
@@ -3701,7 +3701,7 @@ function DockerMark() {
 
 function PostgresMark() {
   return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] text-sky-300" aria-hidden="true">
+    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] text-zinc-300" aria-hidden="true">
       <path fill="currentColor" d="M12 3c4.4 0 8 2 8 4.5v9C20 19 16.4 21 12 21s-8-2-8-4.5v-9C4 5 7.6 3 12 3Zm0 2C8.7 5 6 6.1 6 7.5S8.7 10 12 10s6-1.1 6-2.5S15.3 5 12 5Zm6 5.3c-1.5 1-3.6 1.7-6 1.7s-4.5-.6-6-1.7v2.2C6 13.9 8.7 15 12 15s6-1.1 6-2.5v-2.2Zm0 5c-1.5 1-3.6 1.7-6 1.7s-4.5-.6-6-1.7v1.2C6 17.9 8.7 19 12 19s6-1.1 6-2.5v-1.2Z" />
     </svg>
   );
@@ -3709,7 +3709,7 @@ function PostgresMark() {
 
 function RedisMark() {
   return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] text-red-400" aria-hidden="true">
+    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] text-zinc-300" aria-hidden="true">
       <path fill="currentColor" d="m12 3 8 3.5-8 3.5-8-3.5L12 3Zm8 7-8 3.5L4 10l2.3-1 5.7 2.5L17.7 9 20 10Zm0 4-8 3.5L4 14l2.3-1 5.7 2.5 5.7-2.5 2.3 1Zm0 4-8 3.5L4 18l2.3-1 5.7 2.5 5.7-2.5 2.3 1Z" />
     </svg>
   );
@@ -3750,12 +3750,12 @@ function ProjectCards({
         return (
           <article
             key={project.id}
-            className="cursor-pointer rounded-md border border-line bg-panel p-4 text-left transition hover:border-action/70 hover:bg-action/5"
+            className="cursor-pointer rounded-md border border-line bg-panel p-4 text-left transition hover:border-zinc-600 hover:bg-[#111113]"
             onClick={() => onOpen(project.id)}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-3">
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12] text-action">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12] text-zinc-300">
                   <Layers3 size={18} />
                 </div>
                 <div className="min-w-0">
@@ -3772,7 +3772,7 @@ function ProjectCards({
             </div>
             <div className="mt-4 grid gap-1 text-xs text-zinc-500">
               {primaryPreview ? (
-                <a className="block max-w-full truncate font-bold text-action hover:underline" href={primaryPreview.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                <a className="block max-w-full truncate font-bold text-zinc-200 hover:underline" href={primaryPreview.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
                   {primaryPreview.url}
                 </a>
               ) : (
@@ -3858,7 +3858,7 @@ function AppGrid({
       {apps.map((app) => {
         const appPreview = previewUrl(app, vpsIp);
         return (
-        <article key={app.id} className="rounded-md border border-line bg-panel p-3 transition hover:border-action/70 hover:bg-action/5">
+        <article key={app.id} className="rounded-md border border-line bg-panel p-3 transition hover:border-zinc-600 hover:bg-[#111113]">
           <div className="flex items-start justify-between gap-3">
             <button className="flex min-w-0 items-start gap-3 text-left" onClick={() => onOpen(app)}>
               <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12]">
@@ -3878,10 +3878,10 @@ function AppGrid({
             {app.databaseId && <span className="dio-badge">{databaseName(databases, app.databaseId)}</span>}
           </div>
           <div className="mt-3 grid gap-1 text-xs">
-            {app.domain && <a className="truncate font-bold text-action hover:underline" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>}
-            {appPreview && <a className="truncate font-bold text-action hover:underline" href={appPreview} target="_blank" rel="noreferrer">{appPreview}</a>}
+            {app.domain && <a className="block max-w-full truncate font-bold text-zinc-200 hover:underline" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>}
+            {appPreview && <a className="block max-w-full truncate font-bold text-zinc-200 hover:underline" href={appPreview} target="_blank" rel="noreferrer">{appPreview}</a>}
             {!app.domain && !appPreview && <p className="text-zinc-600">No public URL</p>}
-            {app.previewDomainStatus === "error" && <p className="truncate text-yellow-300">{compactError(app.previewDomainError || "Preview error")}</p>}
+            {app.previewDomainStatus === "error" && <p className="line-clamp-2 text-zinc-500">{compactError(app.previewDomainError || "Preview error")}</p>}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="dio-button" onClick={() => void onLogs(app.id)}>
@@ -3946,11 +3946,11 @@ function DetectionReview({
 }) {
   const selected = analysis.services.find((service) => service.id === selectedServiceId) || analysis.services[0];
   return (
-    <div className="rounded-md border border-action/40 bg-action/10 p-3">
+    <div className="rounded-md border border-line bg-panel p-3">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
           <p className="flex items-center gap-2 font-black text-ink">
-            <CheckCircle2 size={16} className="text-action" />
+            <CheckCircle2 size={16} className="text-zinc-400" />
             Detected stack
           </p>
           <p className="mt-1 text-xs text-zinc-400">
@@ -3963,7 +3963,7 @@ function DetectionReview({
       {analysis.warnings.length > 0 && (
         <div className="mt-3 grid gap-2">
           {analysis.warnings.map((warning) => (
-            <p key={warning} className="flex items-start gap-2 rounded-md border border-yellow-900/60 bg-yellow-950/20 p-2 text-xs text-yellow-100">
+            <p key={warning} className="flex items-start gap-2 rounded-md border border-line bg-[#080a12] p-2 text-xs text-zinc-400">
               <CircleAlert size={14} className="mt-0.5 shrink-0" />
               {warning}
             </p>
@@ -3975,7 +3975,7 @@ function DetectionReview({
         {analysis.services.map((service) => (
           <button
             key={service.id}
-            className={`rounded-md border p-3 text-left transition ${service.id === selectedServiceId ? "border-action bg-action/10" : "border-line bg-[#050505] hover:border-zinc-600"}`}
+            className={`rounded-md border p-3 text-left transition ${service.id === selectedServiceId ? "border-zinc-500 bg-[#111113]" : "border-line bg-[#050505] hover:border-zinc-600"}`}
             onClick={() => onSelect(service)}
           >
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -4008,10 +4008,10 @@ function DeploymentList({ deployments, apps, onLogs, onDelete }: { deployments: 
       {deployments.slice(0, 8).map((event) => {
         const app = apps.find((item) => item.id === event.appId);
         return (
-          <div key={event.id} className="grid gap-3 rounded-md border border-line bg-panel p-3 text-sm transition hover:border-action/60 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+          <div key={event.id} className="grid gap-3 rounded-md border border-line bg-panel p-3 text-sm transition hover:border-zinc-600 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
             <div className="flex min-w-0 items-start gap-3">
               <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12]">
-                {app ? <ServiceLogo app={app} /> : <Activity size={18} className="text-action" />}
+                {app ? <ServiceLogo app={app} /> : <Activity size={18} className="text-zinc-300" />}
               </div>
               <div className="min-w-0">
                 <p className="truncate font-bold text-ink">{app?.name || event.appId}</p>
@@ -4022,7 +4022,7 @@ function DeploymentList({ deployments, apps, onLogs, onDelete }: { deployments: 
                   {event.branch && <span className="dio-badge">{event.branch}</span>}
                   {event.commitSha && <span className="dio-badge">{shortSha(event.commitSha)}</span>}
                 </div>
-                {event.status === "failed" && <p className="mt-2 truncate text-xs text-yellow-300">{compactError(event.message)}</p>}
+                {event.status === "failed" && <p className="mt-2 line-clamp-2 text-xs text-zinc-500">{compactError(event.message)}</p>}
                 <p className="mt-2 text-xs text-zinc-600">{relativeTime(event.finishedAt || event.startedAt || event.createdAt)}{event.finishedAt && event.startedAt ? ` - ${durationLabel(event.startedAt, event.finishedAt)}` : ""}</p>
               </div>
             </div>
@@ -4063,7 +4063,7 @@ function DatabaseGrid({
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       {databases.map((database) => (
-        <article key={database.id} className="rounded-md border border-line bg-panel p-3 transition hover:border-action/60">
+        <article key={database.id} className="rounded-md border border-line bg-panel p-3 transition hover:border-zinc-600">
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-start gap-3">
               <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12]">
@@ -4156,8 +4156,8 @@ function Panel({ title, icon: Icon, children }: { title: string; icon: LucideIco
   return (
     <section className="dio-panel p-4">
       <div className="mb-4 flex items-center gap-2 border-b border-line/70 pb-3">
-        <Icon className="text-action" size={18} />
-        <h2 className="font-black text-ink">{title}</h2>
+        <Icon className="text-zinc-400" size={17} />
+        <h2 className="text-sm font-black text-ink">{title}</h2>
       </div>
       {children}
     </section>
@@ -4173,8 +4173,8 @@ function Metric({ label, value, detail, icon: Icon }: { label: string; value: nu
           <p className="mt-2 text-2xl font-black text-ink">{value}</p>
           <p className="mt-1 truncate text-xs text-zinc-500">{detail}</p>
         </div>
-        <div className="rounded-md border border-line bg-[#050505] p-2 text-zinc-300">
-          <Icon size={20} />
+        <div className="rounded-md border border-line bg-[#050505] p-2 text-zinc-500">
+          <Icon size={18} />
         </div>
       </div>
     </section>
@@ -4183,7 +4183,7 @@ function Metric({ label, value, detail, icon: Icon }: { label: string; value: nu
 
 function Info({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-md border border-line bg-[#080a12] p-3 text-sm">
+    <div className="min-w-0 overflow-hidden rounded-md border border-line bg-[#080a12] p-3 text-sm">
       <p className="dio-label">{title}</p>
       <p className="mt-1 min-w-0 truncate font-semibold text-zinc-300" title={body}>{body}</p>
     </div>
@@ -4192,7 +4192,7 @@ function Info({ title, body }: { title: string; body: string }) {
 
 function MiniStat({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="rounded-md border border-line bg-[#080a12] p-2">
+    <div className="min-w-0 overflow-hidden rounded-md border border-line bg-[#080a12] p-2">
       <p className="dio-label">{label}</p>
       <p className="mt-1 text-lg font-black text-ink">{value}</p>
     </div>
@@ -4200,11 +4200,11 @@ function MiniStat({ label, value }: { label: string; value: number | string }) {
 }
 
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
-  const Icon = ok ? CheckCircle2 : CircleAlert;
+  const display = label.replace(/_/g, " ");
   return (
-    <span className={`inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[0.7rem] font-bold uppercase ${ok ? "border-emerald-900 bg-emerald-950/40 text-emerald-300" : "border-yellow-900 bg-yellow-950/40 text-yellow-300"}`}>
-      <Icon size={13} />
-      {label}
+    <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-line bg-[#080a12] px-2 py-0.5 text-[0.68rem] font-bold uppercase text-zinc-300">
+      <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-zinc-200" : "bg-zinc-500"}`} />
+      <span className="truncate">{display}</span>
     </span>
   );
 }
@@ -4212,7 +4212,7 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
 function TabButton({ item, active, onClick }: { item: { id: Tab; label: string; icon: LucideIcon }; active: boolean; onClick: () => void }) {
   const Icon = item.icon;
   return (
-    <button className={`flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-bold ${active ? "bg-panel text-action" : "text-zinc-500 hover:bg-panel"}`} onClick={onClick}>
+    <button className={`flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-bold ${active ? "bg-panel text-zinc-100" : "text-zinc-500 hover:bg-panel hover:text-zinc-300"}`} onClick={onClick}>
       <Icon size={17} />
       {item.label}
     </button>
@@ -4222,7 +4222,7 @@ function TabButton({ item, active, onClick }: { item: { id: Tab; label: string; 
 function Notice({ busy, notice }: { busy: string; notice: string }) {
   return (
     <div className="dio-panel flex items-start gap-3 p-3">
-      {busy ? <RefreshCw className="mt-0.5 animate-spin text-action" size={18} /> : <CheckCircle2 className="mt-0.5 text-action" size={18} />}
+      {busy ? <RefreshCw className="mt-0.5 animate-spin text-zinc-400" size={18} /> : <CheckCircle2 className="mt-0.5 text-zinc-400" size={18} />}
       <div>
         <p className="text-sm font-bold text-ink">{busy || "Status"}</p>
         {notice && <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-400">{notice}</p>}
