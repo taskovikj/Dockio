@@ -52,6 +52,7 @@ export function assertSafeDomain(value: string) {
 export function assertSafeOrigin(value: string) {
   const origin = value.trim();
   if (!origin) return "";
+  if (origin === "*") return "*";
   let parsed: URL;
   try {
     parsed = new URL(origin);

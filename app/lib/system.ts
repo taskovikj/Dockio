@@ -2473,7 +2473,7 @@ async function previewHostnameForApp(app: ManagedApp, settings: PanelSettings) {
   const serviceSlug = slug(app.slug || app.name);
   const projectSlug = slug(project?.slug || project?.name || "default");
   const shortId = previewShortId(app.previewDomainHostname || app.id);
-  const left = slug(`${serviceSlug}-${projectSlug}-${shortId}`).slice(0, 63);
+  const left = previewHostnameLabel(serviceSlug, projectSlug, shortId);
   if (mode === "custom") {
     const baseDomain = assertSafeDomain((settings.previewBaseDomain || "").replace(/^\*\./, ""));
     return assertSafeDomain(`${left}.${baseDomain}`);
@@ -2481,6 +2481,15 @@ async function previewHostnameForApp(app: ManagedApp, settings: PanelSettings) {
   const ip = settings.publicServerIp?.trim() || (await fetchPublicIp()).ip || "";
   const ipv4 = normalizeIpv4(ip);
   return assertSafeDomain(`${left}.${ipv4.replace(/\./g, "-")}.sslip.io`);
+}
+
+function previewHostnameLabel(serviceSlug: string, projectSlug: string, shortId: string) {
+  const suffix = "-" + slug(shortId).slice(0, 12).replace(/^-+|-+$/g, "");
+  const maxBaseLength = Math.max(1, 63 - suffix.length);
+  const base = slug(`${serviceSlug}-${projectSlug}`)
+    .slice(0, maxBaseLength)
+    .replace(/^-+|-+$/g, "");
+  return slug(`${base || "app"}${suffix}`).slice(0, 63).replace(/^-+|-+$/g, "") || `app-${previewShortId(shortId)}`;
 }
 
 function previewCaddyFileForApp(app: ManagedApp, settings: PanelSettings) {
