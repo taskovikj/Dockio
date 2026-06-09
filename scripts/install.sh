@@ -19,7 +19,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 apt-get update
-apt-get install -y git curl ca-certificates openssh-client rsync ufw docker.io docker-compose-v2 caddy build-essential python3 make g++
+apt-get install -y git curl ca-certificates openssh-client rsync ufw docker.io docker-compose-v2 docker-buildx caddy build-essential python3 make g++
 
 if ! command -v node >/dev/null 2>&1; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -36,6 +36,17 @@ install_nixpacks() {
   fi
   echo "Installing Nixpacks build CLI..."
   curl -fsSL https://nixpacks.com/install.sh | bash
+}
+
+ensure_buildx() {
+  if docker buildx version >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Installing Docker buildx plugin..."
+  apt-get install -y docker-buildx
+  if ! docker buildx version >/dev/null 2>&1; then
+    echo "Docker buildx is still unavailable. Nixpacks deployments will not work until buildx is installed."
+  fi
 }
 
 id "$RUN_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /bin/bash "$RUN_USER"
@@ -82,6 +93,7 @@ EOF
 chmod 440 /etc/sudoers.d/dockio-panel
 
 install_nixpacks
+ensure_buildx
 
 systemctl enable --now docker caddy
 

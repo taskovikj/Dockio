@@ -2631,11 +2631,18 @@ async function previewDomainSystemStatus(settings: PanelSettings) {
 }
 
 async function previewHostnameForApp(app: ManagedApp, settings: PanelSettings) {
+  if (app.previewDomainHostname) {
+    try {
+      return assertSafeDomain(app.previewDomainHostname);
+    } catch {
+      // Older beta builds could save malformed preview hosts. Fall through and regenerate.
+    }
+  }
   const project = app.projectId ? readState().projects.find((item) => item.id === app.projectId) : undefined;
   const mode = settings.previewDomainMode === "custom" ? "custom" : "sslip";
   const serviceSlug = slug(app.slug || app.name);
   const projectSlug = slug(project?.slug || project?.name || "default");
-  const shortId = previewShortId(app.previewDomainHostname || app.id);
+  const shortId = previewShortId(app.id);
   const left = previewHostnameLabel(serviceSlug, projectSlug, shortId);
   if (mode === "custom") {
     const baseDomain = assertSafeDomain((settings.previewBaseDomain || "").replace(/^\*\./, ""));
@@ -3399,6 +3406,10 @@ async function buildGitImage(input: {
     const version = await safeRun("nixpacks", ["--version"]);
     if (!version.ok) {
       throw new UserFacingError("Nixpacks is not installed on this VPS. Re-run the Dockio installer or install Nixpacks, then redeploy.", 500);
+    }
+    const buildx = await safeRun("docker", ["buildx", "version"]);
+    if (!buildx.ok) {
+      throw new UserFacingError("Docker buildx is not installed on this VPS. Re-run the Dockio installer or install the docker-buildx package, then redeploy the Nixpacks service.", 500);
     }
     await writeNixpacksConfig(input.buildDir, input.app);
     const env: Record<string, string> = {};

@@ -55,6 +55,7 @@ The installer prints a first-admin setup code. It is also stored in:
 Dockio installs:
 
 - Docker and Docker Compose plugin
+- Docker buildx plugin
 - Caddy
 - Nixpacks build CLI
 - Node.js 22 if missing
