@@ -57,6 +57,7 @@ type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
 type DeployProvider = "git" | "github" | "image" | "compose" | "compose-yaml";
 type DeployStep = "source" | "details" | "build" | "runtime";
 type PreviewDomainMode = "sslip" | "custom" | "disabled";
+type ServerGraphMetric = "cpu" | "memory" | "storage" | "containers";
 
 interface PanelSettings {
   publicServerIp?: string;
@@ -429,6 +430,7 @@ export function PanelShell() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [state, setState] = useState<StatePayload | null>(null);
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
+  const [serverGraphMetric, setServerGraphMetric] = useState<ServerGraphMetric>("cpu");
   const [tab, setTab] = useState<Tab>("dashboard");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedServiceId, setSelectedServiceId] = useState("");
@@ -2060,6 +2062,7 @@ export function PanelShell() {
               {tab === "monitoring" && (
                 <div className="space-y-4">
                   <ServerUsageOverview status={status} apps={allApps} databases={allDatabases} />
+                  <ServerGraphsPanel status={status} metric={serverGraphMetric} onMetricChange={setServerGraphMetric} />
                   <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
                     <ServerSnapshot status={status} vpsIp={vpsIp} dataDir={state?.dataDir || ""} />
                     <Panel title="Raw Server Status" icon={Activity}>
@@ -3410,7 +3413,6 @@ function ServerUsageOverview({
   databases: DatabaseResource[];
 }) {
   const usage = serverUsage(status);
-  const history = serverUsageHistory(status);
   const cpu = usage?.cpu;
   const memory = usage?.memory;
   const storage = usage?.storage;
@@ -3456,12 +3458,6 @@ function ServerUsageOverview({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 lg:grid-cols-3">
-        <UsageTrend label="CPU" values={history.map((point) => point.cpuPercent)} current={safePercent(cpu?.percent)} />
-        <UsageTrend label="Memory" values={history.map((point) => point.memoryPercent)} current={safePercent(memory?.percent)} />
-        <UsageTrend label="Storage" values={history.map((point) => point.storagePercent)} current={safePercent(storage?.percent)} />
-      </div>
-
       <div className="mt-4 grid gap-3 md:grid-cols-4">
         <Info title="Updated" body={sampleLabel} />
         <Info title="Uptime" body={usage?.uptime?.label || "-"} />
@@ -3469,6 +3465,50 @@ function ServerUsageOverview({
         <Info title="Managed resources" body={`${containerTotal} containers`} />
       </div>
     </Panel>
+  );
+}
+
+function ServerGraphsPanel({
+  status,
+  metric,
+  onMetricChange
+}: {
+  status: Record<string, unknown> | null;
+  metric: ServerGraphMetric;
+  onMetricChange: (metric: ServerGraphMetric) => void;
+}) {
+  const usage = serverUsage(status);
+  const history = serverUsageHistory(status);
+  const series = graphSeries(metric, usage, history);
+  const current = series.values[series.values.length - 1] ?? 0;
+  const yMax = graphMax(metric, usage, series.values);
+
+  return (
+    <section className="dio-panel overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-line/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="dio-label">Graphs</p>
+          <h2 className="mt-1 text-sm font-black text-ink">{series.title}</h2>
+        </div>
+        <select className="dio-input w-full sm:w-44" value={metric} onChange={(event) => onMetricChange(event.target.value as ServerGraphMetric)}>
+          <option value="cpu">CPU usage</option>
+          <option value="memory">Memory usage</option>
+          <option value="storage">Storage usage</option>
+          <option value="containers">Containers</option>
+        </select>
+      </div>
+      <div className="p-4">
+        <LargeUsageChart
+          label={series.title}
+          values={series.values}
+          labels={series.labels}
+          current={current}
+          yMax={yMax}
+          unit={series.unit}
+          note={series.note}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -3509,18 +3549,54 @@ function UsageBar({ percent }: { percent: number }) {
   );
 }
 
-function UsageTrend({ label, values, current }: { label: string; values: number[]; current: number }) {
-  const points = trendPoints(values);
+function LargeUsageChart({
+  label,
+  values,
+  labels,
+  current,
+  yMax,
+  unit,
+  note
+}: {
+  label: string;
+  values: number[];
+  labels: string[];
+  current: number;
+  yMax: number;
+  unit: string;
+  note: string;
+}) {
+  const ticks = chartTicks(yMax);
+  const points = chartPoints(values, yMax);
+  const fillPath = points ? `M ${points} L 98 50 L 8 50 Z` : "";
   return (
-    <div className="rounded-md border border-line bg-panel p-3">
+    <div className="rounded-md border border-line bg-panel p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="dio-label">{label} trend</p>
-        <p className="text-xs font-bold text-zinc-300">{current}%</p>
+        <p className="text-xs font-black uppercase text-zinc-300">{label}</p>
+        <div className="text-right">
+          <p className="text-sm font-black text-ink">{formatGraphValue(current, unit)}</p>
+          <p className="text-[0.68rem] font-bold text-zinc-500">{note}</p>
+        </div>
       </div>
-      <svg className="h-20 w-full overflow-visible" viewBox="0 0 100 42" preserveAspectRatio="none" role="img" aria-label={`${label} usage trend`}>
-        <path d="M0 41H100" stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
-        <path d="M0 21H100" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
-        <polyline points={points} fill="none" stroke="rgb(228 228 231)" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
+      <svg className="h-72 w-full overflow-visible" viewBox="0 0 100 60" preserveAspectRatio="none" role="img" aria-label={`${label} live graph`}>
+        {ticks.map((tick, index) => {
+          const y = chartY(tick, yMax);
+          return (
+            <g key={`${tick}-${index}`}>
+              <line x1="8" x2="98" y1={y} y2={y} stroke="rgba(255,255,255,0.12)" strokeWidth="0.35" vectorEffect="non-scaling-stroke" />
+              <text x="5.8" y={y + 1} textAnchor="end" className="fill-zinc-500 text-[2.2px]">{formatGraphValue(tick, unit)}</text>
+            </g>
+          );
+        })}
+        {[0, 0.2, 0.4, 0.6, 0.8, 1].map((ratio) => {
+          const x = 8 + ratio * 90;
+          return <line key={ratio} x1={x} x2={x} y1="8" y2="50" stroke="rgba(255,255,255,0.09)" strokeWidth="0.25" vectorEffect="non-scaling-stroke" />;
+        })}
+        {fillPath && <path d={fillPath} fill="rgba(101,87,255,0.16)" />}
+        {points && <polyline points={points} fill="none" stroke="rgb(139 92 246)" strokeWidth="1.8" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />}
+        {axisLabels(labels).map((item) => (
+          <text key={`${item.x}-${item.label}`} x={item.x} y="56" textAnchor="middle" className="fill-zinc-500 text-[2.2px]">{item.label}</text>
+        ))}
       </svg>
     </div>
   );
@@ -4473,17 +4549,71 @@ function uptimeUsage(value: unknown) {
   };
 }
 
-function trendPoints(values: number[]) {
-  const data = values.length ? values.slice(-40) : [0];
-  const plotted = data.length === 1 ? [data[0], data[0]] : data;
+function graphSeries(metric: ServerGraphMetric, usage: ServerUsage | null, history: UsageHistoryPoint[]) {
+  const cpuCores = Math.max(1, Math.round(usage?.cpu?.cores || 1));
+  const rows = history.length ? history.slice(-90) : [{
+    at: usage?.at || new Date().toISOString(),
+    cpuPercent: safePercent(usage?.cpu?.percent),
+    memoryPercent: safePercent(usage?.memory?.percent),
+    storagePercent: safePercent(usage?.storage?.percent),
+    containersRunning: usage?.dockerResources?.running || 0,
+    containersTotal: usage?.dockerResources?.containers || 0
+  }];
+  const labels = rows.map((row) => shortTime(row.at));
+  if (metric === "memory") {
+    return { title: "Memory", unit: "%", note: usage?.memory?.usedLabel && usage?.memory?.totalLabel ? `${usage.memory.usedLabel} / ${usage.memory.totalLabel}` : "live", values: rows.map((row) => row.memoryPercent), labels };
+  }
+  if (metric === "storage") {
+    return { title: "Storage", unit: "%", note: usage?.storage?.usedLabel && usage?.storage?.totalLabel ? `${usage.storage.usedLabel} / ${usage.storage.totalLabel}` : "live", values: rows.map((row) => row.storagePercent), labels };
+  }
+  if (metric === "containers") {
+    return { title: "Containers", unit: "", note: "running Dockio containers", values: rows.map((row) => row.containersRunning), labels };
+  }
+  return { title: "CPU", unit: "%", note: `1 vCPU = 100%`, values: rows.map((row) => row.cpuPercent * cpuCores), labels };
+}
+
+function graphMax(metric: ServerGraphMetric, usage: ServerUsage | null, values: number[]) {
+  if (metric === "containers") return Math.max(1, usage?.dockerResources?.containers || 0, ...values);
+  if (metric === "cpu") return Math.max(100, Math.max(1, Math.round(usage?.cpu?.cores || 1)) * 100, ...values);
+  return 100;
+}
+
+function chartTicks(max: number) {
+  const top = Math.max(1, Math.ceil(max));
+  if (top <= 1) return [1, 0.75, 0.5, 0.25, 0];
+  return [top, top * 0.75, top * 0.5, top * 0.25, 0].map((value) => Math.round(value));
+}
+
+function chartPoints(values: number[], max: number) {
+  const data = values.length ? values.slice(-90) : [0];
+  const plotted = data.length === 1 ? [data[0] ?? 0, data[0] ?? 0] : data;
   const maxIndex = Math.max(1, plotted.length - 1);
   return plotted
     .map((value, index) => {
-      const x = (index / maxIndex) * 100;
-      const y = 41 - (safePercent(value) / 100) * 38;
+      const x = 8 + (index / maxIndex) * 90;
+      const y = chartY(value, max);
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     })
     .join(" ");
+}
+
+function chartY(value: number, max: number) {
+  const top = Math.max(1, max);
+  return 50 - (Math.max(0, Math.min(top, value)) / top) * 42;
+}
+
+function axisLabels(labels: string[]) {
+  const source = labels.length ? labels.slice(-90) : [shortTime(new Date().toISOString())];
+  const picks = [0, 0.25, 0.5, 0.75, 1];
+  return picks.map((ratio) => {
+    const index = Math.min(source.length - 1, Math.max(0, Math.round((source.length - 1) * ratio)));
+    return { x: 8 + ratio * 90, label: source[index] || "" };
+  });
+}
+
+function formatGraphValue(value: number, unit: string) {
+  const rounded = Number.isInteger(value) ? String(value) : value.toFixed(1);
+  return unit ? `${rounded}${unit}` : rounded;
 }
 
 function safePercent(value: unknown) {
