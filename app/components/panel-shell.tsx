@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   CircleAlert,
   Copy,
+  Cpu,
   Database,
   ExternalLink,
   Eye,
@@ -67,6 +68,48 @@ interface PanelSettings {
   caddyMainConfig: string;
   localProxyPortRangeStart: number;
   localProxyPortRangeEnd: number;
+}
+
+interface ServerUsageMetric {
+  ok?: boolean;
+  percent?: number;
+  totalLabel?: string;
+  usedLabel?: string;
+  availableLabel?: string;
+  load1?: string;
+  load5?: string;
+  load15?: string;
+  cores?: number;
+  mount?: string;
+  error?: string;
+}
+
+interface ServerDockerUsage {
+  ok?: boolean;
+  containers?: number;
+  running?: number;
+  stopped?: number;
+  images?: number;
+  volumes?: number;
+  error?: string;
+}
+
+interface ServerUsage {
+  at?: string;
+  cpu?: ServerUsageMetric;
+  memory?: ServerUsageMetric;
+  storage?: ServerUsageMetric;
+  dockerResources?: ServerDockerUsage;
+  uptime?: { seconds?: number; label?: string };
+}
+
+interface UsageHistoryPoint {
+  at: string;
+  cpuPercent: number;
+  memoryPercent: number;
+  storagePercent: number;
+  containersRunning: number;
+  containersTotal: number;
 }
 
 interface AuthState {
@@ -545,6 +588,18 @@ export function PanelShell() {
     if (!auth?.user || tab !== "logs" || !selectedServiceId || logsAppId === selectedServiceId || busy) return;
     void loadLogs(selectedServiceId);
   }, [auth?.user, tab, selectedServiceId, logsAppId, busy]);
+
+  useEffect(() => {
+    if (!auth?.user) return;
+    const timer = window.setInterval(() => {
+      void api<Record<string, unknown>>("/api/system/status")
+        .then(setStatus)
+        .catch(() => {
+          // Keep the last known metrics visible if a transient status check fails.
+        });
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [auth?.user]);
 
   async function boot() {
     const nextAuth = await api<AuthState>("/api/auth/state");
@@ -1484,6 +1539,8 @@ export function PanelShell() {
                     <Metric label="Server" value={serverHealthy ? 1 : 0} detail={serverHealthy ? "online" : "check"} icon={Server} />
                   </div>
 
+                  <ServerUsageOverview status={status} apps={allApps} databases={allDatabases} />
+
                   <Panel title={allProjects.length ? "Workspace" : "First Deploy"} icon={Play}>
                     <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
                       <div>
@@ -2001,11 +2058,14 @@ export function PanelShell() {
               )}
 
               {tab === "monitoring" && (
-                <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
-                  <ServerSnapshot status={status} vpsIp={vpsIp} dataDir={state?.dataDir || ""} />
-                  <Panel title="Raw Server Status" icon={Activity}>
-                    <pre className="dio-code max-h-[620px] overflow-auto rounded-md p-4 text-xs">{JSON.stringify(status, null, 2)}</pre>
-                  </Panel>
+                <div className="space-y-4">
+                  <ServerUsageOverview status={status} apps={allApps} databases={allDatabases} />
+                  <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+                    <ServerSnapshot status={status} vpsIp={vpsIp} dataDir={state?.dataDir || ""} />
+                    <Panel title="Raw Server Status" icon={Activity}>
+                      <pre className="dio-code max-h-[520px] overflow-auto rounded-md p-4 text-xs">{JSON.stringify(status, null, 2)}</pre>
+                    </Panel>
+                  </div>
                 </div>
               )}
 
@@ -2633,40 +2693,46 @@ export function PanelShell() {
         )}
 
         {tab === "monitoring" && selectedService && (
-          <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-            <Panel title="Service Health" icon={HeartPulse}>
-              <div className="grid gap-3">
-                <Info title="Status" body={selectedService.status} />
-                <Info title="Last message" body={selectedService.lastMessage || "No recent health message."} />
-                <Info title="Health check" body={`${selectedService.healthPath || "/"} on 127.0.0.1:${selectedService.port || "unknown"}`} />
-                <button className="dio-button-primary w-fit" onClick={() => void appAction(selectedService.id, "health")} disabled={Boolean(busy)}>
-                  <HeartPulse size={15} />
-                  Check Health
-                </button>
-              </div>
-            </Panel>
-            <Panel title="Runtime" icon={Server}>
-              <div className="grid gap-3">
-                <Info title="Strategy" body={selectedService.strategy} />
-                <Info title="Runtime resource" body={selectedService.containerName || selectedService.composeProject || selectedService.serviceName || "Not running"} />
-                <Info title="Port binding" body={selectedService.port ? `${selectedService.portBind === "public" ? "0.0.0.0" : "127.0.0.1"}:${selectedService.port}` : "No port"} />
-                <Info title="Database" body={selectedService.databaseId ? databaseName(databases, selectedService.databaseId) : "No database bound"} />
-              </div>
-            </Panel>
+          <div className="space-y-4">
+            <ServerUsageOverview status={status} apps={apps} databases={databases} />
+            <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+              <Panel title="Service Health" icon={HeartPulse}>
+                <div className="grid gap-3">
+                  <Info title="Status" body={selectedService.status} />
+                  <Info title="Last message" body={selectedService.lastMessage || "No recent health message."} />
+                  <Info title="Health check" body={`${selectedService.healthPath || "/"} on 127.0.0.1:${selectedService.port || "unknown"}`} />
+                  <button className="dio-button-primary w-fit" onClick={() => void appAction(selectedService.id, "health")} disabled={Boolean(busy)}>
+                    <HeartPulse size={15} />
+                    Check Health
+                  </button>
+                </div>
+              </Panel>
+              <Panel title="Runtime" icon={Server}>
+                <div className="grid gap-3">
+                  <Info title="Strategy" body={selectedService.strategy} />
+                  <Info title="Runtime resource" body={selectedService.containerName || selectedService.composeProject || selectedService.serviceName || "Not running"} />
+                  <Info title="Port binding" body={selectedService.port ? `${selectedService.portBind === "public" ? "0.0.0.0" : "127.0.0.1"}:${selectedService.port}` : "No port"} />
+                  <Info title="Database" body={selectedService.databaseId ? databaseName(databases, selectedService.databaseId) : "No database bound"} />
+                </div>
+              </Panel>
+            </div>
           </div>
         )}
 
         {tab === "monitoring" && !selectedService && (
-          <div className="grid gap-4 xl:grid-cols-[1fr_1.3fr]">
-            <div className="grid gap-3 md:grid-cols-2">
-              <Metric label="Apps" value={apps.length} detail="Active records" icon={Boxes} />
-              <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={Database} />
-              <Metric label="Caddy" value={isActive(status?.caddy) ? 1 : 0} detail={outputLabel(status?.caddy)} icon={Globe2} />
-              <Metric label="Data" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
+          <div className="space-y-4">
+            <ServerUsageOverview status={status} apps={apps} databases={databases} />
+            <div className="grid gap-4 xl:grid-cols-[1fr_1.3fr]">
+              <div className="grid gap-3 md:grid-cols-2">
+                <Metric label="Apps" value={apps.length} detail="Active records" icon={Boxes} />
+                <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={Database} />
+                <Metric label="Caddy" value={isActive(status?.caddy) ? 1 : 0} detail={outputLabel(status?.caddy)} icon={Globe2} />
+                <Metric label="Data" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
+              </div>
+              <Panel title="Server Status" icon={Activity}>
+                <pre className="dio-code max-h-[420px] overflow-auto rounded-md p-4 text-xs">{JSON.stringify(status, null, 2)}</pre>
+              </Panel>
             </div>
-            <Panel title="Server Status" icon={Activity}>
-              <pre className="dio-code max-h-[520px] overflow-auto rounded-md p-4 text-xs">{JSON.stringify(status, null, 2)}</pre>
-            </Panel>
           </div>
         )}
 
@@ -3330,6 +3396,132 @@ function EmptyState({
         <Icon size={15} />
         {actionLabel}
       </button>
+    </div>
+  );
+}
+
+function ServerUsageOverview({
+  status,
+  apps,
+  databases
+}: {
+  status: Record<string, unknown> | null;
+  apps: ManagedApp[];
+  databases: DatabaseResource[];
+}) {
+  const usage = serverUsage(status);
+  const history = serverUsageHistory(status);
+  const cpu = usage?.cpu;
+  const memory = usage?.memory;
+  const storage = usage?.storage;
+  const docker = usage?.dockerResources;
+  const managedFallback = apps.filter((app) => app.containerName || app.composeProject).length + databases.filter((database) => database.dockerContainer).length;
+  const containerTotal = docker?.containers ?? managedFallback;
+  const containerRunning = docker?.running ?? apps.filter((app) => app.status === "running").length;
+  const sampleLabel = usage?.at ? shortTime(usage.at) : "waiting";
+
+  return (
+    <Panel title="Server Usage" icon={Activity}>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <UsageGauge
+          label="CPU"
+          icon={Cpu}
+          percent={cpu?.percent}
+          detail={cpu?.load1 ? `load ${cpu.load1} / ${cpu.cores || 1} cores` : "load unavailable"}
+        />
+        <UsageGauge
+          label="Memory"
+          icon={Activity}
+          percent={memory?.percent}
+          detail={memory?.usedLabel && memory?.totalLabel ? `${memory.usedLabel} / ${memory.totalLabel}` : "memory unavailable"}
+        />
+        <UsageGauge
+          label="Storage"
+          icon={HardDrive}
+          percent={storage?.percent}
+          detail={storage?.usedLabel && storage?.totalLabel ? `${storage.usedLabel} / ${storage.totalLabel}` : "disk unavailable"}
+        />
+        <div className="rounded-md border border-line bg-panel p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="dio-label">Docker</p>
+              <p className="mt-2 text-2xl font-black text-ink">{containerRunning}/{containerTotal}</p>
+              <p className="mt-1 text-xs text-zinc-500">{docker?.images ?? 0} images, {docker?.volumes ?? 0} volumes</p>
+            </div>
+            <div className="rounded-md border border-line bg-[#050505] p-2 text-zinc-500">
+              <Boxes size={18} />
+            </div>
+          </div>
+          <UsageBar percent={containerTotal ? (containerRunning / containerTotal) * 100 : 0} />
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        <UsageTrend label="CPU" values={history.map((point) => point.cpuPercent)} current={safePercent(cpu?.percent)} />
+        <UsageTrend label="Memory" values={history.map((point) => point.memoryPercent)} current={safePercent(memory?.percent)} />
+        <UsageTrend label="Storage" values={history.map((point) => point.storagePercent)} current={safePercent(storage?.percent)} />
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <Info title="Updated" body={sampleLabel} />
+        <Info title="Uptime" body={usage?.uptime?.label || "-"} />
+        <Info title="Docker state" body={docker?.ok === false ? "check" : "ready"} />
+        <Info title="Managed resources" body={`${containerTotal} containers`} />
+      </div>
+    </Panel>
+  );
+}
+
+function UsageGauge({
+  label,
+  icon: Icon,
+  percent,
+  detail
+}: {
+  label: string;
+  icon: LucideIcon;
+  percent?: number;
+  detail: string;
+}) {
+  const value = safePercent(percent);
+  return (
+    <div className="rounded-md border border-line bg-panel p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="dio-label">{label}</p>
+          <p className="mt-2 text-2xl font-black text-ink">{value}%</p>
+          <p className="mt-1 truncate text-xs text-zinc-500" title={detail}>{detail}</p>
+        </div>
+        <div className="rounded-md border border-line bg-[#050505] p-2 text-zinc-500">
+          <Icon size={18} />
+        </div>
+      </div>
+      <UsageBar percent={value} />
+    </div>
+  );
+}
+
+function UsageBar({ percent }: { percent: number }) {
+  return (
+    <div className="mt-4 h-1.5 overflow-hidden rounded-sm bg-[#050505]">
+      <div className="h-full rounded-sm bg-zinc-200 transition-all duration-500" style={{ width: `${safePercent(percent)}%` }} />
+    </div>
+  );
+}
+
+function UsageTrend({ label, values, current }: { label: string; values: number[]; current: number }) {
+  const points = trendPoints(values);
+  return (
+    <div className="rounded-md border border-line bg-panel p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="dio-label">{label} trend</p>
+        <p className="text-xs font-bold text-zinc-300">{current}%</p>
+      </div>
+      <svg className="h-20 w-full overflow-visible" viewBox="0 0 100 42" preserveAspectRatio="none" role="img" aria-label={`${label} usage trend`}>
+        <path d="M0 41H100" stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
+        <path d="M0 21H100" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+        <polyline points={points} fill="none" stroke="rgb(228 228 231)" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
     </div>
   );
 }
@@ -4207,6 +4399,116 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
       <span className="truncate">{display}</span>
     </span>
   );
+}
+
+function serverUsage(status: Record<string, unknown> | null): ServerUsage | null {
+  const usage = asRecord(status?.usage);
+  if (!usage) return null;
+  return {
+    at: typeof usage.at === "string" ? usage.at : undefined,
+    cpu: usageMetric(usage.cpu),
+    memory: usageMetric(usage.memory),
+    storage: usageMetric(usage.storage),
+    dockerResources: dockerUsage(usage.dockerResources),
+    uptime: uptimeUsage(usage.uptime)
+  };
+}
+
+function serverUsageHistory(status: Record<string, unknown> | null): UsageHistoryPoint[] {
+  const items = Array.isArray(status?.usageHistory) ? status.usageHistory : [];
+  return items
+    .map((item) => {
+      const record = asRecord(item);
+      if (!record || typeof record.at !== "string") return null;
+      return {
+        at: record.at,
+        cpuPercent: safePercent(asNumber(record.cpuPercent)),
+        memoryPercent: safePercent(asNumber(record.memoryPercent)),
+        storagePercent: safePercent(asNumber(record.storagePercent)),
+        containersRunning: Math.max(0, Math.round(asNumber(record.containersRunning))),
+        containersTotal: Math.max(0, Math.round(asNumber(record.containersTotal)))
+      };
+    })
+    .filter((item): item is UsageHistoryPoint => Boolean(item));
+}
+
+function usageMetric(value: unknown): ServerUsageMetric | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  return {
+    ok: typeof record.ok === "boolean" ? record.ok : undefined,
+    percent: safePercent(asNumber(record.percent)),
+    totalLabel: stringValue(record.totalLabel),
+    usedLabel: stringValue(record.usedLabel),
+    availableLabel: stringValue(record.availableLabel),
+    load1: stringValue(record.load1),
+    load5: stringValue(record.load5),
+    load15: stringValue(record.load15),
+    cores: asNumber(record.cores) || undefined,
+    mount: stringValue(record.mount),
+    error: stringValue(record.error)
+  };
+}
+
+function dockerUsage(value: unknown): ServerDockerUsage | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  return {
+    ok: typeof record.ok === "boolean" ? record.ok : undefined,
+    containers: Math.max(0, Math.round(asNumber(record.containers))),
+    running: Math.max(0, Math.round(asNumber(record.running))),
+    stopped: Math.max(0, Math.round(asNumber(record.stopped))),
+    images: Math.max(0, Math.round(asNumber(record.images))),
+    volumes: Math.max(0, Math.round(asNumber(record.volumes))),
+    error: stringValue(record.error)
+  };
+}
+
+function uptimeUsage(value: unknown) {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  return {
+    seconds: asNumber(record.seconds) || undefined,
+    label: stringValue(record.label)
+  };
+}
+
+function trendPoints(values: number[]) {
+  const data = values.length ? values.slice(-40) : [0];
+  const plotted = data.length === 1 ? [data[0], data[0]] : data;
+  const maxIndex = Math.max(1, plotted.length - 1);
+  return plotted
+    .map((value, index) => {
+      const x = (index / maxIndex) * 100;
+      const y = 41 - (safePercent(value) / 100) * 38;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
+function safePercent(value: unknown) {
+  const number = asNumber(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function asNumber(value: unknown) {
+  const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
+  return Number.isFinite(number) ? number : 0;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function shortTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function TabButton({ item, active, onClick }: { item: { id: Tab; label: string; icon: LucideIcon }; active: boolean; onClick: () => void }) {

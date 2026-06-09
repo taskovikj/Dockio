@@ -101,6 +101,23 @@ export interface RepoAnalysis {
 
 const PREVIEW_IMPORT_LINE = "import /etc/caddy/dockio/sites/*.caddy";
 
+interface CpuTimesSnapshot {
+  idle: number;
+  total: number;
+}
+
+interface UsageSnapshot {
+  at: string;
+  cpuPercent: number;
+  memoryPercent: number;
+  storagePercent: number;
+  containersRunning: number;
+  containersTotal: number;
+}
+
+let previousCpuTimes: CpuTimesSnapshot | undefined;
+const usageHistory: UsageSnapshot[] = [];
+
 export async function createProject(input: { name: string; description?: string }) {
   const name = assertSafeAppName(input.name);
   const current = readState();
@@ -215,26 +232,43 @@ export async function analyzeGitRepo(input: { repoUrl: string; branch?: string; 
 
 export async function serverStatus() {
   const settings = readState().settings;
-  const [hostname, osRelease, disk, docker, caddy, ufw, publicIp] = await Promise.all([
+  const [hostname, osRelease, disk, docker, caddy, ufw, publicIp, dockerContainers, dockerImages, dockerVolumes] = await Promise.all([
     safeRun("hostnamectl", []),
     safeRead("/etc/os-release"),
-    safeRun("df", ["-h", "/"]),
+    safeRun("df", ["-Pk", "/"]),
     safeRun("docker", ["version", "--format", "{{.Server.Version}}"]),
     safeRun("systemctl", ["is-active", "caddy"]),
     safeRun("sudo", ["ufw", "status", "numbered"]),
-    fetchPublicIp()
+    fetchPublicIp(),
+    safeRun("docker", ["ps", "-a", "--filter", "label=dockio=true", "--format", "{{.State}}"]),
+    safeRun("docker", ["image", "ls", "--filter", "label=dockio=true", "-q"]),
+    safeRun("docker", ["volume", "ls", "--filter", "label=dockio=true", "-q"])
   ]);
+  const memory = memoryStatus();
+  const cpu = cpuStatus();
+  const storage = diskUsageStatus(disk);
+  const dockerResources = dockerResourceStatus(dockerContainers, dockerImages, dockerVolumes);
+  const usage = {
+    at: new Date().toISOString(),
+    cpu,
+    memory,
+    storage,
+    dockerResources,
+    uptime: uptimeStatus()
+  };
 
   return {
-    time: new Date().toISOString(),
+    time: usage.at,
     hostname,
     osRelease,
     disk,
-    memory: memoryStatus(),
-    cpu: loadStatus(),
+    memory,
+    cpu,
     docker,
     caddy,
     ufw,
+    usage,
+    usageHistory: recordUsageSample(usage),
     publicIp,
     previewDomains: await previewDomainSystemStatus(settings),
     settings,
@@ -2632,10 +2666,37 @@ function memoryStatus() {
     );
     const total = values.MemTotal || 0;
     const available = values.MemAvailable || 0;
-    return { ok: true, totalMb: Math.round(total / 1024), availableMb: Math.round(available / 1024), usedMb: Math.round((total - available) / 1024) };
+    return memoryUsageFromBytes(total * 1024, available * 1024, "procfs");
   } catch (error) {
+    const total = os.totalmem();
+    const available = os.freemem();
+    if (total > 0) return memoryUsageFromBytes(total, available, "node-os");
     return { ok: false, error: error instanceof Error ? error.message : "memory check failed" };
   }
+}
+
+function cpuStatus() {
+  const load = loadStatus();
+  const snapshot = readCpuTimes();
+  const cores = Math.max(1, os.cpus().length);
+  let percent = 0;
+  if (snapshot && previousCpuTimes) {
+    const idle = snapshot.idle - previousCpuTimes.idle;
+    const total = snapshot.total - previousCpuTimes.total;
+    if (total > 0) percent = clampPercent(((total - idle) / total) * 100);
+  } else if (load.ok) {
+    percent = clampPercent((Number(load.load1) / cores) * 100);
+  }
+  if (snapshot) previousCpuTimes = snapshot;
+  return {
+    ok: load.ok || Boolean(snapshot),
+    percent,
+    cores,
+    load1: load.ok ? load.load1 : undefined,
+    load5: load.ok ? load.load5 : undefined,
+    load15: load.ok ? load.load15 : undefined,
+    error: load.ok ? undefined : load.error
+  };
 }
 
 function loadStatus() {
@@ -2645,6 +2706,127 @@ function loadStatus() {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "load check failed" };
   }
+}
+
+function readCpuTimes(): CpuTimesSnapshot | undefined {
+  try {
+    const line = fs.readFileSync("/proc/stat", "utf8").split("\n")[0] || "";
+    const parts = line.trim().split(/\s+/).slice(1).map((part) => Number(part));
+    if (parts.length < 4 || parts.some((part) => Number.isNaN(part))) return undefined;
+    const idle = (parts[3] ?? 0) + (parts[4] ?? 0);
+    const total = parts.reduce((sum, value) => sum + value, 0);
+    return { idle, total };
+  } catch {
+    return undefined;
+  }
+}
+
+function memoryUsageFromBytes(total: number, available: number, source: string) {
+  const used = Math.max(0, total - available);
+  return {
+    ok: true,
+    source,
+    totalMb: Math.round(total / 1024 / 1024),
+    availableMb: Math.round(available / 1024 / 1024),
+    usedMb: Math.round(used / 1024 / 1024),
+    percent: total > 0 ? clampPercent((used / total) * 100) : 0,
+    totalLabel: formatBytes(total),
+    availableLabel: formatBytes(available),
+    usedLabel: formatBytes(used)
+  };
+}
+
+function diskUsageStatus(disk: CommandOutput) {
+  if (!disk.ok) {
+    return { ok: false, percent: 0, error: disk.stderr || disk.stdout || "disk check failed" };
+  }
+  const lines = disk.stdout.trim().split(/\r?\n/).filter(Boolean);
+  const columns = (lines[1] || "").trim().split(/\s+/);
+  const totalKb = Number(columns[1] || 0);
+  const usedKb = Number(columns[2] || 0);
+  const availableKb = Number(columns[3] || 0);
+  const percent = Number(String(columns[4] || "0").replace("%", ""));
+  return {
+    ok: totalKb > 0,
+    filesystem: columns[0] || "",
+    mount: columns[5] || "/",
+    totalKb,
+    usedKb,
+    availableKb,
+    percent: clampPercent(Number.isFinite(percent) ? percent : totalKb > 0 ? (usedKb / totalKb) * 100 : 0),
+    totalLabel: formatBytes(totalKb * 1024),
+    usedLabel: formatBytes(usedKb * 1024),
+    availableLabel: formatBytes(availableKb * 1024)
+  };
+}
+
+function dockerResourceStatus(containers: CommandOutput, images: CommandOutput, volumes: CommandOutput) {
+  const states = containers.ok ? containers.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : [];
+  const running = states.filter((state) => state === "running").length;
+  return {
+    ok: containers.ok,
+    containers: states.length,
+    running,
+    stopped: Math.max(0, states.length - running),
+    images: countOutputLines(images),
+    volumes: countOutputLines(volumes),
+    error: containers.ok ? undefined : containers.stderr || containers.stdout || "Docker resource check failed"
+  };
+}
+
+function countOutputLines(output: CommandOutput) {
+  if (!output.ok) return 0;
+  return output.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length;
+}
+
+function uptimeStatus() {
+  const seconds = Math.max(0, Math.floor(os.uptime()));
+  return { seconds, label: formatDuration(seconds) };
+}
+
+function recordUsageSample(usage: {
+  at: string;
+  cpu: ReturnType<typeof cpuStatus>;
+  memory: ReturnType<typeof memoryStatus>;
+  storage: ReturnType<typeof diskUsageStatus>;
+  dockerResources: ReturnType<typeof dockerResourceStatus>;
+}) {
+  usageHistory.push({
+    at: usage.at,
+    cpuPercent: usage.cpu.percent || 0,
+    memoryPercent: usage.memory.ok && "percent" in usage.memory ? usage.memory.percent : 0,
+    storagePercent: usage.storage.percent || 0,
+    containersRunning: usage.dockerResources.running || 0,
+    containersTotal: usage.dockerResources.containers || 0
+  });
+  while (usageHistory.length > 120) usageHistory.shift();
+  return [...usageHistory];
+}
+
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function formatDuration(totalSeconds: number) {
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 async function findOpenPort() {
