@@ -72,6 +72,32 @@ export interface CommandOutput {
   code?: number;
 }
 
+export interface FirewallRule {
+  number?: number;
+  to: string;
+  action: string;
+  direction: string;
+  from: string;
+  port?: number;
+  protocol?: "tcp" | "udp";
+  public: boolean;
+  raw: string;
+}
+
+export interface ParsedFirewallStatus {
+  ok: boolean;
+  active: boolean;
+  status: string;
+  defaultIncoming?: string;
+  defaultOutgoing?: string;
+  defaultRouted?: string;
+  rules: FirewallRule[];
+  exposedPorts: FirewallRule[];
+  warnings: string[];
+  raw: string;
+  error?: string;
+}
+
 export interface DetectedService {
   id: string;
   name: string;
@@ -232,13 +258,14 @@ export async function analyzeGitRepo(input: { repoUrl: string; branch?: string; 
 
 export async function serverStatus() {
   const settings = readState().settings;
-  const [hostname, osRelease, disk, docker, caddy, ufw, publicIp, dockerContainers, dockerImages, dockerVolumes] = await Promise.all([
+  const [hostname, osRelease, disk, docker, caddy, ufw, ufwVerbose, publicIp, dockerContainers, dockerImages, dockerVolumes] = await Promise.all([
     safeRun("hostnamectl", []),
     safeRead("/etc/os-release"),
     safeRun("df", ["-Pk", "/"]),
     safeRun("docker", ["version", "--format", "{{.Server.Version}}"]),
     safeRun("systemctl", ["is-active", "caddy"]),
     safeRun("sudo", ["ufw", "status", "numbered"]),
+    safeRun("sudo", ["ufw", "status", "verbose"]),
     fetchPublicIp(),
     safeRun("docker", ["ps", "-a", "--filter", "label=dockio=true", "--format", "{{.State}}"]),
     safeRun("docker", ["image", "ls", "--filter", "label=dockio=true", "-q"]),
@@ -267,6 +294,7 @@ export async function serverStatus() {
     docker,
     caddy,
     ufw,
+    firewall: parseFirewallStatus(ufw, ufwVerbose),
     usage,
     usageHistory: recordUsageSample(usage),
     publicIp,
@@ -275,6 +303,17 @@ export async function serverStatus() {
     dataDir: getDataDir(),
     node: process.version,
     platform: os.type() + " " + os.release() + " " + os.arch()
+  };
+}
+
+export async function getFirewallStatus() {
+  const [numbered, verbose] = await Promise.all([
+    safeRun("sudo", ["ufw", "status", "numbered"]),
+    safeRun("sudo", ["ufw", "status", "verbose"])
+  ]);
+  return {
+    legacy: numbered,
+    firewall: parseFirewallStatus(numbered, verbose)
   };
 }
 
@@ -2117,6 +2156,83 @@ export async function deleteAppEnvironmentKey(input: { appId: string; key: strin
   return readState().apps.find((item) => item.id === app.id);
 }
 
+function parseFirewallStatus(numbered: CommandOutput, verbose: CommandOutput): ParsedFirewallStatus {
+  const numberedText = numbered.stdout || numbered.stderr || "";
+  const verboseText = verbose.stdout || verbose.stderr || "";
+  const raw = [verboseText, numberedText && numberedText !== verboseText ? numberedText : ""].filter(Boolean).join("\n\n").trim();
+  const statusMatch = raw.match(/Status:\s*([A-Za-z]+)/i);
+  const status = (statusMatch?.[1] || (numbered.ok || verbose.ok ? "unknown" : "error")).toLowerCase();
+  const defaults = raw.match(/Default:\s*([^,]+)\s*\(incoming\),\s*([^,]+)\s*\(outgoing\)(?:,\s*([^)]+)\s*\(routed\))?/i);
+  const rules = numberedText
+    .split(/\r?\n/)
+    .map(parseFirewallRuleLine)
+    .filter((rule): rule is FirewallRule => Boolean(rule));
+  const exposedPorts = rules.filter((rule) => rule.action === "allow" && rule.direction === "in");
+  const panelPort = Number(process.env.DIO_PORT || process.env.PORT || 3099);
+  const warnings: string[] = [];
+
+  if (status === "inactive") warnings.push("UFW is inactive.");
+  for (const rule of exposedPorts) {
+    if (!rule.public) continue;
+    if (rule.port === 7788) warnings.push("Port 7788 is public. The Dockio agent/control ports must never be exposed.");
+    if (rule.port === panelPort) warnings.push(`Panel port ${panelPort} is public. Restrict it to your IP or VPN CIDR if possible.`);
+    if (rule.port === 22 || rule.to.toLowerCase() === "openssh") warnings.push("SSH is public. For production, restrict SSH to trusted source IPs.");
+  }
+
+  return {
+    ok: numbered.ok || verbose.ok,
+    active: status === "active",
+    status,
+    defaultIncoming: defaults?.[1]?.trim().toLowerCase(),
+    defaultOutgoing: defaults?.[2]?.trim().toLowerCase(),
+    defaultRouted: defaults?.[3]?.trim().toLowerCase(),
+    rules,
+    exposedPorts,
+    warnings: uniqueStrings(warnings),
+    raw,
+    error: numbered.ok || verbose.ok ? undefined : numbered.stderr || verbose.stderr || "UFW status failed."
+  };
+}
+
+function parseFirewallRuleLine(line: string): FirewallRule | undefined {
+  const trimmed = line.trim();
+  const match = trimmed.match(/^\[\s*(\d+)\]\s+(.+?)\s{2,}([A-Z]+(?:\s+(?:IN|OUT))?)\s{2,}(.+)$/);
+  if (!match) return undefined;
+  const [, numberText = "", to = "", actionBlock = "", from = ""] = match;
+  const words = actionBlock.trim().toLowerCase().split(/\s+/);
+  const action = words[0] || "";
+  const direction = words.includes("out") ? "out" : "in";
+  const parsedTarget = parseFirewallTarget(to);
+  return {
+    number: Number(numberText),
+    to: to.trim(),
+    action,
+    direction,
+    from: from.trim(),
+    port: parsedTarget.port,
+    protocol: parsedTarget.protocol,
+    public: isPublicFirewallSource(from),
+    raw: trimmed
+  };
+}
+
+function parseFirewallTarget(value: string): { port?: number; protocol?: "tcp" | "udp" } {
+  const target = value.trim();
+  if (/^openssh$/i.test(target)) return { port: 22, protocol: "tcp" };
+  if (/^http$/i.test(target)) return { port: 80, protocol: "tcp" };
+  if (/^https$/i.test(target)) return { port: 443, protocol: "tcp" };
+  const match = target.match(/\b(\d{1,5})(?::\d{1,5})?(?:\/(tcp|udp))?\b/i);
+  const port = Number(match?.[1] || 0);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return {};
+  const protocol = (match?.[2]?.toLowerCase() as "tcp" | "udp" | undefined) || undefined;
+  return { port, protocol };
+}
+
+function isPublicFirewallSource(value: string) {
+  const source = value.trim().toLowerCase();
+  return source === "anywhere" || source === "anywhere (v6)" || source === "0.0.0.0/0" || source === "::/0";
+}
+
 export async function applyFirewallBaseline(input: { panelPort: number; trustedCidr?: string }) {
   const panelPort = assertSafePort(input.panelPort);
   const trustedCidr = assertSafeCidr(input.trustedCidr || "");
@@ -2151,6 +2267,17 @@ export async function deleteFirewallRule(input: { ruleNumber: number }) {
   if (!Number.isInteger(ruleNumber) || ruleNumber < 1 || ruleNumber > 999) throw new Error("Firewall rule number must be between 1 and 999.");
   const result = await safeRun("sudo", ["ufw", "--force", "delete", String(ruleNumber)]);
   audit("firewall.delete_rule", `Deleted firewall rule #${ruleNumber}.`, { ruleNumber });
+  return result;
+}
+
+export async function controlFirewall(input: { action: "enable" | "disable" | "reload" }) {
+  const action = input.action;
+  let result: CommandOutput;
+  if (action === "enable") result = await safeRun("sudo", ["ufw", "--force", "enable"]);
+  else if (action === "disable") result = await safeRun("sudo", ["ufw", "disable"]);
+  else if (action === "reload") result = await safeRun("sudo", ["ufw", "reload"]);
+  else throw new Error("Unsupported firewall action.");
+  audit("firewall.control", `Firewall ${action}.`, { action, ok: result.ok });
   return result;
 }
 

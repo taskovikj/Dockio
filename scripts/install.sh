@@ -60,7 +60,7 @@ chown root:"$RUN_USER" "$ENV_DIR/panel.env"
 chmod 640 "$ENV_DIR/panel.env"
 
 cat > /etc/sudoers.d/dockio-panel <<EOF
-$RUN_USER ALL=(root) NOPASSWD: /usr/sbin/ufw status, /usr/sbin/ufw status *, /usr/sbin/ufw allow *, /usr/sbin/ufw deny *, /usr/sbin/ufw --force delete *, /usr/sbin/ufw --force enable
+$RUN_USER ALL=(root) NOPASSWD: /usr/sbin/ufw status, /usr/sbin/ufw status *, /usr/sbin/ufw allow *, /usr/sbin/ufw deny *, /usr/sbin/ufw reload, /usr/sbin/ufw disable, /usr/sbin/ufw --force delete *, /usr/sbin/ufw --force enable
 $RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload, /bin/systemctl daemon-reload, /usr/bin/systemctl reload caddy, /bin/systemctl reload caddy, /usr/bin/systemctl enable --now dio-*.service, /bin/systemctl enable --now dio-*.service, /usr/bin/systemctl restart dio-*.service, /bin/systemctl restart dio-*.service, /usr/bin/systemctl disable --now dio-*.service, /bin/systemctl disable --now dio-*.service
 $RUN_USER ALL=(root) NOPASSWD: /usr/bin/install -m 0644 -o root -g root * /etc/caddy/conf.d/dio_*.caddy, /usr/bin/install -m 0644 -o root -g root * /etc/caddy/dockio/sites/preview-*.caddy, /usr/bin/install -m 0644 -o root -g root * /etc/systemd/system/dio-*.service
 $RUN_USER ALL=(root) NOPASSWD: /usr/bin/mkdir -p /etc/caddy/conf.d, /bin/mkdir -p /etc/caddy/conf.d, /usr/bin/mkdir -p /etc/caddy/dockio/sites, /bin/mkdir -p /etc/caddy/dockio/sites

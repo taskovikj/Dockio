@@ -27,7 +27,7 @@ Dockio installs on a Linux VPS and gives you a web dashboard for:
 - editing environment variables
 - viewing runtime logs and deployment history
 - restarting, stopping, redeploying, and deleting services
-- applying UFW firewall rules
+- viewing UFW status, exposed ports, numbered rules, and applying firewall changes
 - inspecting Docker resources and pruning managed resources
 
 Dockio is intentionally single-server first. The installed panel, state, Docker, Caddy, apps, databases, logs, and generated routes all live on the same VPS.

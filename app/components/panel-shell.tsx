@@ -104,6 +104,32 @@ interface ServerUsage {
   uptime?: { seconds?: number; label?: string };
 }
 
+interface FirewallRule {
+  number?: number;
+  to: string;
+  action: string;
+  direction: string;
+  from: string;
+  port?: number;
+  protocol?: "tcp" | "udp";
+  public: boolean;
+  raw: string;
+}
+
+interface FirewallStatus {
+  ok: boolean;
+  active: boolean;
+  status: string;
+  defaultIncoming?: string;
+  defaultOutgoing?: string;
+  defaultRouted?: string;
+  rules: FirewallRule[];
+  exposedPorts: FirewallRule[];
+  warnings: string[];
+  raw: string;
+  error?: string;
+}
+
 interface UsageHistoryPoint {
   at: string;
   cpuPercent: number;
@@ -1354,6 +1380,7 @@ export function PanelShell() {
       setLogsDeploymentId("");
       setLogs(result.results.map((item) => `$ ${item.command}\n${item.stdout || item.stderr || (item.ok ? "ok" : "failed")}`).join("\n\n"));
       setNotice("Firewall baseline applied.");
+      await refresh();
     });
   }
 
@@ -1383,6 +1410,22 @@ export function PanelShell() {
     });
   }
 
+  async function controlFirewall(action: "enable" | "disable" | "reload") {
+    if (action === "disable" && !window.confirm("Disable UFW on this VPS? Existing services stay running, but firewall protection is turned off.")) return;
+    await run(`Firewall ${action}`, async () => {
+      const result = await api<{ result: CommandOutput }>("/api/firewall/control", {
+        method: "POST",
+        csrfToken,
+        body: { action }
+      });
+      setLogsAppId("");
+      setLogsDeploymentId("");
+      setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
+      setNotice(`Firewall ${action} completed.`);
+      await refresh();
+    });
+  }
+
   async function deleteDeploymentEvent(deploymentId: string) {
     const deployment = state?.deployments.find((item) => item.id === deploymentId);
     if (!window.confirm(`Delete deployment record "${deployment?.action || deploymentId}" and its stored logs? This does not stop a running service.`)) return;
@@ -1393,17 +1436,24 @@ export function PanelShell() {
     });
   }
 
-  async function deleteFirewallRule() {
+  async function deleteFirewallRule(ruleNumberInput?: number) {
+    const ruleNumber = ruleNumberInput || Number(firewallDeleteForm.ruleNumber);
+    if (!Number.isInteger(ruleNumber) || ruleNumber < 1) {
+      setNotice("Choose a numbered UFW rule to delete.");
+      return;
+    }
+    if (!window.confirm(`Delete UFW rule #${ruleNumber}?`)) return;
     await run("Deleting firewall rule", async () => {
       const result = await api<{ result: CommandOutput }>("/api/firewall/delete-rule", {
         method: "POST",
         csrfToken,
-        body: { ruleNumber: Number(firewallDeleteForm.ruleNumber) }
+        body: { ruleNumber }
       });
       setLogsAppId("");
       setLogsDeploymentId("");
       setLogs([result.result.command, result.result.stdout, result.result.stderr].filter(Boolean).join("\n\n"));
-      setNotice(`Firewall rule #${firewallDeleteForm.ruleNumber} deleted.`);
+      setFirewallDeleteForm({ ruleNumber: "" });
+      setNotice(`Firewall rule #${ruleNumber} deleted.`);
       await refresh();
     });
   }
@@ -1982,51 +2032,21 @@ export function PanelShell() {
 
               {tab === "advanced" && (
                 <div className="space-y-4">
-                  <Panel title="Firewall" icon={Shield}>
-                    <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
-                      <pre className="dio-code max-h-96 overflow-auto rounded-md p-3 text-xs">{commandOutputText(status?.ufw) || "UFW status is not available yet. Click Refresh after install."}</pre>
-                      <div className="grid content-start gap-3">
-                        <Info title="Default" body="80/443 public, panel restricted" />
-                        <button className="dio-button" onClick={() => void refresh()} disabled={Boolean(busy)}>
-                          <RefreshCw size={16} />
-                          Refresh Firewall
-                        </button>
-                      </div>
-                    </div>
-                  </Panel>
-                  <div className="grid gap-4 xl:grid-cols-2">
-                    <Panel title="Apply Baseline" icon={Shield}>
-                      <div className="grid gap-3">
-                        <Field label="Panel port" value={firewallForm.panelPort} onChange={(panelPort) => setFirewallForm({ ...firewallForm, panelPort })} />
-                        <Field label="Trusted CIDR" value={firewallForm.trustedCidr} onChange={(trustedCidr) => setFirewallForm({ ...firewallForm, trustedCidr })} placeholder="100.64.0.0/10 or your IP/32" />
-                        <button className="dio-button-primary w-fit" onClick={() => void applyFirewall()} disabled={Boolean(busy)}>
-                          <Flame size={16} />
-                          Apply Baseline
-                        </button>
-                      </div>
-                    </Panel>
-                    <Panel title="Expose or Block Port" icon={Flame}>
-                      <div className="grid gap-3">
-                        <div className="grid gap-3 md:grid-cols-3">
-                          <Select label="Action" value={firewallRuleForm.action} onChange={(action) => setFirewallRuleForm({ ...firewallRuleForm, action: action as "allow" | "deny" })} options={[{ value: "allow", label: "Allow" }, { value: "deny", label: "Deny" }]} />
-                          <Field label="Port" value={firewallRuleForm.port} onChange={(port) => setFirewallRuleForm({ ...firewallRuleForm, port })} placeholder="8080" />
-                          <Select label="Protocol" value={firewallRuleForm.protocol} onChange={(protocol) => setFirewallRuleForm({ ...firewallRuleForm, protocol: protocol as "tcp" | "udp" })} options={[{ value: "tcp", label: "TCP" }, { value: "udp", label: "UDP" }]} />
-                        </div>
-                        <Field label="Source CIDR optional" value={firewallRuleForm.sourceCidr} onChange={(sourceCidr) => setFirewallRuleForm({ ...firewallRuleForm, sourceCidr })} placeholder="100.64.0.0/10 or blank for public" />
-                        <button className={firewallRuleForm.action === "deny" ? "dio-button-danger w-fit" : "dio-button-primary w-fit"} onClick={() => void applyFirewallRule()} disabled={Boolean(busy)}>
-                          <Flame size={16} />
-                          Apply Rule
-                        </button>
-                        <div className="border-t border-line pt-3">
-                          <Field label="Delete numbered UFW rule" value={firewallDeleteForm.ruleNumber} onChange={(ruleNumber) => setFirewallDeleteForm({ ...firewallDeleteForm, ruleNumber })} placeholder="Run UFW status, then enter the number" />
-                          <button className="dio-button-danger mt-3 w-fit" onClick={() => void deleteFirewallRule()} disabled={Boolean(busy) || !firewallDeleteForm.ruleNumber.trim()}>
-                            <Trash2 size={16} />
-                            Delete Rule
-                          </button>
-                        </div>
-                      </div>
-                    </Panel>
-                  </div>
+                  <FirewallManager
+                    status={status}
+                    busy={busy}
+                    firewallForm={firewallForm}
+                    firewallRuleForm={firewallRuleForm}
+                    firewallDeleteForm={firewallDeleteForm}
+                    onFirewallFormChange={setFirewallForm}
+                    onFirewallRuleFormChange={setFirewallRuleForm}
+                    onFirewallDeleteFormChange={setFirewallDeleteForm}
+                    onRefresh={() => void refresh()}
+                    onApplyBaseline={() => void applyFirewall()}
+                    onApplyRule={() => void applyFirewallRule()}
+                    onDeleteRule={(ruleNumber) => void deleteFirewallRule(ruleNumber)}
+                    onControl={(action) => void controlFirewall(action)}
+                  />
                   <Panel title="Preview Domain Settings" icon={Eye}>
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                       <Select label="Preview mode" value={previewSettingsForm.previewDomainMode} onChange={(previewDomainMode) => setPreviewSettingsForm({ ...previewSettingsForm, previewDomainMode: previewDomainMode as PreviewDomainMode })} options={[{ value: "sslip", label: "sslip.io zero-config" }, { value: "custom", label: "Custom wildcard domain" }, { value: "disabled", label: "Disabled" }]} />
@@ -3141,18 +3161,21 @@ export function PanelShell() {
 
         {tab === "advanced" && !selectedService && (
           <div className="space-y-4">
-            <Panel title="Firewall Status" icon={Shield}>
-              <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
-                <pre className="dio-code max-h-80 overflow-auto rounded-md p-3 text-xs">{commandOutputText(status?.ufw) || "UFW status is not available yet. Click Refresh after install."}</pre>
-                <div className="space-y-3 text-sm text-zinc-400">
-                  <Info title="Backend" body="UFW" />
-                  <button className="dio-button w-full justify-center" onClick={() => void refresh()} disabled={Boolean(busy)}>
-                    <RefreshCw size={16} />
-                    Refresh Status
-                  </button>
-                </div>
-              </div>
-            </Panel>
+            <FirewallManager
+              status={status}
+              busy={busy}
+              firewallForm={firewallForm}
+              firewallRuleForm={firewallRuleForm}
+              firewallDeleteForm={firewallDeleteForm}
+              onFirewallFormChange={setFirewallForm}
+              onFirewallRuleFormChange={setFirewallRuleForm}
+              onFirewallDeleteFormChange={setFirewallDeleteForm}
+              onRefresh={() => void refresh()}
+              onApplyBaseline={() => void applyFirewall()}
+              onApplyRule={() => void applyFirewallRule()}
+              onDeleteRule={(ruleNumber) => void deleteFirewallRule(ruleNumber)}
+              onControl={(action) => void controlFirewall(action)}
+            />
             <Panel title="Auto Preview Domains" icon={Globe2}>
               <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
                 <div className="grid gap-3">
@@ -3192,44 +3215,6 @@ export function PanelShell() {
                 </div>
               </div>
             </Panel>
-            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-              <Panel title="Firewall Baseline" icon={Shield}>
-                <div className="grid gap-3">
-                  <Field label="Panel port" value={firewallForm.panelPort} onChange={(panelPort) => setFirewallForm({ ...firewallForm, panelPort })} />
-                  <Field label="Trusted CIDR" value={firewallForm.trustedCidr} onChange={(trustedCidr) => setFirewallForm({ ...firewallForm, trustedCidr })} placeholder="100.64.0.0/10" />
-                  <button className="dio-button-primary" onClick={() => void applyFirewall()} disabled={Boolean(busy)}>
-                    <Flame size={16} />
-                    Apply Baseline
-                  </button>
-                  <button className="dio-button" onClick={() => void pruneSystem()} disabled={Boolean(busy)}>
-                    <Wrench size={16} />
-                    Docker Prune
-                  </button>
-                </div>
-              </Panel>
-              <Panel title="Expose / Block Port" icon={Flame}>
-                <div className="grid gap-3">
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <Select label="Action" value={firewallRuleForm.action} onChange={(action) => setFirewallRuleForm({ ...firewallRuleForm, action: action as "allow" | "deny" })} options={[{ value: "allow", label: "Allow" }, { value: "deny", label: "Deny" }]} />
-                    <Field label="Port" value={firewallRuleForm.port} onChange={(port) => setFirewallRuleForm({ ...firewallRuleForm, port })} placeholder="8080" />
-                    <Select label="Protocol" value={firewallRuleForm.protocol} onChange={(protocol) => setFirewallRuleForm({ ...firewallRuleForm, protocol: protocol as "tcp" | "udp" })} options={[{ value: "tcp", label: "TCP" }, { value: "udp", label: "UDP" }]} />
-                  </div>
-                  <Field label="Source CIDR optional" value={firewallRuleForm.sourceCidr} onChange={(sourceCidr) => setFirewallRuleForm({ ...firewallRuleForm, sourceCidr })} placeholder="100.64.0.0/10 or blank for public" />
-                  <button className={firewallRuleForm.action === "deny" ? "dio-button-danger w-fit" : "dio-button-primary w-fit"} onClick={() => void applyFirewallRule()} disabled={Boolean(busy)}>
-                    <Flame size={16} />
-                    Apply Rule
-                  </button>
-                  <div className="border-t border-line pt-3">
-                    <Field label="Delete numbered UFW rule" value={firewallDeleteForm.ruleNumber} onChange={(ruleNumber) => setFirewallDeleteForm({ ...firewallDeleteForm, ruleNumber })} placeholder="Run ufw status numbered, then enter number" />
-                    <button className="dio-button-danger mt-3 w-fit" onClick={() => void deleteFirewallRule()} disabled={Boolean(busy) || !firewallDeleteForm.ruleNumber.trim()}>
-                      <Trash2 size={16} />
-                      Delete Rule
-                    </button>
-                  </div>
-                </div>
-              </Panel>
-            </div>
-
             <div className="grid gap-4 xl:grid-cols-2">
               <Panel title="Security Settings" icon={Shield}>
                 <div className="grid gap-3 lg:grid-cols-2">
@@ -3590,13 +3575,14 @@ function LargeUsageChart({
 }
 
 function ServerSnapshot({ status, vpsIp, dataDir }: { status: Record<string, unknown> | null; vpsIp: string; dataDir: string }) {
+  const firewall = firewallStatus(status);
   return (
     <Panel title="Server" icon={Server}>
       <div className="grid gap-2">
         <Info title="IP" body={vpsIp || "Detecting"} />
         <Info title="Docker" body={outputLabel(status?.docker)} />
         <Info title="Caddy" body={outputLabel(status?.caddy)} />
-        <Info title="Firewall" body={commandOutputText(status?.ufw) ? "UFW" : "unchecked"} />
+        <Info title="Firewall" body={firewall ? `UFW ${firewall.status}` : "unchecked"} />
         <Info title="Previews" body={isPreviewImportOk(status) ? "ready" : "check"} />
         <Info title="Data" body={dataDir ? "configured" : "-"} />
       </div>
@@ -4445,6 +4431,168 @@ function Info({ title, body }: { title: string; body: string }) {
   );
 }
 
+function FirewallManager({
+  status,
+  busy,
+  firewallForm,
+  firewallRuleForm,
+  firewallDeleteForm,
+  onFirewallFormChange,
+  onFirewallRuleFormChange,
+  onFirewallDeleteFormChange,
+  onRefresh,
+  onApplyBaseline,
+  onApplyRule,
+  onDeleteRule,
+  onControl
+}: {
+  status: Record<string, unknown> | null;
+  busy: string;
+  firewallForm: { panelPort: string; trustedCidr: string };
+  firewallRuleForm: { action: "allow" | "deny"; port: string; protocol: "tcp" | "udp"; sourceCidr: string };
+  firewallDeleteForm: { ruleNumber: string };
+  onFirewallFormChange: (value: { panelPort: string; trustedCidr: string }) => void;
+  onFirewallRuleFormChange: (value: { action: "allow" | "deny"; port: string; protocol: "tcp" | "udp"; sourceCidr: string }) => void;
+  onFirewallDeleteFormChange: (value: { ruleNumber: string }) => void;
+  onRefresh: () => void;
+  onApplyBaseline: () => void;
+  onApplyRule: () => void;
+  onDeleteRule: (ruleNumber?: number) => void;
+  onControl: (action: "enable" | "disable" | "reload") => void;
+}) {
+  const firewall = firewallStatus(status);
+  const rules = firewall?.rules || [];
+  const exposed = firewall?.exposedPorts || [];
+  const publicExposed = exposed.filter((rule) => rule.public);
+  const raw = firewall?.raw || commandOutputText(status?.ufw);
+
+  return (
+    <div className="space-y-4">
+      <Panel title="Firewall Overview" icon={Shield}>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Info title="UFW" body={firewall ? firewall.status : "unknown"} />
+          <Info title="Incoming" body={firewall?.defaultIncoming || (firewall?.active ? "configured" : "unknown")} />
+          <Info title="Public ports" body={String(publicExposed.length)} />
+          <Info title="Rules" body={String(rules.length)} />
+        </div>
+        {firewall?.warnings?.length ? (
+          <div className="mt-4 grid gap-2">
+            {firewall.warnings.map((warning) => (
+              <div key={warning} className="rounded-md border border-line bg-[#080a12] px-3 py-2 text-sm text-zinc-300">
+                {warning}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </Panel>
+
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_360px]">
+        <Panel title="Exposed Ports" icon={Globe2}>
+          <div className="grid gap-2">
+            {exposed.length ? exposed.map((rule) => <FirewallRuleRow key={rule.raw} rule={rule} onDelete={onDeleteRule} />) : (
+              <div className="rounded-md border border-line bg-[#080a12] p-3 text-sm text-zinc-500">No inbound allow rules detected.</div>
+            )}
+          </div>
+        </Panel>
+
+        <Panel title="UFW Service" icon={Shield}>
+          <div className="grid gap-3">
+            <div className="flex items-center justify-between rounded-md border border-line bg-[#080a12] p-3">
+              <span className="text-sm font-bold text-ink">Firewall</span>
+              <StatusPill ok={Boolean(firewall?.active)} label={firewall?.active ? "active" : firewall?.status || "unknown"} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button className="dio-button" onClick={onRefresh} disabled={Boolean(busy)}>
+                <RefreshCw size={15} />
+                Refresh
+              </button>
+              <button className="dio-button" onClick={() => onControl("reload")} disabled={Boolean(busy)}>
+                <RotateCcw size={15} />
+                Reload
+              </button>
+              <button className="dio-button-primary" onClick={() => onControl("enable")} disabled={Boolean(busy)}>
+                <CheckCircle2 size={15} />
+                Enable
+              </button>
+              <button className="dio-button-danger" onClick={() => onControl("disable")} disabled={Boolean(busy)}>
+                <Square size={15} />
+                Disable
+              </button>
+            </div>
+          </div>
+        </Panel>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+        <Panel title="Baseline" icon={Shield}>
+          <div className="grid gap-3">
+            <Field label="Panel port" value={firewallForm.panelPort} onChange={(panelPort) => onFirewallFormChange({ ...firewallForm, panelPort })} />
+            <Field label="Trusted CIDR" value={firewallForm.trustedCidr} onChange={(trustedCidr) => onFirewallFormChange({ ...firewallForm, trustedCidr })} placeholder="100.64.0.0/10 or your IP/32" />
+            <button className="dio-button-primary w-fit" onClick={onApplyBaseline} disabled={Boolean(busy)}>
+              <Shield size={15} />
+              Apply Baseline
+            </button>
+          </div>
+        </Panel>
+
+        <Panel title="Add Rule" icon={Flame}>
+          <div className="grid gap-3">
+            <div className="grid gap-3 md:grid-cols-3">
+              <Select label="Action" value={firewallRuleForm.action} onChange={(action) => onFirewallRuleFormChange({ ...firewallRuleForm, action: action as "allow" | "deny" })} options={[{ value: "allow", label: "Allow" }, { value: "deny", label: "Deny" }]} />
+              <Field label="Port" value={firewallRuleForm.port} onChange={(port) => onFirewallRuleFormChange({ ...firewallRuleForm, port })} placeholder="8080" />
+              <Select label="Protocol" value={firewallRuleForm.protocol} onChange={(protocol) => onFirewallRuleFormChange({ ...firewallRuleForm, protocol: protocol as "tcp" | "udp" })} options={[{ value: "tcp", label: "TCP" }, { value: "udp", label: "UDP" }]} />
+            </div>
+            <Field label="Source CIDR optional" value={firewallRuleForm.sourceCidr} onChange={(sourceCidr) => onFirewallRuleFormChange({ ...firewallRuleForm, sourceCidr })} placeholder="100.64.0.0/10 or blank for public" />
+            <button className={firewallRuleForm.action === "deny" ? "dio-button-danger w-fit" : "dio-button-primary w-fit"} onClick={onApplyRule} disabled={Boolean(busy)}>
+              <Flame size={15} />
+              Apply Rule
+            </button>
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Numbered Rules" icon={Terminal}>
+        <div className="grid gap-2">
+          {rules.length ? rules.map((rule) => <FirewallRuleRow key={rule.raw} rule={rule} onDelete={onDeleteRule} showDirection />) : (
+            <div className="rounded-md border border-line bg-[#080a12] p-3 text-sm text-zinc-500">No numbered rules found.</div>
+          )}
+        </div>
+        <div className="mt-4 grid gap-3 border-t border-line pt-4 md:grid-cols-[260px_auto] md:items-end">
+          <Field label="Delete by rule number" value={firewallDeleteForm.ruleNumber} onChange={(ruleNumber) => onFirewallDeleteFormChange({ ruleNumber })} placeholder="Example: 3" />
+          <button className="dio-button-danger w-fit" onClick={() => onDeleteRule()} disabled={Boolean(busy) || !firewallDeleteForm.ruleNumber.trim()}>
+            <Trash2 size={15} />
+            Delete Rule
+          </button>
+        </div>
+      </Panel>
+
+      <details className="dio-panel p-4">
+        <summary className="cursor-pointer text-sm font-bold text-ink">Raw UFW output</summary>
+        <pre className="dio-code mt-3 max-h-80 overflow-auto rounded-md p-3 text-xs">{raw || "UFW status is not available yet. Click Refresh after install."}</pre>
+      </details>
+    </div>
+  );
+}
+
+function FirewallRuleRow({ rule, onDelete, showDirection = false }: { rule: FirewallRule; onDelete: (ruleNumber?: number) => void; showDirection?: boolean }) {
+  const target = firewallTargetLabel(rule);
+  return (
+    <div className="grid gap-3 rounded-md border border-line bg-[#080a12] p-3 text-sm md:grid-cols-[120px_100px_1fr_90px_auto] md:items-center">
+      <div className="min-w-0">
+        <p className="font-bold text-ink">{target}</p>
+        <p className="dio-label">{rule.public ? "public" : "restricted"}</p>
+      </div>
+      <StatusPill ok={rule.action === "allow"} label={`${rule.action}${showDirection ? ` ${rule.direction}` : ""}`} />
+      <p className="min-w-0 truncate text-zinc-400" title={rule.from}>from {rule.from}</p>
+      <p className="text-xs text-zinc-500">{rule.number ? `#${rule.number}` : "-"}</p>
+      <button className="dio-button-danger justify-self-start px-2 py-1 text-xs" onClick={() => rule.number && onDelete(rule.number)} disabled={!rule.number}>
+        <Trash2 size={13} />
+        Delete
+      </button>
+    </div>
+  );
+}
+
 function MiniStat({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-md border border-line bg-[#080a12] p-2">
@@ -4462,6 +4610,45 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
       <span className="truncate">{display}</span>
     </span>
   );
+}
+
+function firewallStatus(status: Record<string, unknown> | null): FirewallStatus | null {
+  const record = asRecord(status?.firewall);
+  if (!record) return null;
+  return {
+    ok: Boolean(record.ok),
+    active: Boolean(record.active),
+    status: stringValue(record.status) || "unknown",
+    defaultIncoming: stringValue(record.defaultIncoming),
+    defaultOutgoing: stringValue(record.defaultOutgoing),
+    defaultRouted: stringValue(record.defaultRouted),
+    rules: Array.isArray(record.rules) ? record.rules.map(firewallRule).filter((rule): rule is FirewallRule => Boolean(rule)) : [],
+    exposedPorts: Array.isArray(record.exposedPorts) ? record.exposedPorts.map(firewallRule).filter((rule): rule is FirewallRule => Boolean(rule)) : [],
+    warnings: Array.isArray(record.warnings) ? record.warnings.map((item) => String(item)).filter(Boolean) : [],
+    raw: stringValue(record.raw) || "",
+    error: stringValue(record.error)
+  };
+}
+
+function firewallRule(value: unknown): FirewallRule | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  return {
+    number: asNumber(record.number) || undefined,
+    to: stringValue(record.to) || "-",
+    action: stringValue(record.action) || "unknown",
+    direction: stringValue(record.direction) || "in",
+    from: stringValue(record.from) || "-",
+    port: asNumber(record.port) || undefined,
+    protocol: record.protocol === "udp" ? "udp" : record.protocol === "tcp" ? "tcp" : undefined,
+    public: Boolean(record.public),
+    raw: stringValue(record.raw) || `${stringValue(record.to) || ""} ${stringValue(record.action) || ""} ${stringValue(record.from) || ""}`
+  };
+}
+
+function firewallTargetLabel(rule: FirewallRule) {
+  if (rule.port) return `${rule.port}${rule.protocol ? `/${rule.protocol}` : ""}`;
+  return rule.to;
 }
 
 function serverUsage(status: Record<string, unknown> | null): ServerUsage | null {

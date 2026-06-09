@@ -11,6 +11,7 @@ import {
   attachDatabaseToApp,
   checkAppHealth,
   configureDomain,
+  controlFirewall,
   createExternalDatabase,
   createManagedPostgres,
   createManagedRedis,
@@ -28,6 +29,7 @@ import {
   deployGitApp,
   deployGitHubApp,
   getDatabaseConnection,
+  getFirewallStatus,
   getGitHubBranches,
   gitIntegrationStatus,
   handleGitHubWebhook,
@@ -201,6 +203,10 @@ const firewallDeleteSchema = z.object({
   ruleNumber: z.coerce.number().int().min(1).max(999)
 });
 
+const firewallControlSchema = z.object({
+  action: z.enum(["enable", "disable", "reload"])
+});
+
 const projectSchema = z.object({
   name: z.string().min(1).max(80),
   description: z.string().max(280).optional().default("")
@@ -357,9 +363,16 @@ async function route(request: Request, context: RouteContext) {
         note: "Use a trusted CIDR such as Tailscale 100.64.0.0/10 if the panel port should not be public."
       }, 200, requestId);
     }
+    if (segments[0] === "firewall" && segments[1] === "status" && request.method === "GET") {
+      return ok(await getFirewallStatus(), 200, requestId);
+    }
     if (segments[0] === "firewall" && segments[1] === "apply" && request.method === "POST") {
       rateLimit(request, { key: "firewall", limit: 8, windowMs: 60_000 });
       return ok({ results: await applyFirewallBaseline(firewallSchema.parse(await request.json())) }, 200, requestId);
+    }
+    if (segments[0] === "firewall" && segments[1] === "control" && request.method === "POST") {
+      rateLimit(request, { key: "firewall-control", limit: 12, windowMs: 60_000 });
+      return ok({ result: await controlFirewall(firewallControlSchema.parse(await request.json())) }, 200, requestId);
     }
     if (segments[0] === "firewall" && segments[1] === "rule" && request.method === "POST") {
       rateLimit(request, { key: "firewall-rule", limit: 20, windowMs: 60_000 });
