@@ -1612,20 +1612,21 @@ export function PanelShell() {
                     <Metric label="Server" value={1} detail={serverHealthy ? "online" : status ? "needs check" : "loading"} icon={Server} />
                   </div>
 
-                  <ServerUsageOverview status={status} />
+                  <Panel title="Projects Overview" icon={Layers3}>
+                    {allProjects.length ? (
+                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => startDeployment("git", projectId)} />
+                    ) : (
+                      <EmptyState title="No projects yet" body="Create one project to hold your app services, env vars, databases, domains, and deployment history." actionLabel="Create Project" onAction={openCreateProject} icon={Layers3} />
+                    )}
+                  </Panel>
 
-                  <Panel title={allProjects.length ? "Workspace" : "First Deploy"} icon={Play}>
-                    <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
-                      <div>
-                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                          <ActionCard title="Public Git" body="Repo URL" icon={GitBranch} onClick={() => startGlobalDeployment("git")} />
-                          <ActionCard title="GitHub App" body="Private repos" icon={Github} onClick={() => startGlobalDeployment("github")} />
-                          <ActionCard title="Project" body="Workspace" icon={Layers3} onClick={openCreateProject} />
-                          <ActionCard title="Database" body="Postgres / Redis" icon={Database} onClick={() => openGlobalTab("database")} />
-                          <ActionCard title="Domain" body="Caddy HTTPS" icon={Globe2} onClick={() => openGlobalTab("domains")} />
-                        </div>
-                      </div>
-                      <ServerSnapshot status={status} vpsIp={vpsIp} dataDir={state?.dataDir || ""} />
+                  <Panel title={allProjects.length ? "Actions" : "First Deploy"} icon={Play}>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                      <ActionCard title="Public Git" body="Repo URL" icon={GitBranch} onClick={() => startGlobalDeployment("git")} />
+                      <ActionCard title="GitHub App" body="Private repos" icon={Github} onClick={() => startGlobalDeployment("github")} />
+                      <ActionCard title="Project" body="New workspace" icon={Layers3} onClick={openCreateProject} />
+                      <ActionCard title="Database" body="Postgres / Redis" icon={Database} onClick={() => openGlobalTab("database")} />
+                      <ActionCard title="Domain" body="Caddy HTTPS" icon={Globe2} onClick={() => openGlobalTab("domains")} />
                     </div>
                   </Panel>
 
@@ -1646,13 +1647,7 @@ export function PanelShell() {
                     </Panel>
                   </div>
 
-                  <Panel title="Projects Overview" icon={Layers3}>
-                    {allProjects.length ? (
-                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => startDeployment("git", projectId)} />
-                    ) : (
-                      <EmptyState title="No projects yet" body="Create one project to hold your app services, env vars, databases, domains, and deployment history." actionLabel="Create Project" onAction={openCreateProject} icon={Layers3} />
-                    )}
-                  </Panel>
+                  <ServerUsageOverview status={status} />
                 </div>
               )}
 
