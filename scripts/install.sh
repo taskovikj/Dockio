@@ -9,6 +9,7 @@ PANEL_PORT="${PANEL_PORT:-3099}"
 PANEL_HOST="${PANEL_HOST:-0.0.0.0}"
 TRUSTED_CIDR="${TRUSTED_CIDR:-}"
 KEEP_DEV_DEPS="${DIO_KEEP_DEV_DEPS:-false}"
+ENABLE_UFW="${DIO_ENABLE_UFW:-true}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo bash scripts/install.sh"
@@ -108,11 +109,15 @@ systemctl enable --now docker caddy
 systemctl enable dockio-panel
 systemctl restart dockio-panel
 
-if [ -n "$TRUSTED_CIDR" ]; then
+if [ "$ENABLE_UFW" != "false" ]; then
   ufw allow OpenSSH || true
   ufw allow 80/tcp || true
   ufw allow 443/tcp || true
-  ufw allow from "$TRUSTED_CIDR" to any port "$PANEL_PORT" proto tcp || true
+  if [ -n "$TRUSTED_CIDR" ]; then
+    ufw allow from "$TRUSTED_CIDR" to any port "$PANEL_PORT" proto tcp || true
+  else
+    ufw allow "$PANEL_PORT/tcp" || true
+  fi
   ufw --force enable || true
 fi
 
@@ -120,4 +125,13 @@ echo "Dockio installed."
 echo "Open: http://SERVER_IP:$PANEL_PORT"
 echo "First admin setup code: $SETUP_TOKEN"
 echo "The setup code is stored in $ENV_DIR/panel.env as DIO_SETUP_TOKEN."
+if [ "$ENABLE_UFW" != "false" ]; then
+  if [ -n "$TRUSTED_CIDR" ]; then
+    echo "Firewall enabled: SSH, 80/443, and panel port $PANEL_PORT from $TRUSTED_CIDR."
+  else
+    echo "Firewall enabled: SSH, 80/443, and public panel port $PANEL_PORT."
+  fi
+else
+  echo "Firewall setup skipped because DIO_ENABLE_UFW=false."
+fi
 echo "If the panel port is public, create the admin account immediately and restrict firewall access."

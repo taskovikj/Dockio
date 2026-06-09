@@ -9,7 +9,7 @@ This guide assumes Dockio is installed on a test VPS.
 3. Create the admin account.
 4. Log in.
 
-If the panel port is reachable from the internet, restrict it with firewall rules.
+The installer enables a default UFW baseline for SSH, web traffic, and the panel port. Open **Firewall** after login to review exposed ports, restrict the panel port to a trusted CIDR, or add/remove rules.
 
 ## Create A Project
 

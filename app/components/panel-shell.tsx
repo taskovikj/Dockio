@@ -4530,7 +4530,7 @@ function FirewallManager({
             <Field label="Trusted CIDR" value={firewallForm.trustedCidr} onChange={(trustedCidr) => onFirewallFormChange({ ...firewallForm, trustedCidr })} placeholder="100.64.0.0/10 or your IP/32" />
             <button className="dio-button-primary w-fit" onClick={onApplyBaseline} disabled={Boolean(busy)}>
               <Shield size={15} />
-              Apply Baseline
+              Apply Baseline & Enable
             </button>
           </div>
         </Panel>

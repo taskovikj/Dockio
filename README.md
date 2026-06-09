@@ -61,6 +61,7 @@ Dockio installs:
 - `dockio-panel` systemd service
 - a dedicated `dockio` runtime user
 - narrow sudoers rules for UFW, Caddy, and Dockio-managed systemd services
+- a default UFW baseline: SSH, 80/443, and the panel port
 
 ## Install Options
 
@@ -98,13 +99,16 @@ Useful installer variables:
 PANEL_PORT=3099
 PANEL_HOST=0.0.0.0
 TRUSTED_CIDR=100.64.0.0/10
+DIO_ENABLE_UFW=true
 DIO_KEEP_DEV_DEPS=false
 ```
+
+Set `TRUSTED_CIDR` to restrict the panel port to a VPN/Tailscale range or your own IP. Set `DIO_ENABLE_UFW=false` only when another firewall manager is already controlling the server.
 
 ## First Deploy
 
 1. Create the admin account with the setup code.
-2. Open **Firewall** and apply the baseline rules.
+2. Open **Firewall** and review the active UFW rules.
 3. Create a project.
 4. Click **Create Service**.
 5. Choose a source:
