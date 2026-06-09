@@ -259,11 +259,12 @@ export async function analyzeGitRepo(input: { repoUrl: string; branch?: string; 
 
 export async function serverStatus() {
   const settings = readState().settings;
-  const [hostname, osRelease, disk, docker, nixpacks, caddy, ufw, ufwVerbose, publicIp, dockerContainers, dockerImages, dockerVolumes] = await Promise.all([
+  const [hostname, osRelease, disk, docker, dockerBuildx, nixpacks, caddy, ufw, ufwVerbose, publicIp, dockerContainers, dockerImages, dockerVolumes] = await Promise.all([
     safeRun("hostnamectl", []),
     safeRead("/etc/os-release"),
     safeRun("df", ["-Pk", "/"]),
     safeRun("docker", ["version", "--format", "{{.Server.Version}}"]),
+    safeRun("docker", ["buildx", "version"]),
     safeRun("nixpacks", ["--version"]),
     safeRun("systemctl", ["is-active", "caddy"]),
     safeRun("sudo", ["ufw", "status", "numbered"]),
@@ -294,6 +295,7 @@ export async function serverStatus() {
     memory,
     cpu,
     docker,
+    dockerBuildx,
     nixpacks,
     caddy,
     ufw,

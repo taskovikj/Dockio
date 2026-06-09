@@ -2080,8 +2080,9 @@ export function PanelShell() {
 
               {tab === "docker" && (
                 <div className="space-y-4">
-                  <div className="grid gap-3 md:grid-cols-4">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                     <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={HardDrive} />
+                    <Metric label="Buildx" value={isOk(status?.dockerBuildx) ? 1 : 0} detail={outputLabel(status?.dockerBuildx)} icon={Boxes} />
                     <Metric label="Nixpacks" value={isOk(status?.nixpacks) ? 1 : 0} detail={outputLabel(status?.nixpacks)} icon={Package} />
                     <Metric label="Managed containers" value={allApps.filter((app) => app.containerName || app.composeProject).length + allDatabases.filter((database) => database.dockerContainer).length} detail="Dockio-labelled runtime resources" icon={Boxes} />
                     <Metric label="Data dir" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
