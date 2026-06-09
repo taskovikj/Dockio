@@ -19,6 +19,7 @@ import {
   startDeployment,
   updateState,
   type DatabaseResource,
+  type GitDeployMode,
   type GitProviderConnection,
   type GitRepository,
   type ManagedApp,
@@ -102,7 +103,7 @@ export interface DetectedService {
   id: string;
   name: string;
   appDirectory: string;
-  mode: "dockerfile" | "node" | "static";
+  mode: GitDeployMode;
   serviceRole: ServiceRole;
   packageManager: "npm" | "pnpm" | "yarn";
   framework: string;
@@ -258,11 +259,12 @@ export async function analyzeGitRepo(input: { repoUrl: string; branch?: string; 
 
 export async function serverStatus() {
   const settings = readState().settings;
-  const [hostname, osRelease, disk, docker, caddy, ufw, ufwVerbose, publicIp, dockerContainers, dockerImages, dockerVolumes] = await Promise.all([
+  const [hostname, osRelease, disk, docker, nixpacks, caddy, ufw, ufwVerbose, publicIp, dockerContainers, dockerImages, dockerVolumes] = await Promise.all([
     safeRun("hostnamectl", []),
     safeRead("/etc/os-release"),
     safeRun("df", ["-Pk", "/"]),
     safeRun("docker", ["version", "--format", "{{.Server.Version}}"]),
+    safeRun("nixpacks", ["--version"]),
     safeRun("systemctl", ["is-active", "caddy"]),
     safeRun("sudo", ["ufw", "status", "numbered"]),
     safeRun("sudo", ["ufw", "status", "verbose"]),
@@ -292,6 +294,7 @@ export async function serverStatus() {
     memory,
     cpu,
     docker,
+    nixpacks,
     caddy,
     ufw,
     firewall: parseFirewallStatus(ufw, ufwVerbose),
@@ -747,7 +750,7 @@ export async function deployGitHubApp(input: {
   gitRepositoryId: string;
   branch?: string;
   appDirectory?: string;
-  mode: "dockerfile" | "node" | "static";
+  mode: GitDeployMode;
   buildCommand?: string;
   startCommand?: string;
   containerPort?: number;
@@ -849,7 +852,7 @@ export async function updateGitHubAppDeployment(appId: string, input: {
   gitRepositoryId: string;
   branch?: string;
   appDirectory?: string;
-  mode: "dockerfile" | "node" | "static";
+  mode: GitDeployMode;
   buildCommand?: string;
   startCommand?: string;
   containerPort?: number;
@@ -1092,7 +1095,7 @@ export async function deployGitApp(input: {
   repoUrl: string;
   branch?: string;
   appDirectory?: string;
-  mode: "dockerfile" | "node" | "static";
+  mode: GitDeployMode;
   buildCommand?: string;
   startCommand?: string;
   containerPort?: number;
@@ -1179,7 +1182,7 @@ export async function updateGitAppDeployment(appId: string, input: {
   repoUrl: string;
   branch?: string;
   appDirectory?: string;
-  mode: "dockerfile" | "node" | "static";
+  mode: GitDeployMode;
   buildCommand?: string;
   startCommand?: string;
   containerPort?: number;
@@ -1324,9 +1327,8 @@ async function executeGitDeployment(input: {
     const buildDir = appDirectory ? assertManagedPath(sourceDir, path.join(sourceDir, appDirectory)) : sourceDir;
     if (!fs.existsSync(buildDir)) throw new Error(`App directory ${appDirectory} was not found in the repository.`);
     appendDeploymentLog(deploymentId, "detecting app", appDirectory ? `Using app directory ${appDirectory}.` : "Using repository root.");
-    const dockerfile = prepareDockerfile(buildDir, appDir, app.deployMode, app);
-    appendDeploymentLog(deploymentId, "building image", `Building ${image}.`);
-    await safeRunForDeployment(deploymentId, "docker build", "docker", ["build", "-t", image, "-f", dockerfile, buildDir]);
+    appendDeploymentLog(deploymentId, "building image", `Building ${image} with ${buildLabel(app.deployMode)}.`);
+    await buildGitImage({ deploymentId, buildDir, appDir, mode: app.deployMode, app, image });
     appendDeploymentLog(deploymentId, "starting service", `Starting container on 127.0.0.1:${app.localProxyPort || app.port} for Caddy preview routing.`);
     await replaceDockerContainer(app, image, envFile);
     markApp(app.id, { containerName: "dio_" + app.id, imageTag: image });
@@ -2714,9 +2716,10 @@ function getPublicPreviewPort(app: ManagedApp) {
 
 async function safeRun(command: string, args: string[], cwd?: string, env?: Record<string, string>): Promise<CommandOutput> {
   assertAllowedCommand(command, args);
+  const execution = hostAwareCommand(command, args);
   const printable = [command, ...args].join(" ");
   try {
-    const { stdout, stderr } = await execFileAsync(command, args, {
+    const { stdout, stderr } = await execFileAsync(execution.command, execution.args, {
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
       timeout: 15 * 60 * 1000,
@@ -2997,12 +3000,25 @@ async function writeTemp(name: string, content: string) {
 }
 
 function assertAllowedCommand(command: string, args: string[]) {
-  const allowed = new Set(["hostnamectl", "df", "docker", "systemctl", "sudo", "journalctl", "git"]);
+  const allowed = new Set(["hostnamectl", "df", "docker", "systemctl", "sudo", "journalctl", "git", "nixpacks"]);
   if (!allowed.has(command)) throw new Error("Command is not allowed.");
   if (args.some((arg) => arg.includes("\0") || arg.length > 500)) throw new Error("Command argument is invalid.");
   if (command === "sudo" && !["ufw", "mkdir", "install", "caddy", "systemctl", "rm"].includes(args[0] || "")) {
     throw new Error("sudo command is not allowed.");
   }
+}
+
+function hostAwareCommand(command: string, args: string[]) {
+  if (process.env.DIO_HOST_NSENTER !== "true") return { command, args };
+  if (!["hostnamectl", "df", "docker", "systemctl", "sudo", "journalctl", "nixpacks"].includes(command)) {
+    return { command, args };
+  }
+  const hostCommand = command === "sudo" ? args[0] || "" : command;
+  const hostArgs = command === "sudo" ? args.slice(1) : args;
+  return {
+    command: "nsenter",
+    args: ["--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--", hostCommand, ...hostArgs]
+  };
 }
 
 function getGitHubConnection(connectionId: string) {
@@ -3371,7 +3387,55 @@ function testTcp(host: string, port: number) {
   });
 }
 
-function prepareDockerfile(sourceDir: string, appDir: string, mode: "dockerfile" | "node" | "static", app: ManagedApp) {
+async function buildGitImage(input: {
+  deploymentId: string;
+  buildDir: string;
+  appDir: string;
+  mode: GitDeployMode;
+  app: ManagedApp;
+  image: string;
+}) {
+  if (input.mode === "nixpacks") {
+    const version = await safeRun("nixpacks", ["--version"]);
+    if (!version.ok) {
+      throw new UserFacingError("Nixpacks is not installed on this VPS. Re-run the Dockio installer or install Nixpacks, then redeploy.", 500);
+    }
+    await writeNixpacksConfig(input.buildDir, input.app);
+    const env: Record<string, string> = {};
+    if (input.app.buildCommand) env.NIXPACKS_BUILD_CMD = input.app.buildCommand;
+    if (input.app.startCommand) env.NIXPACKS_START_CMD = input.app.startCommand;
+    await safeRunForDeployment(input.deploymentId, "nixpacks build", "nixpacks", ["build", input.buildDir, "--name", input.image], input.buildDir, env);
+    return;
+  }
+  const dockerfile = prepareDockerfile(input.buildDir, input.appDir, input.mode, input.app);
+  await safeRunForDeployment(input.deploymentId, "docker build", "docker", ["build", "-t", input.image, "-f", dockerfile, input.buildDir]);
+}
+
+function buildLabel(mode?: string) {
+  if (mode === "nixpacks") return "Nixpacks";
+  if (mode === "dockerfile") return "the repository Dockerfile";
+  if (mode === "static") return "the static-site Dockerfile";
+  return "the generated Node Dockerfile";
+}
+
+async function writeNixpacksConfig(sourceDir: string, app: ManagedApp) {
+  if (!app.buildCommand && !app.startCommand) return;
+  const config: string[] = ["# Generated by Dockio for this deployment checkout."];
+  if (app.buildCommand) {
+    config.push("", "[phases.build]", "cmds = [" + tomlString(app.buildCommand) + "]");
+  }
+  if (app.startCommand) {
+    config.push("", "[start]", "cmd = " + tomlString(app.startCommand));
+  }
+  const file = assertManagedPath(sourceDir, path.join(sourceDir, "nixpacks.toml"));
+  fs.writeFileSync(file, config.join("\n") + "\n", { mode: 0o640 });
+}
+
+function tomlString(value: string) {
+  return JSON.stringify(cleanCommand(value));
+}
+
+function prepareDockerfile(sourceDir: string, appDir: string, mode: Exclude<GitDeployMode, "nixpacks">, app: ManagedApp) {
   if (mode === "dockerfile") {
     const existing = path.join(sourceDir, "Dockerfile");
     if (!fs.existsSync(existing)) throw new Error("Dockerfile mode selected, but the repository has no Dockerfile at the root.");
@@ -3460,7 +3524,7 @@ function detectService(repoDir: string, relativeDir: string, repoUrl: string): D
   const requiredEnv = detectEnvKeys(serviceDir);
   const repoName = slug(path.basename(new URL(repoUrl).pathname.replace(/\.git$/, "")));
   const name = assertSafeAppName((packageJson?.name ? String(packageJson.name).replace(/^@[^/]+\//, "") : "") || path.basename(relativeDir || repoName) || repoName);
-  let mode: DetectedService["mode"] = "node";
+  let mode: DetectedService["mode"] = packageJson ? "nixpacks" : "node";
   let serviceRole: ServiceRole = "fullstack";
   let framework = "Node";
   let containerPort = detectPortFromFiles(serviceDir, scripts) || 3000;

@@ -10,6 +10,8 @@ PANEL_HOST="${PANEL_HOST:-0.0.0.0}"
 TRUSTED_CIDR="${TRUSTED_CIDR:-}"
 KEEP_DEV_DEPS="${DIO_KEEP_DEV_DEPS:-false}"
 ENABLE_UFW="${DIO_ENABLE_UFW:-true}"
+INSTALL_MODE="${DIO_INSTALL_MODE:-container}"
+PANEL_IMAGE="${DIO_PANEL_IMAGE:-dockio/panel:local}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo bash scripts/install.sh"
@@ -27,6 +29,14 @@ fi
 corepack enable || true
 corepack prepare pnpm@11.0.8 --activate || npm install -g pnpm@11.0.8
 SETUP_TOKEN="${DIO_SETUP_TOKEN:-$(node -e 'console.log(require("crypto").randomBytes(18).toString("base64url"))')}"
+
+install_nixpacks() {
+  if command -v nixpacks >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Installing Nixpacks build CLI..."
+  curl -fsSL https://nixpacks.com/install.sh | bash
+}
 
 id "$RUN_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /bin/bash "$RUN_USER"
 usermod -aG docker "$RUN_USER" || true
@@ -54,6 +64,7 @@ DIO_RUN_USER=$RUN_USER
 DIO_SETUP_TOKEN=$SETUP_TOKEN
 DIO_TRUSTED_NETWORK_ONLY=${DIO_TRUSTED_NETWORK_ONLY:-false}
 DIO_TRUSTED_CIDRS=$TRUSTED_CIDR
+DIO_INSTALL_MODE=$INSTALL_MODE
 NODE_ENV=production
 EOF
 
@@ -70,16 +81,41 @@ $RUN_USER ALL=(root) NOPASSWD: /usr/bin/caddy validate --config /etc/caddy/Caddy
 EOF
 chmod 440 /etc/sudoers.d/dockio-panel
 
-cd "$APP_DIR"
-sudo -H -u "$RUN_USER" pnpm install --frozen-lockfile
-sudo -H -u "$RUN_USER" pnpm build
-if [ "$KEEP_DEV_DEPS" != "true" ]; then
-  sudo -H -u "$RUN_USER" pnpm prune --prod
-  sudo -H -u "$RUN_USER" rm -rf .next/cache .next/dev tsconfig.tsbuildinfo
-fi
-sudo -H -u "$RUN_USER" pnpm store prune >/dev/null 2>&1 || true
+install_nixpacks
 
-cat > /etc/systemd/system/dockio-panel.service <<EOF
+systemctl enable --now docker caddy
+
+if [ "$INSTALL_MODE" = "container" ]; then
+  cd "$APP_DIR"
+  docker build -t "$PANEL_IMAGE" .
+  cat > /etc/systemd/system/dockio-panel.service <<EOF
+[Unit]
+Description=Dockio
+After=network-online.target docker.service caddy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f dockio-panel
+ExecStart=/usr/bin/docker run --rm --name dockio-panel --network host --pid host --privileged --env-file $ENV_DIR/panel.env -e DIO_HOST_NSENTER=true -v /var/run/docker.sock:/var/run/docker.sock -v $DATA_DIR:$DATA_DIR -v $ENV_DIR:$ENV_DIR:ro -v /etc/caddy:/etc/caddy -v /run/systemd:/run/systemd $PANEL_IMAGE
+ExecStop=/usr/bin/docker stop dockio-panel
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+else
+  cd "$APP_DIR"
+  sudo -H -u "$RUN_USER" pnpm install --frozen-lockfile
+  sudo -H -u "$RUN_USER" pnpm build
+  if [ "$KEEP_DEV_DEPS" != "true" ]; then
+    sudo -H -u "$RUN_USER" pnpm prune --prod
+    sudo -H -u "$RUN_USER" rm -rf .next/cache .next/dev tsconfig.tsbuildinfo
+  fi
+  sudo -H -u "$RUN_USER" pnpm store prune >/dev/null 2>&1 || true
+
+  cat > /etc/systemd/system/dockio-panel.service <<EOF
 [Unit]
 Description=Dockio
 After=network-online.target docker.service caddy.service
@@ -103,9 +139,9 @@ ReadWritePaths=$DATA_DIR /etc/caddy/conf.d /etc/caddy/dockio/sites /etc/systemd/
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
 systemctl daemon-reload
-systemctl enable --now docker caddy
 systemctl enable dockio-panel
 systemctl restart dockio-panel
 
@@ -122,6 +158,7 @@ if [ "$ENABLE_UFW" != "false" ]; then
 fi
 
 echo "Dockio installed."
+echo "Install mode: $INSTALL_MODE"
 echo "Open: http://SERVER_IP:$PANEL_PORT"
 echo "First admin setup code: $SETUP_TOKEN"
 echo "The setup code is stored in $ENV_DIR/panel.env as DIO_SETUP_TOKEN."

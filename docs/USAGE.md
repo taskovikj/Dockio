@@ -42,6 +42,13 @@ Projects group related services, domains, databases, env vars, logs, and deploym
 9. Choose whether to create an auto preview domain.
 10. Deploy.
 
+Build modes:
+
+- **Nixpacks**: recommended for normal Node/Next/API repos without a Dockerfile. Dockio asks Nixpacks to generate and build the image.
+- **Generated Dockerfile**: Dockio writes a simple Node Dockerfile and builds it.
+- **Repo Dockerfile**: Dockio builds the Dockerfile already in your repo.
+- **Static build**: Dockio builds static output and serves it from nginx.
+
 ## Deploy A Docker Image
 
 1. Open a project.

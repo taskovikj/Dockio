@@ -4,6 +4,7 @@ import path from "node:path";
 import { redactValue, slug } from "./validate";
 
 export type AppStrategy = "docker" | "systemd" | "static" | "compose";
+export type GitDeployMode = "dockerfile" | "node" | "nixpacks" | "static";
 export type AppStatus = "created" | "running" | "failed" | "stopped";
 export type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
 export type DatabaseKind = "managed-postgres" | "external-postgres" | "managed-redis";
@@ -81,7 +82,7 @@ export interface ManagedApp {
   previewCaddyFile?: string;
   previewCaddyReloadStatus?: string;
   commitSha?: string;
-  deployMode?: "dockerfile" | "node" | "static" | "compose";
+  deployMode?: GitDeployMode | "compose";
   buildCommand?: string;
   startCommand?: string;
   healthPath?: string;

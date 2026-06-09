@@ -9,7 +9,7 @@ Browser
   |
   | HTTP panel port
   v
-Next.js app on the VPS
+Dockio panel container on the VPS
   |
   | allowlisted server actions
   v
@@ -24,17 +24,19 @@ There is no separate remote agent in this repo. The panel is installed directly 
 ## Runtime Components
 
 - **Next.js App Router**: UI and API route handling.
+- **Dockerized panel**: default install runs the panel as a Docker container managed by systemd.
 - **JSON state**: local beta state storage under `DIO_DATA_DIR`.
 - **Docker**: app containers, Compose stacks, managed Postgres, managed Redis.
+- **Nixpacks**: optional Git build mode for normal app repos without a Dockerfile.
 - **Caddy**: HTTPS reverse proxy and preview/custom domain routing.
 - **UFW**: firewall baseline and simple port rules.
-- **systemd**: panel service and future managed services.
+- **systemd**: keeps the panel container alive; host mode can run the panel directly as a Node service.
 
 ## Installed Server Layout
 
 ```txt
 /opt/dockio-panel/app
-  Installed app source and production build.
+  Installed app source used to build the local panel image.
 
 /var/lib/dockio-panel
   Local JSON state, generated app data, logs, temp files, and secrets.
@@ -58,6 +60,12 @@ There is no separate remote agent in this repo. The panel is installed directly 
 5. The action runs an allowlisted command or writes a managed file.
 6. Output is redacted before being stored or returned.
 7. State and audit events are updated.
+
+## Panel Container Boundary
+
+The default installer runs Dockio as a container but the panel still manages the VPS host. To do that it mounts persistent state, Caddy config, and the Docker socket, then uses an explicit host namespace mode for UFW/Caddy/systemd operations. Treat panel admin access like root access to the VPS.
+
+Set `DIO_INSTALL_MODE=host` during install if you prefer the previous host Node/systemd process with sudoers instead of the panel container.
 
 ## Current Storage
 

@@ -13,6 +13,7 @@ Dockio is beta software. The current release is designed for a single self-hoste
 - Public app traffic is intended to go through Caddy on ports `80` and `443`.
 - GitHub App credentials and stored connection URLs are encrypted locally.
 - Command output is redacted before it is stored or returned to the UI.
+- The default panel container has host-management access so it can control Docker, Caddy, UFW, and systemd on the VPS.
 
 ## Current Boundaries
 
@@ -21,6 +22,7 @@ Dockio is beta software. The current release is designed for a single self-hoste
 - Local JSON state.
 - Controlled sudoers entries for UFW, Caddy, and `dio-*` systemd services.
 - Git builds and Compose files execute on the managed VPS.
+- Dockerized panel mode uses the Docker socket and host namespace access. Treat Dockio admin access as equivalent to VPS administrator access.
 
 ## Reporting
 

@@ -1,0 +1,18 @@
+services:
+  dockio-panel:
+    image: dockio/panel:local
+    container_name: dockio-panel
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    privileged: true
+    environment:
+      DIO_DATA_DIR: /var/lib/dockio-panel
+      DIO_BIND_HOST: 0.0.0.0
+      DIO_PORT: "3099"
+      DIO_HOST_NSENTER: "true"
+    volumes:
+      - /var/lib/dockio-panel:/var/lib/dockio-panel
+      - /etc/dockio-panel:/etc/dockio-panel
+      - /etc/caddy:/etc/caddy
+      - /var/run/docker.sock:/var/run/docker.sock

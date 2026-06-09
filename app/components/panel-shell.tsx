@@ -21,6 +21,7 @@ import {
   KeyRound,
   Layers3,
   Lock,
+  Package,
   PackagePlus,
   Play,
   RefreshCw,
@@ -52,7 +53,7 @@ type Tab =
   | "git"
   | "settings";
 type Strategy = "docker" | "systemd" | "static" | "compose";
-type GitMode = "dockerfile" | "node" | "static";
+type GitMode = "dockerfile" | "node" | "nixpacks" | "static";
 type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
 type DeployProvider = "git" | "github" | "image" | "compose" | "compose-yaml";
 type DeployStep = "source" | "details" | "build" | "runtime";
@@ -482,7 +483,7 @@ export function PanelShell() {
     repoUrl: "",
     branch: "main",
     appDirectory: "",
-    mode: "node" as GitMode,
+    mode: "nixpacks" as GitMode,
     buildCommand: "",
     startCommand: "",
     containerPort: "3000",
@@ -1134,7 +1135,7 @@ export function PanelShell() {
       repoUrl: app.repoUrl || "",
       branch: app.branch || "main",
       appDirectory: app.appDirectory || "",
-      mode: (app.deployMode === "dockerfile" || app.deployMode === "static" || app.deployMode === "node") ? app.deployMode : "node",
+      mode: (app.deployMode === "dockerfile" || app.deployMode === "static" || app.deployMode === "node" || app.deployMode === "nixpacks") ? app.deployMode : "node",
       buildCommand: app.buildCommand || "",
       startCommand: app.startCommand || "",
       containerPort: String(app.containerPort || 3000),
@@ -2079,8 +2080,9 @@ export function PanelShell() {
 
               {tab === "docker" && (
                 <div className="space-y-4">
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-4">
                     <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={HardDrive} />
+                    <Metric label="Nixpacks" value={isOk(status?.nixpacks) ? 1 : 0} detail={outputLabel(status?.nixpacks)} icon={Package} />
                     <Metric label="Managed containers" value={allApps.filter((app) => app.containerName || app.composeProject).length + allDatabases.filter((database) => database.dockerContainer).length} detail="Dockio-labelled runtime resources" icon={Boxes} />
                     <Metric label="Data dir" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
                   </div>
@@ -2828,6 +2830,7 @@ export function PanelShell() {
               <div className="grid gap-3 md:grid-cols-2">
                 <Metric label="Apps" value={apps.length} detail="Active records" icon={Boxes} />
                 <Metric label="Docker" value={isOk(status?.docker) ? 1 : 0} detail={outputLabel(status?.docker)} icon={Database} />
+                <Metric label="Nixpacks" value={isOk(status?.nixpacks) ? 1 : 0} detail={outputLabel(status?.nixpacks)} icon={Package} />
                 <Metric label="Caddy" value={isActive(status?.caddy) ? 1 : 0} detail={outputLabel(status?.caddy)} icon={Globe2} />
                 <Metric label="Data" value={1} detail={state?.dataDir || "-"} icon={HardDrive} />
               </div>
@@ -2928,7 +2931,7 @@ export function PanelShell() {
               {deployStep === "source" && (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   {[
-                    { id: "git" as DeployProvider, title: "Public Git URL", body: "Deploy a public Git repository with Node, Next, Vite, static, or Dockerfile settings.", icon: GitBranch },
+                    { id: "git" as DeployProvider, title: "Public Git URL", body: "Deploy a public Git repository with Nixpacks, generated Dockerfile, static, or repo Dockerfile settings.", icon: GitBranch },
                     { id: "github" as DeployProvider, title: "GitHub App", body: "Deploy a selected public or private repository from a connected GitHub App.", icon: Github },
                     { id: "image" as DeployProvider, title: "Docker Image", body: "Run an existing image from Docker Hub, GHCR, or another registry.", icon: Boxes },
                     { id: "compose" as DeployProvider, title: "Docker Compose", body: "Clone a public repo that contains docker-compose.yml or compose.yaml.", icon: Layers3 },
@@ -3104,6 +3107,7 @@ export function PanelShell() {
                   <div className="grid gap-3">
                     <div className="flex flex-wrap gap-2">
                       <button className={`dio-tab ${gitForm.mode === "node" ? "dio-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "node" })}>Generated Dockerfile</button>
+                      <button className={`dio-tab ${gitForm.mode === "nixpacks" ? "dio-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "nixpacks" })}>Nixpacks</button>
                       <button className={`dio-tab ${gitForm.mode === "dockerfile" ? "dio-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "dockerfile" })}>Repo Dockerfile</button>
                       <button className={`dio-tab ${gitForm.mode === "static" ? "dio-tab-active" : ""}`} onClick={() => setGitForm({ ...gitForm, mode: "static" })}>Static build</button>
                     </div>

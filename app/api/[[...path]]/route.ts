@@ -83,7 +83,7 @@ const gitDeploySchema = z.object({
   repoUrl: z.string().url(),
   branch: z.string().optional().default("main"),
   appDirectory: z.string().max(220).optional().default(""),
-  mode: z.enum(["dockerfile", "node", "static"]),
+  mode: z.enum(["dockerfile", "node", "nixpacks", "static"]),
   buildCommand: z.string().max(160).optional().default(""),
   startCommand: z.string().max(160).optional().default(""),
   containerPort: z.coerce.number().int().min(1).max(65535).optional().default(3000),
@@ -308,7 +308,7 @@ async function route(request: Request, context: RouteContext) {
       rateLimit(request, { key: "github-manifest-start", limit: 8, windowMs: 60_000 });
       return ok(await createGitHubManifestFlow(githubManifestStartSchema.parse(await request.json())), 201, requestId);
     }
-    if (segments[0] === "git" && segments[1] === "github" && segments[2] === "connections" && request.method === "POST") {
+    if (segments[0] === "git" && segments[1] === "github" && segments[2] === "connections" && segments.length === 3 && request.method === "POST") {
       rateLimit(request, { key: "github-connection", limit: 8, windowMs: 60_000 });
       const body = githubConnectionSchema.parse(await request.json());
       return ok({ connection: await saveGitHubConnection({ ...body, id: body.id || undefined }) }, 201, requestId);

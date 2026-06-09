@@ -1,0 +1,9 @@
+.data-*
+.git
+.github
+.idea
+.next
+node_modules
+*.log
+*.tsbuildinfo
+README.old

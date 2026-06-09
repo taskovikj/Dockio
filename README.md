@@ -19,7 +19,7 @@ Dockio installs on a Linux VPS and gives you a web dashboard for:
 - deploying private GitHub repositories through a GitHub App
 - deploying Docker images
 - deploying Docker Compose stacks
-- detecting Node, Next.js, Vite/static, Dockerfile, and Compose projects
+- detecting Node, Next.js, Vite/static, Nixpacks, Dockerfile, and Compose projects
 - creating Caddy preview URLs
 - adding custom domains through Caddy
 - managing Postgres and Redis containers
@@ -56,9 +56,10 @@ Dockio installs:
 
 - Docker and Docker Compose plugin
 - Caddy
+- Nixpacks build CLI
 - Node.js 22 if missing
 - pnpm through Corepack
-- `dockio-panel` systemd service
+- a Dockerized `dockio-panel` service managed by systemd
 - a dedicated `dockio` runtime user
 - narrow sudoers rules for UFW, Caddy, and Dockio-managed systemd services
 - a default UFW baseline: SSH, 80/443, and the panel port
@@ -100,10 +101,13 @@ PANEL_PORT=3099
 PANEL_HOST=0.0.0.0
 TRUSTED_CIDR=100.64.0.0/10
 DIO_ENABLE_UFW=true
+DIO_INSTALL_MODE=container
 DIO_KEEP_DEV_DEPS=false
 ```
 
 Set `TRUSTED_CIDR` to restrict the panel port to a VPN/Tailscale range or your own IP. Set `DIO_ENABLE_UFW=false` only when another firewall manager is already controlling the server.
+
+`DIO_INSTALL_MODE=container` is the default. Dockio builds a local panel image, runs it as a container, and uses a systemd unit to keep it alive. The container has host-management access so it can control Docker, Caddy, and UFW on the VPS. Use `DIO_INSTALL_MODE=host` to run the previous direct Node/systemd mode.
 
 ## First Deploy
 
@@ -118,6 +122,10 @@ Set `TRUSTED_CIDR` to restrict the panel port to a VPN/Tailscale range or your o
    - Compose from Git
    - Compose YAML
 6. Confirm detected build/runtime settings.
+   - Nixpacks is recommended for normal Node/Next/API repos without a Dockerfile.
+   - Repo Dockerfile uses your own Dockerfile.
+   - Generated Dockerfile is the simple Dockio fallback.
+   - Static build serves Vite/static output through nginx.
 7. Add env vars and optional database.
 8. Deploy.
 9. Open the preview URL or add a custom domain.
