@@ -57,7 +57,7 @@ type ServiceRole = "frontend" | "backend" | "worker" | "fullstack";
 type DeployProvider = "git" | "github" | "image" | "compose" | "compose-yaml";
 type DeployStep = "source" | "details" | "build" | "runtime";
 type PreviewDomainMode = "sslip" | "custom" | "disabled";
-type ServerGraphMetric = "cpu" | "memory" | "storage" | "containers";
+type ServerGraphMetric = "cpu" | "memory" | "storage";
 
 interface PanelSettings {
   publicServerIp?: string;
@@ -593,15 +593,19 @@ export function PanelShell() {
 
   useEffect(() => {
     if (!auth?.user) return;
-    const timer = window.setInterval(() => {
+    const refreshStatus = () => {
       void api<Record<string, unknown>>("/api/system/status")
         .then(setStatus)
         .catch(() => {
           // Keep the last known metrics visible if a transient status check fails.
         });
-    }, 15000);
+    };
+    refreshStatus();
+    const timer = window.setInterval(() => {
+      refreshStatus();
+    }, tab === "monitoring" ? 3000 : 15000);
     return () => window.clearInterval(timer);
-  }, [auth?.user]);
+  }, [auth?.user, tab]);
 
   async function boot() {
     const nextAuth = await api<AuthState>("/api/auth/state");
@@ -1541,7 +1545,7 @@ export function PanelShell() {
                     <Metric label="Server" value={serverHealthy ? 1 : 0} detail={serverHealthy ? "online" : "check"} icon={Server} />
                   </div>
 
-                  <ServerUsageOverview status={status} apps={allApps} databases={allDatabases} />
+                  <ServerUsageOverview status={status} />
 
                   <Panel title={allProjects.length ? "Workspace" : "First Deploy"} icon={Play}>
                     <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
@@ -2061,7 +2065,7 @@ export function PanelShell() {
 
               {tab === "monitoring" && (
                 <div className="space-y-4">
-                  <ServerUsageOverview status={status} apps={allApps} databases={allDatabases} />
+                  <ServerUsageOverview status={status} />
                   <ServerGraphsPanel status={status} metric={serverGraphMetric} onMetricChange={setServerGraphMetric} />
                   <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
                     <ServerSnapshot status={status} vpsIp={vpsIp} dataDir={state?.dataDir || ""} />
@@ -2697,7 +2701,7 @@ export function PanelShell() {
 
         {tab === "monitoring" && selectedService && (
           <div className="space-y-4">
-            <ServerUsageOverview status={status} apps={apps} databases={databases} />
+            <ServerUsageOverview status={status} />
             <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
               <Panel title="Service Health" icon={HeartPulse}>
                 <div className="grid gap-3">
@@ -2724,7 +2728,7 @@ export function PanelShell() {
 
         {tab === "monitoring" && !selectedService && (
           <div className="space-y-4">
-            <ServerUsageOverview status={status} apps={apps} databases={databases} />
+            <ServerUsageOverview status={status} />
             <div className="grid gap-4 xl:grid-cols-[1fr_1.3fr]">
               <div className="grid gap-3 md:grid-cols-2">
                 <Metric label="Apps" value={apps.length} detail="Active records" icon={Boxes} />
@@ -3403,28 +3407,16 @@ function EmptyState({
   );
 }
 
-function ServerUsageOverview({
-  status,
-  apps,
-  databases
-}: {
-  status: Record<string, unknown> | null;
-  apps: ManagedApp[];
-  databases: DatabaseResource[];
-}) {
+function ServerUsageOverview({ status }: { status: Record<string, unknown> | null }) {
   const usage = serverUsage(status);
   const cpu = usage?.cpu;
   const memory = usage?.memory;
   const storage = usage?.storage;
-  const docker = usage?.dockerResources;
-  const managedFallback = apps.filter((app) => app.containerName || app.composeProject).length + databases.filter((database) => database.dockerContainer).length;
-  const containerTotal = docker?.containers ?? managedFallback;
-  const containerRunning = docker?.running ?? apps.filter((app) => app.status === "running").length;
   const sampleLabel = usage?.at ? shortTime(usage.at) : "waiting";
 
   return (
     <Panel title="Server Usage" icon={Activity}>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-3">
         <UsageGauge
           label="CPU"
           icon={Cpu}
@@ -3443,26 +3435,11 @@ function ServerUsageOverview({
           percent={storage?.percent}
           detail={storage?.usedLabel && storage?.totalLabel ? `${storage.usedLabel} / ${storage.totalLabel}` : "disk unavailable"}
         />
-        <div className="rounded-md border border-line bg-panel p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="dio-label">Docker</p>
-              <p className="mt-2 text-2xl font-black text-ink">{containerRunning}/{containerTotal}</p>
-              <p className="mt-1 text-xs text-zinc-500">{docker?.images ?? 0} images, {docker?.volumes ?? 0} volumes</p>
-            </div>
-            <div className="rounded-md border border-line bg-[#050505] p-2 text-zinc-500">
-              <Boxes size={18} />
-            </div>
-          </div>
-          <UsageBar percent={containerTotal ? (containerRunning / containerTotal) * 100 : 0} />
-        </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
         <Info title="Updated" body={sampleLabel} />
         <Info title="Uptime" body={usage?.uptime?.label || "-"} />
-        <Info title="Docker state" body={docker?.ok === false ? "check" : "ready"} />
-        <Info title="Managed resources" body={`${containerTotal} containers`} />
       </div>
     </Panel>
   );
@@ -3494,7 +3471,6 @@ function ServerGraphsPanel({
           <option value="cpu">CPU usage</option>
           <option value="memory">Memory usage</option>
           <option value="storage">Storage usage</option>
-          <option value="containers">Containers</option>
         </select>
       </div>
       <div className="p-4">
@@ -3568,7 +3544,8 @@ function LargeUsageChart({
 }) {
   const ticks = chartTicks(yMax);
   const points = chartPoints(values, yMax);
-  const fillPath = points ? `M ${points} L 98 50 L 8 50 Z` : "";
+  const fillPath = points ? `M ${points} L 100 100 L 0 100 Z` : "";
+  const xLabels = axisLabels(labels);
   return (
     <div className="rounded-md border border-line bg-panel p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -3578,26 +3555,36 @@ function LargeUsageChart({
           <p className="text-[0.68rem] font-bold text-zinc-500">{note}</p>
         </div>
       </div>
-      <svg className="h-72 w-full overflow-visible" viewBox="0 0 100 60" preserveAspectRatio="none" role="img" aria-label={`${label} live graph`}>
-        {ticks.map((tick, index) => {
-          const y = chartY(tick, yMax);
-          return (
-            <g key={`${tick}-${index}`}>
-              <line x1="8" x2="98" y1={y} y2={y} stroke="rgba(255,255,255,0.12)" strokeWidth="0.35" vectorEffect="non-scaling-stroke" />
-              <text x="5.8" y={y + 1} textAnchor="end" className="fill-zinc-500 text-[2.2px]">{formatGraphValue(tick, unit)}</text>
-            </g>
-          );
-        })}
-        {[0, 0.2, 0.4, 0.6, 0.8, 1].map((ratio) => {
-          const x = 8 + ratio * 90;
-          return <line key={ratio} x1={x} x2={x} y1="8" y2="50" stroke="rgba(255,255,255,0.09)" strokeWidth="0.25" vectorEffect="non-scaling-stroke" />;
-        })}
-        {fillPath && <path d={fillPath} fill="rgba(101,87,255,0.16)" />}
-        {points && <polyline points={points} fill="none" stroke="rgb(139 92 246)" strokeWidth="1.8" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />}
-        {axisLabels(labels).map((item) => (
-          <text key={`${item.x}-${item.label}`} x={item.x} y="56" textAnchor="middle" className="fill-zinc-500 text-[2.2px]">{item.label}</text>
-        ))}
-      </svg>
+      <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-3">
+        <div className="relative h-64 text-[0.7rem] font-semibold text-zinc-500">
+          {ticks.map((tick, index) => (
+            <span key={`${tick}-${index}`} className="absolute right-0 -translate-y-1/2 whitespace-nowrap" style={{ top: `${chartY(tick, yMax)}%` }}>
+              {formatGraphValue(tick, unit)}
+            </span>
+          ))}
+        </div>
+        <div className="min-w-0">
+          <div className="relative h-64 overflow-hidden border-l border-b border-line/80 bg-[#080809]">
+            {ticks.map((tick, index) => (
+              <div key={`${tick}-${index}`} className="absolute left-0 right-0 border-t border-white/10" style={{ top: `${chartY(tick, yMax)}%` }} />
+            ))}
+            {[0, 20, 40, 60, 80, 100].map((left) => (
+              <div key={left} className="absolute bottom-0 top-0 border-l border-white/[0.06]" style={{ left: `${left}%` }} />
+            ))}
+            <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`${label} live graph`}>
+              {fillPath && <path d={fillPath} fill="rgba(101,87,255,0.16)" />}
+              {points && <polyline points={points} fill="none" stroke="rgb(139 92 246)" strokeWidth="1.8" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />}
+            </svg>
+          </div>
+          <div className="relative mt-2 h-4 text-[0.68rem] font-medium text-zinc-500">
+            {xLabels.map((item) => (
+              <span key={`${item.x}-${item.label}`} className={`absolute whitespace-nowrap ${item.align === "left" ? "translate-x-0" : item.align === "right" ? "-translate-x-full" : "-translate-x-1/2"}`} style={{ left: `${item.x}%` }}>
+                {item.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -4556,8 +4543,8 @@ function graphSeries(metric: ServerGraphMetric, usage: ServerUsage | null, histo
     cpuPercent: safePercent(usage?.cpu?.percent),
     memoryPercent: safePercent(usage?.memory?.percent),
     storagePercent: safePercent(usage?.storage?.percent),
-    containersRunning: usage?.dockerResources?.running || 0,
-    containersTotal: usage?.dockerResources?.containers || 0
+    containersRunning: 0,
+    containersTotal: 0
   }];
   const labels = rows.map((row) => shortTime(row.at));
   if (metric === "memory") {
@@ -4566,14 +4553,10 @@ function graphSeries(metric: ServerGraphMetric, usage: ServerUsage | null, histo
   if (metric === "storage") {
     return { title: "Storage", unit: "%", note: usage?.storage?.usedLabel && usage?.storage?.totalLabel ? `${usage.storage.usedLabel} / ${usage.storage.totalLabel}` : "live", values: rows.map((row) => row.storagePercent), labels };
   }
-  if (metric === "containers") {
-    return { title: "Containers", unit: "", note: "running Dockio containers", values: rows.map((row) => row.containersRunning), labels };
-  }
   return { title: "CPU", unit: "%", note: `1 vCPU = 100%`, values: rows.map((row) => row.cpuPercent * cpuCores), labels };
 }
 
 function graphMax(metric: ServerGraphMetric, usage: ServerUsage | null, values: number[]) {
-  if (metric === "containers") return Math.max(1, usage?.dockerResources?.containers || 0, ...values);
   if (metric === "cpu") return Math.max(100, Math.max(1, Math.round(usage?.cpu?.cores || 1)) * 100, ...values);
   return 100;
 }
@@ -4590,7 +4573,7 @@ function chartPoints(values: number[], max: number) {
   const maxIndex = Math.max(1, plotted.length - 1);
   return plotted
     .map((value, index) => {
-      const x = 8 + (index / maxIndex) * 90;
+      const x = (index / maxIndex) * 100;
       const y = chartY(value, max);
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     })
@@ -4599,15 +4582,15 @@ function chartPoints(values: number[], max: number) {
 
 function chartY(value: number, max: number) {
   const top = Math.max(1, max);
-  return 50 - (Math.max(0, Math.min(top, value)) / top) * 42;
+  return 100 - (Math.max(0, Math.min(top, value)) / top) * 100;
 }
 
 function axisLabels(labels: string[]) {
   const source = labels.length ? labels.slice(-90) : [shortTime(new Date().toISOString())];
   const picks = [0, 0.25, 0.5, 0.75, 1];
-  return picks.map((ratio) => {
+  return picks.map((ratio, position) => {
     const index = Math.min(source.length - 1, Math.max(0, Math.round((source.length - 1) * ratio)));
-    return { x: 8 + ratio * 90, label: source[index] || "" };
+    return { x: ratio * 100, label: source[index] || "", align: position === 0 ? "left" : position === picks.length - 1 ? "right" : "center" };
   });
 }
 
