@@ -403,12 +403,12 @@ const projectTabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
 ];
 
 const serviceTabs: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
-  { id: "general", label: "General", icon: Settings },
-  { id: "environment", label: "Environment", icon: KeyRound },
-  { id: "domains", label: "Domains", icon: Globe2 },
+  { id: "general", label: "Overview", icon: Layers3 },
   { id: "deployments", label: "Deployments", icon: Activity },
   { id: "logs", label: "Logs", icon: Terminal },
-  { id: "monitoring", label: "Monitoring", icon: HeartPulse },
+  { id: "environment", label: "Environment", icon: KeyRound },
+  { id: "domains", label: "Domains", icon: Globe2 },
+  { id: "database", label: "Storage", icon: Database },
   { id: "advanced", label: "Advanced", icon: Shield }
 ];
 
@@ -1553,6 +1553,10 @@ export function PanelShell() {
   const activePreviewUrl = activeApp ? previewUrl(activeApp, vpsIp) : "";
   const visibleApps = selectedService ? [selectedService] : apps;
   const visibleDeployments = selectedService ? deployments.filter((deployment) => deployment.appId === selectedService.id) : deployments;
+  const selectedServiceLastDeployment = selectedService ? visibleDeployments[0] : undefined;
+  const selectedServicePreviewUrl = selectedService ? previewUrl(selectedService, vpsIp) : "";
+  const selectedServiceDomainUrl = selectedService?.domain ? `https://${selectedService.domain}` : "";
+  const selectedServicePrimaryUrl = selectedServiceDomainUrl || selectedServicePreviewUrl;
   const projectPreviewItems = apps
     .map((app) => ({ app, url: app.domain ? `https://${app.domain}` : previewUrl(app, vpsIp) }))
     .filter((item) => Boolean(item.url));
@@ -2234,18 +2238,22 @@ export function PanelShell() {
               <div className="flex flex-wrap items-center gap-2">
                 {selectedService ? (
                   <>
-                    {(selectedService.domain || activePreviewUrl) && (
-                      <a className="dio-button-primary" href={selectedService.domain ? `https://${selectedService.domain}` : activePreviewUrl} target="_blank" rel="noreferrer">
+                    {selectedServicePrimaryUrl && (
+                      <a className="dio-button-primary" href={selectedServicePrimaryUrl} target="_blank" rel="noreferrer">
                         <ExternalLink size={15} />
-                        Open URL
+                        Open
                       </a>
                     )}
-                    {!activePreviewUrl && selectedService.status === "running" && (
+                    {!selectedServicePreviewUrl && selectedService.status === "running" && (
                       <button className="dio-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy)}>
                         <RefreshCw size={15} />
-                        {selectedService.previewDomainStatus === "error" ? "Fix Preview" : "Generate Preview URL"}
+                        Preview
                       </button>
                     )}
+                    <button className="dio-button" onClick={() => isGitManagedService(selectedService) ? editGitDeployment(selectedService) : void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
+                      <Play size={15} />
+                      Deploy
+                    </button>
                     <button className="dio-button" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
                       <RefreshCw size={15} />
                       Redeploy
@@ -2253,6 +2261,14 @@ export function PanelShell() {
                     <button className="dio-button" onClick={() => void appAction(selectedService.id, selectedService.status === "running" ? "restart" : "start")} disabled={Boolean(busy)}>
                       <RotateCcw size={15} />
                       {selectedService.status === "running" ? "Restart" : "Start"}
+                    </button>
+                    <button className="dio-button" onClick={() => selectedService.status === "running" ? void stop(selectedService.id) : void appAction(selectedService.id, "start")} disabled={Boolean(busy)}>
+                      <Square size={15} />
+                      {selectedService.status === "running" ? "Stop" : "Start"}
+                    </button>
+                    <button className="dio-button-danger" onClick={() => void appAction(selectedService.id, "delete")} disabled={Boolean(busy)}>
+                      <Trash2 size={15} />
+                      Delete
                     </button>
                   </>
                 ) : (
@@ -2287,97 +2303,144 @@ export function PanelShell() {
 
           <div className="mx-auto max-w-7xl space-y-4 px-4 py-5 md:px-6">
             {(notice || busy) && <Notice busy={busy} notice={notice} />}
+            {selectedService && (
+              <ServiceTabBar tabs={serviceTabs} active={tab} onChange={setTab} />
+            )}
 
         {tab === "general" && selectedService && (
           <div className="space-y-4">
-            <Panel title="Deploy Settings" icon={Play}>
-              <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
-                <div className="flex flex-wrap gap-2">
-                  <button className="dio-button-primary" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
-                    <Play size={15} />
-                    Redeploy
-                  </button>
-                  <button className="dio-button" onClick={() => isGitManagedService(selectedService) ? editGitDeployment(selectedService) : setNotice("Edit settings are currently available for Git services.")}>
-                    <Wrench size={15} />
-                    Edit Build Settings
-                  </button>
-                  <button className="dio-button" onClick={() => void appAction(selectedService.id, "restart")} disabled={Boolean(busy)}>
-                    <RotateCcw size={15} />
-                    Restart
-                  </button>
-                  <button className="dio-button" onClick={() => selectedService.status === "running" ? void stop(selectedService.id) : void appAction(selectedService.id, "start")} disabled={Boolean(busy)}>
-                    <Square size={15} />
-                    {selectedService.status === "running" ? "Stop" : "Start"}
-                  </button>
-                  <button className="dio-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
-                    <Terminal size={15} />
-                    Logs
-                  </button>
+            <Panel title="Production Deployment" icon={Server}>
+              <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+                <div className="grid min-h-60 content-between rounded-md border border-line bg-[#050505] p-4">
+                  <div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="dio-label">Service</p>
+                        <h2 className="mt-2 truncate text-2xl font-black text-ink">{selectedService.name}</h2>
+                        <p className="mt-1 truncate text-sm text-zinc-500">{selectedService.serviceRole || "fullstack"} / {selectedService.deployMode || selectedService.strategy}</p>
+                      </div>
+                      <StatusPill ok={selectedService.status === "running"} label={selectedService.status} />
+                    </div>
+                    <div className="mt-5 grid gap-3">
+                      <PrimaryUrlRow label="Preview" url={selectedServicePreviewUrl} empty="No preview URL" />
+                      <PrimaryUrlRow label="Domain" url={selectedServiceDomainUrl} empty="No production domain" />
+                      <div className="grid gap-1 text-sm">
+                        <span className="dio-label">Internal</span>
+                        <span className="truncate text-zinc-300">{selectedService.localProxyPort || selectedService.port ? `127.0.0.1:${selectedService.localProxyPort || selectedService.port} -> :${selectedService.internalPort || selectedService.containerPort || selectedService.port}` : "No runtime port"}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">
+                    {selectedServicePreviewUrl ? (
+                      <a className="dio-button-primary" href={selectedServicePreviewUrl} target="_blank" rel="noreferrer">
+                        <ExternalLink size={14} />
+                        Preview
+                      </a>
+                    ) : (
+                      <button className="dio-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.status !== "running"}>
+                        <RefreshCw size={14} />
+                        Generate Preview
+                      </button>
+                    )}
+                    {selectedServiceDomainUrl && (
+                      <a className="dio-button" href={selectedServiceDomainUrl} target="_blank" rel="noreferrer">
+                        <Globe2 size={14} />
+                        Domain
+                      </a>
+                    )}
+                    <button className="dio-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
+                      <Terminal size={14} />
+                      Logs
+                    </button>
+                  </div>
                 </div>
-                {selectedService.sourceType === "github-app" ? (
-                  <AutoDeployCard
-                    app={selectedService}
-                    webhookUrl={webhookUrl}
-                    publicDockioUrl={state?.settings.publicDockioUrl || ""}
-                    busy={busy}
-                    onToggle={saveAutoDeploy}
-                  />
-                ) : (
-                  <Info title="Deploy" body="manual" />
-                )}
+
+                <div className="grid gap-3">
+                  <div className="grid gap-3 rounded-md border border-line bg-panel p-4">
+                    <div className="grid gap-1">
+                      <span className="dio-label">Repository</span>
+                      <span className="truncate text-sm font-bold text-ink">{selectedService.repoFullName || selectedService.repoUrl || selectedService.dockerImage || selectedService.composeProject || "Manual service"}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Info title="Branch" body={selectedService.branch || "main"} />
+                      <Info title="Commit" body={shortSha(selectedService.commitSha) || "-"} />
+                      <Info title="Last deploy" body={selectedServiceLastDeployment ? relativeTime(selectedServiceLastDeployment.finishedAt || selectedServiceLastDeployment.createdAt) : "none"} />
+                      <Info title="Database" body={selectedService.databaseId ? databaseName(databases, selectedService.databaseId) : "none"} />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 rounded-md border border-line bg-panel p-4">
+                    <p className="font-black text-ink">Actions</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button className="dio-button-primary" onClick={() => isGitManagedService(selectedService) ? editGitDeployment(selectedService) : void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
+                        <Play size={14} />
+                        Deploy
+                      </button>
+                      <button className="dio-button" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
+                        <RefreshCw size={14} />
+                        Redeploy
+                      </button>
+                      <button className="dio-button" onClick={() => void appAction(selectedService.id, selectedService.status === "running" ? "restart" : "start")} disabled={Boolean(busy)}>
+                        <RotateCcw size={14} />
+                        {selectedService.status === "running" ? "Restart" : "Start"}
+                      </button>
+                      <button className="dio-button" onClick={() => selectedService.status === "running" ? void stop(selectedService.id) : void appAction(selectedService.id, "start")} disabled={Boolean(busy)}>
+                        <Square size={14} />
+                        {selectedService.status === "running" ? "Stop" : "Start"}
+                      </button>
+                    </div>
+                    <button className="dio-button-danger mt-1 justify-center" onClick={() => void appAction(selectedService.id, "delete")} disabled={Boolean(busy)}>
+                      <Trash2 size={14} />
+                      Delete Service
+                    </button>
+                  </div>
+                </div>
               </div>
             </Panel>
 
-            <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-              <Panel title="Provider / Source" icon={GitBranch}>
-                <div className="grid gap-3 text-sm">
-                  <Info title="Source type" body={selectedService.sourceType || selectedService.source || selectedService.strategy} />
-                  {selectedService.repoUrl && <Info title="Repository" body={`${selectedService.repoUrl} @ ${selectedService.branch || "main"}`} />}
-                  {selectedService.appDirectory && <Info title="Build path" body={selectedService.appDirectory} />}
-                  {selectedService.dockerImage && <Info title="Docker image" body={selectedService.dockerImage} />}
-                  {selectedService.composeProject && <Info title="Compose project" body={selectedService.composeProject} />}
+            <div className="grid gap-4 xl:grid-cols-3">
+              <Panel title="Build" icon={Wrench}>
+                <div className="grid gap-3">
+                  <Info title="Mode" body={selectedService.deployMode || selectedService.strategy} />
+                  <Info title="Root" body={selectedService.appDirectory || "repo root"} />
+                  <Info title="Build" body={selectedService.buildCommand || "auto"} />
+                  <Info title="Start" body={selectedService.startCommand || "auto"} />
+                  <Info title="Health" body={selectedService.healthPath || "/"} />
                 </div>
               </Panel>
-
-              <Panel title="Build Type" icon={Wrench}>
-                <div className="grid gap-3 text-sm">
-                  <Info title="Build mode" body={selectedService.deployMode || selectedService.strategy} />
-                  <Info title="Build command" body={selectedService.buildCommand || "auto"} />
-                  <Info title="Start command" body={selectedService.startCommand || "auto"} />
-                  <Info title="Internal port" body={selectedService.containerPort ? `:${selectedService.containerPort}` : "not assigned"} />
-                  <Info title="Health path" body={selectedService.healthPath || "/"} />
+              <Panel title="Runtime" icon={Server}>
+                <div className="grid gap-3">
+                  <Info title="Container" body={selectedService.containerName || selectedService.composeProject || selectedService.serviceName || "-"} />
+                  <Info title="Image" body={selectedService.imageTag || selectedService.dockerImage || "-"} />
+                  <Info title="Port" body={selectedService.containerPort ? `:${selectedService.containerPort}` : "-"} />
+                  <button className="dio-button w-fit" onClick={() => void appAction(selectedService.id, "health")} disabled={Boolean(busy)}>
+                    <HeartPulse size={14} />
+                    Health Check
+                  </button>
+                </div>
+              </Panel>
+              <Panel title="Release" icon={Activity}>
+                <div className="grid gap-3">
+                  <Info title="Status" body={selectedServiceLastDeployment?.status || selectedService.status} />
+                  <Info title="Started" body={selectedServiceLastDeployment?.startedAt ? relativeTime(selectedServiceLastDeployment.startedAt) : "-"} />
+                  <Info title="Duration" body={selectedServiceLastDeployment?.startedAt && selectedServiceLastDeployment.finishedAt ? durationLabel(selectedServiceLastDeployment.startedAt, selectedServiceLastDeployment.finishedAt) : "-"} />
+                  <button className="dio-button w-fit" onClick={() => selectedServiceLastDeployment ? void loadDeploymentLogs(selectedServiceLastDeployment.id) : void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
+                    <Terminal size={14} />
+                    View Logs
+                  </button>
                 </div>
               </Panel>
             </div>
 
-            <Panel title="URLs" icon={Globe2}>
-              <div className="grid gap-3 lg:grid-cols-3">
-                <UrlCard
-                  title="Auto preview domain"
-                  url={previewUrl(selectedService, vpsIp)}
-                  help={previewHelp(selectedService)}
-                  actionLabel={selectedService.previewDomainStatus === "error" ? "Fix Preview" : "Generate Preview URL"}
-                  onAction={() => void regeneratePreview(selectedService.id)}
-                  actionDisabled={Boolean(busy) || selectedService.status !== "running"}
-                />
-                <UrlCard title="Domain" url={selectedService.domain ? `https://${selectedService.domain}` : ""} help="Production URL through Caddy on ports 80/443." />
-                <Info title="Internal route" body={selectedService.localProxyPort || selectedService.port ? `127.0.0.1:${selectedService.localProxyPort || selectedService.port} -> :${selectedService.internalPort || selectedService.containerPort || selectedService.port}` : "No runtime port"} />
-              </div>
-              {(selectedService.previewDomainError || selectedService.previewCaddyReloadStatus || selectedService.previewCaddyFile || previewPortUrl(selectedService, vpsIp)) && (
-                <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  {selectedService.previewDomainError && (
-                    <div className="rounded-md border border-line bg-[#080a12] p-3 text-sm text-zinc-400 md:col-span-2">
-                      <p className="font-bold">Preview domain error</p>
-                      <p className="mt-1 break-words text-zinc-500">{selectedService.previewDomainError}</p>
-                    </div>
-                  )}
-                  <Info title="Caddy reload" body={selectedService.previewCaddyReloadStatus || "not run"} />
-                  <Info title="Caddy file" body={selectedService.previewCaddyFile || "not written"} />
-                  <Info title="Public debug port" body={previewPortUrl(selectedService, vpsIp) || "disabled"} />
-                  <Info title="Caddy import" body={previewImportMessage(status)} />
-                </div>
-              )}
-            </Panel>
+            {selectedService.sourceType === "github-app" && (
+              <AutoDeployCard
+                app={selectedService}
+                webhookUrl={webhookUrl}
+                publicDockioUrl={state?.settings.publicDockioUrl || ""}
+                busy={busy}
+                onToggle={saveAutoDeploy}
+              />
+            )}
           </div>
         )}
 
@@ -2909,72 +2972,96 @@ export function PanelShell() {
               )}
 
               {deployStep === "details" && deployProvider === "github" && (
-                <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
-                  <div className="grid gap-3">
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+                  <div className="grid gap-4">
                     {gitConnections.length === 0 ? (
                       <div className="rounded-md border border-line bg-[#080a12] p-4 text-sm text-zinc-400">
                         <p className="font-bold">GitHub App is not connected yet.</p>
-                        <p className="mt-1 text-zinc-500">Open Git, connect the App, then come back to pick a repo and branch.</p>
                         <button className="dio-button mt-3" onClick={() => openGlobalTab("git")}>Connect GitHub</button>
                       </div>
                     ) : (
                       <>
-                        <div className="grid gap-3 md:grid-cols-2">
+                        <div className="grid gap-3 rounded-md border border-line bg-panel p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
                           <Select label="Connection" value={githubForm.connectionId} onChange={(connectionId) => setGithubForm({ ...githubForm, connectionId, installationId: "", repositoryId: "" })} options={gitConnections.map((connection) => ({ value: connection.id, label: `${connection.name} (${connection.status})` }))} />
                           <Select label="Installation / account" value={githubForm.installationId} onChange={(installationId) => setGithubForm({ ...githubForm, installationId, repositoryId: "" })} options={gitInstallations.filter((installation) => !githubForm.connectionId || installation.providerConnectionId === githubForm.connectionId).map((installation) => ({ value: installation.id, label: installation.accountLogin }))} />
-                        </div>
-                        {githubForm.installationId && (
-                          <button className="dio-button w-fit" onClick={() => void syncGitHubRepositories(githubForm.installationId)} disabled={Boolean(busy)}>
+                          <button className="dio-button" onClick={() => githubForm.installationId ? void syncGitHubRepositories(githubForm.installationId) : selectedGitConnection ? void syncGitHubInstallations(selectedGitConnection.id) : undefined} disabled={Boolean(busy)}>
                             <RefreshCw size={14} />
-                            Refresh Repositories
+                            Sync
                           </button>
-                        )}
-                        <input className="dio-input" value={githubForm.repoSearch} onChange={(event) => setGithubForm({ ...githubForm, repoSearch: event.target.value })} placeholder="Search synced repositories..." />
-                        <div className="grid max-h-64 gap-2 overflow-auto pr-1">
+                        </div>
+
+                        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                          <input className="dio-input md:max-w-lg" value={githubForm.repoSearch} onChange={(event) => setGithubForm({ ...githubForm, repoSearch: event.target.value })} placeholder="Search repositories..." />
+                          <span className="dio-badge">{filteredGitRepositories.length} shown</span>
+                        </div>
+
+                        <div className="grid max-h-[420px] gap-2 overflow-auto pr-1 md:grid-cols-2">
                           {filteredGitRepositories.map((repo) => (
                             <button
                               key={repo.id}
-                              className={`rounded-md border p-3 text-left ${githubForm.repositoryId === repo.id ? "border-zinc-500 bg-[#111113]" : "border-line bg-panel"}`}
+                              className={`rounded-md border p-3 text-left transition hover:border-zinc-600 ${githubForm.repositoryId === repo.id ? "border-zinc-500 bg-[#111113]" : "border-line bg-panel"}`}
                               onClick={() => {
-                                setGithubForm({ ...githubForm, repositoryId: repo.id });
+                                const installation = gitInstallations.find((item) => item.id === repo.installationId);
+                                setGithubForm((form) => ({ ...form, installationId: installation?.id || form.installationId, repositoryId: repo.id }));
                                 setGitForm({ ...gitForm, repoUrl: repo.cloneUrl, branch: repo.defaultBranch, name: gitForm.name === "Git App" ? repo.name : gitForm.name });
+                                void loadGitHubBranches(repo.id);
                               }}
                               disabled={repo.archived || repo.disabled}
                             >
-                              <p className="truncate font-bold text-ink">{repo.fullName}</p>
-                              <p className="text-xs text-zinc-500">{repo.private ? "private" : "public"} - default {repo.defaultBranch}</p>
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="truncate font-bold text-ink">{repo.fullName}</p>
+                                  <p className="mt-1 truncate text-xs text-zinc-500">{repo.defaultBranch} {repo.pushedAt ? `- pushed ${relativeTime(repo.pushedAt)}` : ""}</p>
+                                </div>
+                                <span className="dio-badge">{repo.private ? "private" : "public"}</span>
+                              </div>
+                              {(repo.archived || repo.disabled) && <p className="mt-2 text-xs text-zinc-500">Unavailable</p>}
                             </button>
                           ))}
-                          {filteredGitRepositories.length === 0 && <p className="text-sm text-zinc-500">No repositories. Refresh repositories on the Git page or above.</p>}
-                        </div>
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <Field label="App name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
-                          <Select label="Service role" value={gitForm.serviceRole} onChange={(serviceRole) => setGitForm({ ...gitForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
-                          <label className="grid gap-1">
-                            <span className="dio-label">Branch</span>
-                            <input className="dio-input" list="github-branches" value={gitForm.branch} onChange={(event) => setGitForm({ ...gitForm, branch: event.target.value })} />
-                            <datalist id="github-branches">
-                              {githubForm.branches.map((branch) => <option key={branch.name} value={branch.name} />)}
-                            </datalist>
-                          </label>
-                          <Field label="Root directory optional" value={gitForm.appDirectory} onChange={(appDirectory) => { setGitForm({ ...gitForm, appDirectory }); setRepoAnalysis(null); }} placeholder="apps/web or blank" />
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <button className="dio-button" onClick={() => void loadGitHubBranches()} disabled={Boolean(busy) || !githubForm.repositoryId}>
-                            <GitBranch size={14} />
-                            Load Branches
-                          </button>
-                          <button className="dio-button-primary" onClick={() => void detectGitHubStack()} disabled={Boolean(busy) || !githubForm.repositoryId}>
-                            <Activity size={16} />
-                            Detect Stack
-                          </button>
+                          {filteredGitRepositories.length === 0 && (
+                            <div className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">
+                              No repositories yet.
+                            </div>
+                          )}
                         </div>
                       </>
                     )}
                   </div>
                   <div className="grid content-start gap-3">
-                    <Info title="Selected repository" body={selectedGitRepository ? `${selectedGitRepository.fullName} (${selectedGitRepository.private ? "private" : "public"})` : "Choose a synced GitHub repository."} />
-                    <Info title="Private clone" body="Dockio generates a short-lived installation token during deploy and feeds it to Git through a temporary askpass helper." />
+                    <div className="rounded-md border border-line bg-panel p-4">
+                      <p className="font-black text-ink">Selected repo</p>
+                      {selectedGitRepository ? (
+                        <div className="mt-3 grid gap-3">
+                          <Info title="Repository" body={selectedGitRepository.fullName} />
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <Field label="Service name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
+                            <Select label="Role" value={gitForm.serviceRole} onChange={(serviceRole) => setGitForm({ ...gitForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
+                          </div>
+                          <label className="grid gap-1">
+                            <span className="dio-label">Branch</span>
+                            <input className="dio-input" list="github-branches" value={gitForm.branch} onChange={(event) => { setGitForm({ ...gitForm, branch: event.target.value }); setRepoAnalysis(null); }} />
+                            <datalist id="github-branches">
+                              {githubForm.branches.map((branch) => <option key={branch.name} value={branch.name} />)}
+                            </datalist>
+                          </label>
+                          <Field label="Root directory" value={gitForm.appDirectory} onChange={(appDirectory) => { setGitForm({ ...gitForm, appDirectory }); setRepoAnalysis(null); }} placeholder="apps/web or blank" />
+                          <div className="flex flex-wrap gap-2">
+                            <button className="dio-button" onClick={() => void loadGitHubBranches()} disabled={Boolean(busy) || !githubForm.repositoryId}>
+                              <GitBranch size={14} />
+                              Branches
+                            </button>
+                            <button className="dio-button-primary" onClick={() => void detectGitHubStack()} disabled={Boolean(busy) || !githubForm.repositoryId}>
+                              <Activity size={16} />
+                              Detect Stack
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-sm text-zinc-500">Choose a repository to continue.</p>
+                      )}
+                    </div>
+                    <Info title="Account" body={selectedGitInstallation?.accountLogin || "not selected"} />
+                    <Info title="Token handling" body="short-lived" />
                   </div>
                 </div>
               )}
@@ -3742,17 +3829,15 @@ function UrlCard({
 
 function DeploymentSteps({ active }: { active: DeployStep }) {
   const items: Array<{ id: DeployStep; label: string }> = [
-    { id: "source", label: "Type" },
-    { id: "details", label: "Basics" },
-    { id: "details", label: "Source" },
+    { id: "source", label: "Source" },
+    { id: "details", label: "Repository" },
     { id: "build", label: "Build" },
-    { id: "runtime", label: "Env & Preview" },
-    { id: "runtime", label: "Deploy" }
+    { id: "runtime", label: "Runtime" }
   ];
   return (
-    <div className="mb-5 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+    <div className="mb-5 grid gap-2 md:grid-cols-4">
       {items.map((item, index) => (
-        <div key={`${item.id}-${item.label}`} className={`rounded-md border p-3 text-sm ${active === item.id ? "border-zinc-500 bg-[#111113] text-ink" : "border-line bg-panel text-zinc-500"}`}>
+        <div key={item.id} className={`rounded-md border p-3 text-sm ${active === item.id ? "border-zinc-500 bg-[#111113] text-ink" : "border-line bg-panel text-zinc-500"}`}>
           <span className="dio-badge mr-2">{index + 1}</span>
           {item.label}
         </div>
@@ -3897,6 +3982,43 @@ function SecurityBanner({ status }: { status: Record<string, unknown> | null }) 
         </div>
         <span className="dio-badge">Public IP: {publicIp(status) || "checking"}</span>
       </div>
+    </div>
+  );
+}
+
+function ServiceTabBar({ tabs, active, onChange }: { tabs: Array<{ id: Tab; label: string; icon: LucideIcon }>; active: Tab; onChange: (tab: Tab) => void }) {
+  return (
+    <nav className="dio-tabbar" aria-label="Service tabs">
+      {tabs.map((item) => {
+        const Icon = item.icon;
+        return (
+          <button key={item.id} className={`dio-tab ${active === item.id ? "dio-tab-active" : ""}`} onClick={() => onChange(item.id)}>
+            <Icon size={14} />
+            {item.label}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+function PrimaryUrlRow({ label, url, empty }: { label: string; url: string; empty: string }) {
+  return (
+    <div className="grid gap-1 text-sm">
+      <span className="dio-label">{label}</span>
+      {url ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <a className="min-w-0 max-w-full truncate font-bold text-zinc-100 underline decoration-zinc-700 underline-offset-4 hover:decoration-zinc-300" href={url} target="_blank" rel="noreferrer">
+            {url}
+          </a>
+          <button className="dio-button px-2 py-1 text-[0.68rem]" onClick={() => void navigator.clipboard?.writeText(url)}>
+            <Copy size={12} />
+            Copy
+          </button>
+        </div>
+      ) : (
+        <span className="text-zinc-600">{empty}</span>
+      )}
     </div>
   );
 }
