@@ -464,6 +464,7 @@ export function PanelShell() {
   const [projectCreateMode, setProjectCreateMode] = useState(false);
   const [createdProjectId, setCreatedProjectId] = useState("");
   const [notice, setNotice] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState("");
   const [csrfToken, setCsrfToken] = useState("");
   const [deployProvider, setDeployProvider] = useState<DeployProvider>("git");
@@ -621,9 +622,12 @@ export function PanelShell() {
     if (!auth?.user) return;
     const refreshStatus = () => {
       void api<Record<string, unknown>>("/api/system/status")
-        .then(setStatus)
-        .catch(() => {
-          // Keep the last known metrics visible if a transient status check fails.
+        .then((nextStatus) => {
+          setStatus(nextStatus);
+          setLoadError((current) => current.startsWith("Server status failed") ? "" : current);
+        })
+        .catch((error) => {
+          setLoadError(`Server status failed: ${error instanceof Error ? error.message : "request failed"}`);
         });
     };
     refreshStatus();
@@ -641,12 +645,19 @@ export function PanelShell() {
   }
 
   async function refresh() {
-    const [nextState, nextStatus] = await Promise.all([
+    const [stateResult, statusResult] = await Promise.allSettled([
       api<StatePayload>("/api/state"),
       api<Record<string, unknown>>("/api/system/status")
     ]);
+    const errors: string[] = [];
+    const nextState = stateResult.status === "fulfilled" ? stateResult.value : null;
+    const nextStatus = statusResult.status === "fulfilled" ? statusResult.value : null;
+    if (stateResult.status === "rejected") errors.push(`State failed: ${stateResult.reason instanceof Error ? stateResult.reason.message : "request failed"}`);
+    if (statusResult.status === "rejected") errors.push(`Server status failed: ${statusResult.reason instanceof Error ? statusResult.reason.message : "request failed"}`);
+    setLoadError(errors.join("  "));
+    if (nextStatus) setStatus(nextStatus);
+    if (!nextState) return;
     setState(nextState);
-    setStatus(nextStatus);
     setPreviewSettingsForm(nextState.settings);
     setGithubConnectionForm((form) => ({ ...form, publicDockioUrl: form.publicDockioUrl || nextState.settings.publicDockioUrl || "" }));
     setGithubManifestForm((form) => ({ ...form, publicDockioUrl: form.publicDockioUrl || nextState.settings.publicDockioUrl || "" }));
@@ -1583,6 +1594,12 @@ export function PanelShell() {
 
             <div className="mx-auto max-w-7xl space-y-5 px-4 py-5 md:px-6">
               {(notice || busy) && <Notice busy={busy} notice={notice} />}
+              {loadError && (
+                <div className="rounded-md border border-line bg-panel p-3 text-sm text-zinc-300">
+                  <p className="font-bold text-ink">Dashboard data did not fully load</p>
+                  <p className="mt-1 text-zinc-500">{loadError}</p>
+                </div>
+              )}
 
               {tab === "dashboard" && (
                 <div className="space-y-5">
@@ -1592,7 +1609,7 @@ export function PanelShell() {
                     <Metric label="Running" value={runningApps.length} detail={failedApps.length ? `${failedApps.length} alerts` : "healthy"} icon={CheckCircle2} />
                     <Metric label="Databases" value={allDatabases.length} detail="storage" icon={Database} />
                     <Metric label="Deployments" value={allDeployments.length} detail="history" icon={Activity} />
-                    <Metric label="Server" value={serverHealthy ? 1 : 0} detail={serverHealthy ? "online" : "check"} icon={Server} />
+                    <Metric label="Server" value={1} detail={serverHealthy ? "online" : status ? "needs check" : "loading"} icon={Server} />
                   </div>
 
                   <ServerUsageOverview status={status} />
