@@ -2188,7 +2188,7 @@ function parseFirewallStatus(numbered: CommandOutput, verbose: CommandOutput): P
     defaultRouted: defaults?.[3]?.trim().toLowerCase(),
     rules,
     exposedPorts,
-    warnings: uniqueStrings(warnings),
+    warnings: uniqueText(warnings),
     raw,
     error: numbered.ok || verbose.ok ? undefined : numbered.stderr || verbose.stderr || "UFW status failed."
   };
@@ -3290,6 +3290,10 @@ function userEnvText(app: ManagedApp) {
 
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.filter(Boolean).map(assertSafeEnvKey)));
+}
+
+function uniqueText(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 function uniqueSlug(existing: string[], base: string) {
