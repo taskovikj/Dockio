@@ -174,6 +174,12 @@ echo "Install mode: $INSTALL_MODE"
 echo "Open: http://SERVER_IP:$PANEL_PORT"
 echo "First admin setup code: $SETUP_TOKEN"
 echo "The setup code is stored in $ENV_DIR/panel.env as DIO_SETUP_TOKEN."
+echo ""
+echo "IMPORTANT BETA SECURITY WARNING"
+echo "Dockio is currently beta software. Use it for testing and controlled VPS deployments."
+echo "Create the admin account immediately, use a strong password, and keep the panel behind a trusted IP, VPN, or firewall rule."
+echo "Do not expose the panel publicly unless you understand the risk and have restricted access."
+echo ""
 if [ "$ENABLE_UFW" != "false" ]; then
   if [ -n "$TRUSTED_CIDR" ]; then
     echo "Firewall enabled: SSH, 80/443, and panel port $PANEL_PORT from $TRUSTED_CIDR."
