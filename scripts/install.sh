@@ -18,50 +18,12 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-wait_for_apt() {
-  local timeout="${DIO_APT_LOCK_TIMEOUT:-300}"
-  local waited=0
-  local locks=(
-    /var/lib/dpkg/lock-frontend
-    /var/lib/dpkg/lock
-    /var/lib/apt/lists/lock
-    /var/cache/apt/archives/lock
-  )
-
-  while true; do
-    local holders
-    holders="$(fuser "${locks[@]}" 2>/dev/null || true)"
-    holders="$(echo "$holders" | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')"
-    if [ -z "$holders" ]; then
-      return 0
-    fi
-
-    if [ "$waited" -eq 0 ]; then
-      echo "apt/dpkg is busy; waiting for package manager lock held by PID(s): $holders"
-      ps -fp $holders || true
-    fi
-    if [ "$waited" -ge "$timeout" ]; then
-      echo "Timed out waiting for apt/dpkg locks after ${timeout}s."
-      echo "If the listed process is gone, reboot the server and rerun the installer."
-      exit 1
-    fi
-
-    sleep 5
-    waited=$((waited + 5))
-  done
-}
-
-run_apt_get() {
-  wait_for_apt
-  DEBIAN_FRONTEND=noninteractive apt-get "$@"
-}
-
-run_apt_get update
-run_apt_get install -y git curl ca-certificates openssh-client rsync ufw docker.io docker-compose-v2 docker-buildx caddy build-essential python3 make g++
+apt-get update
+apt-get install -y git curl ca-certificates openssh-client rsync ufw docker.io docker-compose-v2 docker-buildx caddy build-essential python3 make g++
 
 if ! command -v node >/dev/null 2>&1; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  run_apt_get install -y nodejs
+  apt-get install -y nodejs
 fi
 
 corepack enable || true
@@ -81,7 +43,7 @@ ensure_buildx() {
     return 0
   fi
   echo "Installing Docker buildx plugin..."
-  run_apt_get install -y docker-buildx
+  apt-get install -y docker-buildx
   if ! docker buildx version >/dev/null 2>&1; then
     echo "Docker buildx is still unavailable. Nixpacks deployments will not work until buildx is installed."
   fi
