@@ -1090,23 +1090,51 @@ export function PanelShell() {
     setRepoAnalysis(null);
     setSelectedDetectionId("");
     setDeployProvider(provider);
-    setDeployStep("source");
+    setDeployStep(provider === "github" && githubForm.repositoryId ? "details" : "source");
     setTab("deployments");
   }
 
   function startGlobalDeployment(provider: DeployProvider = deployProvider) {
-    const projectId = allProjects.length === 1 ? allProjects[0]?.id : "";
-    if (!projectId) {
-      if (allProjects.length === 0) {
-        openCreateProject();
-        setNotice("Create a project first.");
-      } else {
-        openGlobalTab("projects");
-        setNotice("Open a project first.");
-      }
+    setDeployProvider(provider);
+    setDeployStep("source");
+    setSelectedServiceId("");
+    setEditingAppId("");
+    setRepoAnalysis(null);
+    setSelectedDetectionId("");
+    if (allProjects.length === 0) {
+      openCreateProject();
       return;
     }
-    startDeployment(provider, projectId);
+    openGlobalTab("projects");
+  }
+
+  function prepareGitHubRepoForDeployment(repo: GitRepository) {
+    const installation = gitInstallations.find((item) => item.id === repo.installationId);
+    setGithubForm((form) => ({
+      ...form,
+      installationId: installation?.id || form.installationId,
+      repositoryId: repo.id
+    }));
+    setGitForm((form) => ({
+      ...form,
+      repoUrl: repo.cloneUrl,
+      branch: repo.defaultBranch || form.branch || "main",
+      name: form.name === "Git App" || !form.name.trim() ? repo.name : form.name
+    }));
+    setDeployProvider("github");
+    setDeployStep("details");
+    setRepoAnalysis(null);
+    setNotice("Repository selected. Choose a project, then Dockio will detect the stack.");
+    const onlyProject = allProjects.length === 1 ? allProjects[0] : undefined;
+    if (onlyProject) {
+      startDeployment("github", onlyProject.id);
+      setDeployStep("details");
+    } else if (allProjects.length > 1) {
+      openGlobalTab("projects");
+    } else {
+      openCreateProject();
+    }
+    void loadGitHubBranches(repo.id);
   }
 
   function editGitDeployment(app: ManagedApp) {
@@ -1619,7 +1647,7 @@ export function PanelShell() {
 
                   <Panel title="Projects Overview" icon={Layers3}>
                     {allProjects.length ? (
-                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => startDeployment("git", projectId)} />
+                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => startDeployment(deployProvider, projectId)} />
                     ) : (
                       <EmptyState title="No projects yet" body="Create one project to hold your app services, env vars, databases, domains, and deployment history." actionLabel="Create Project" onAction={openCreateProject} icon={Layers3} />
                     )}
@@ -1770,12 +1798,30 @@ export function PanelShell() {
                   <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
                     <Panel title="Installations" icon={Layers3}>
                       <div className="grid gap-2">
-                        {gitInstallations.length === 0 && <p className="text-sm text-zinc-500">No installations.</p>}
+                        {gitInstallations.length === 0 && (
+                          <div className="rounded-md border border-line bg-panel p-3">
+                            <p className="font-bold text-ink">No GitHub installations</p>
+                            <p className="mt-1 text-xs text-zinc-500">Install the GitHub App on your account or organization, then refresh.</p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {selectedGitConnection?.installUrl && (
+                                <a className="dio-button" href={selectedGitConnection.installUrl} target="_blank" rel="noreferrer">
+                                  <ExternalLink size={14} />
+                                  Install App
+                                </a>
+                              )}
+                              {selectedGitConnection && (
+                                <button className="dio-button" onClick={() => void syncGitHubInstallations(selectedGitConnection.id)} disabled={Boolean(busy)}>
+                                  <RefreshCw size={14} />
+                                  Refresh
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
                         {gitInstallations.filter((installation) => !selectedGitConnection || installation.providerConnectionId === selectedGitConnection.id).map((installation) => (
                           <button key={installation.id} className={`rounded-md border p-3 text-left ${githubForm.installationId === installation.id ? "border-zinc-500 bg-[#111113]" : "border-line bg-panel"}`} onClick={() => setGithubForm((form) => ({ ...form, installationId: installation.id, repositoryId: "" }))}>
                             <p className="font-bold text-ink">{installation.accountLogin}</p>
-                            <p className="text-xs text-zinc-500">{installation.accountType} - repositories {installation.repositorySelection || "selected"}</p>
-                            <p className="text-xs text-zinc-600">Last sync {installation.lastSyncedAt ? new Date(installation.lastSyncedAt).toLocaleString() : "never"}</p>
+                            <p className="text-xs text-zinc-500">{installation.accountType} / {installation.repositorySelection || "selected repos"}</p>
                             {installation.errorMessage && <p className="mt-2 rounded-md border border-line bg-[#080a12] p-2 text-xs text-zinc-400">{installation.errorMessage}</p>}
                           </button>
                         ))}
@@ -1793,7 +1839,11 @@ export function PanelShell() {
                         <span className="dio-badge">{filteredGitRepositories.length} shown</span>
                       </div>
                       <div className="grid gap-3 lg:grid-cols-2">
-                        {filteredGitRepositories.length === 0 && <p className="text-sm text-zinc-500">No repositories.</p>}
+                        {filteredGitRepositories.length === 0 && (
+                          <div className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">
+                            No repositories synced.
+                          </div>
+                        )}
                         {filteredGitRepositories.map((repo) => (
                           <article key={repo.id} className="rounded-md border border-line bg-panel p-3">
                             <div className="flex items-start justify-between gap-3">
@@ -1813,18 +1863,9 @@ export function PanelShell() {
                                 <GitBranch size={14} />
                                 Branches
                               </button>
-                              <button
-                                className="dio-button-primary"
-                                onClick={() => {
-                                  const installation = gitInstallations.find((item) => item.id === repo.installationId);
-                                  setGithubForm((form) => ({ ...form, installationId: installation?.id || form.installationId, repositoryId: repo.id }));
-                                  setGitForm((form) => ({ ...form, repoUrl: repo.cloneUrl, branch: repo.defaultBranch || "main", name: repo.name }));
-                                  startGlobalDeployment("github");
-                                }}
-                                disabled={repo.archived || repo.disabled}
-                              >
+                              <button className="dio-button-primary" onClick={() => prepareGitHubRepoForDeployment(repo)} disabled={repo.archived || repo.disabled}>
                                 <PackagePlus size={14} />
-                                Deploy
+                                Select Repo
                               </button>
                             </div>
                           </article>
@@ -1886,12 +1927,8 @@ export function PanelShell() {
                   <div className="space-y-4">
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <input className="dio-input md:max-w-lg" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Search projects..." />
-                      <button className="dio-button-primary w-fit" onClick={openCreateProject}>
-                        <Layers3 size={15} />
-                        New Project
-                      </button>
                     </div>
-                    <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => startDeployment("git", projectId)} />
+                    <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => startDeployment(deployProvider, projectId)} />
                   </div>
                 )
               )}
@@ -2932,11 +2969,11 @@ export function PanelShell() {
               {deployStep === "source" && (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   {[
-                    { id: "git" as DeployProvider, title: "Public Git URL", body: "Deploy a public Git repository with Nixpacks, generated Dockerfile, static, or repo Dockerfile settings.", icon: GitBranch },
-                    { id: "github" as DeployProvider, title: "GitHub App", body: "Deploy a selected public or private repository from a connected GitHub App.", icon: Github },
-                    { id: "image" as DeployProvider, title: "Docker Image", body: "Run an existing image from Docker Hub, GHCR, or another registry.", icon: Boxes },
-                    { id: "compose" as DeployProvider, title: "Docker Compose", body: "Clone a public repo that contains docker-compose.yml or compose.yaml.", icon: Layers3 },
-                    { id: "compose-yaml" as DeployProvider, title: "Paste Compose YAML", body: "Deploy a small compose stack from pasted YAML.", icon: Terminal }
+                    { id: "git" as DeployProvider, title: "Public Git", body: "Repo URL", icon: GitBranch },
+                    { id: "github" as DeployProvider, title: "GitHub App", body: "Private or selected repo", icon: Github },
+                    { id: "image" as DeployProvider, title: "Docker Image", body: "Registry image", icon: Boxes },
+                    { id: "compose" as DeployProvider, title: "Compose Repo", body: "docker-compose.yml", icon: Layers3 },
+                    { id: "compose-yaml" as DeployProvider, title: "Compose YAML", body: "Paste stack", icon: Terminal }
                   ].map((item) => {
                     const Icon = item.icon;
                     return (
@@ -2983,6 +3020,26 @@ export function PanelShell() {
                         <p className="font-bold">GitHub App is not connected yet.</p>
                         <button className="dio-button mt-3" onClick={() => openGlobalTab("git")}>Connect GitHub</button>
                       </div>
+                    ) : gitInstallations.filter((installation) => !githubForm.connectionId || installation.providerConnectionId === githubForm.connectionId).length === 0 ? (
+                      <div className="rounded-md border border-line bg-panel p-4">
+                        <p className="font-bold text-ink">Install the GitHub App first</p>
+                        <p className="mt-1 text-sm text-zinc-500">Select the repositories GitHub should expose to Dockio.</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {selectedGitConnection?.installUrl && (
+                            <a className="dio-button-primary" href={selectedGitConnection.installUrl} target="_blank" rel="noreferrer">
+                              <ExternalLink size={14} />
+                              Install App
+                            </a>
+                          )}
+                          {selectedGitConnection && (
+                            <button className="dio-button" onClick={() => void syncGitHubInstallations(selectedGitConnection.id)} disabled={Boolean(busy)}>
+                              <RefreshCw size={14} />
+                              Refresh
+                            </button>
+                          )}
+                          <button className="dio-button" onClick={() => openGlobalTab("git")}>Git Settings</button>
+                        </div>
+                      </div>
                     ) : (
                       <>
                         <div className="grid gap-3 rounded-md border border-line bg-panel p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
@@ -3024,7 +3081,11 @@ export function PanelShell() {
                           ))}
                           {filteredGitRepositories.length === 0 && (
                             <div className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">
-                              No repositories yet.
+                              <p>No repositories synced.</p>
+                              <button className="dio-button mt-3" onClick={() => selectedGitInstallation ? void syncGitHubRepositories(selectedGitInstallation.id) : undefined} disabled={Boolean(busy) || !selectedGitInstallation}>
+                                <RefreshCw size={14} />
+                                Refresh Repos
+                              </button>
                             </div>
                           )}
                         </div>
@@ -3384,12 +3445,11 @@ export function PanelShell() {
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`flex items-center gap-3 ${compact ? "" : "mb-6"}`}>
-      <div className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-white p-1">
+      <div className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-[#07070a] p-1.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]">
         <img src="/logo.svg" alt="Dockio" className="h-full w-full" />
       </div>
       <div>
         <p className="font-black text-ink">Dockio</p>
-        <p className="text-xs text-zinc-500">VPS panel</p>
       </div>
     </div>
   );
@@ -3439,8 +3499,7 @@ function GlobalPageHeader({ title, subtitle, children }: { title: string; subtit
     <header className="border-b border-line bg-[#050505]/95 px-4 py-4 md:px-6">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="dio-label">Dockio</p>
-          <h1 className="mt-1 text-2xl font-black tracking-normal text-ink">{title}</h1>
+          <h1 className="text-2xl font-black tracking-normal text-ink">{title}</h1>
           <p className="mt-1 max-w-3xl text-sm text-zinc-400">{subtitle}</p>
         </div>
         {children}
@@ -4238,9 +4297,9 @@ function AppGrid({
       {apps.map((app) => {
         const appPreview = previewUrl(app, vpsIp);
         return (
-        <article key={app.id} className="rounded-md border border-line bg-panel p-3 transition hover:border-zinc-600 hover:bg-[#111113]">
+        <article key={app.id} className="cursor-pointer rounded-md border border-line bg-panel p-3 transition hover:border-zinc-600 hover:bg-[#111113]" onClick={() => onOpen(app)}>
           <div className="flex items-start justify-between gap-3">
-            <button className="flex min-w-0 items-start gap-3 text-left" onClick={() => onOpen(app)}>
+            <button className="flex min-w-0 items-start gap-3 text-left" onClick={(event) => { event.stopPropagation(); onOpen(app); }}>
               <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12]">
                 <ServiceLogo app={app} />
               </div>
@@ -4258,12 +4317,12 @@ function AppGrid({
             {app.databaseId && <span className="dio-badge">{databaseName(databases, app.databaseId)}</span>}
           </div>
           <div className="mt-3 grid gap-1 text-xs">
-            {app.domain && <a className="block max-w-full truncate font-bold text-zinc-200 hover:underline" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>}
-            {appPreview && <a className="block max-w-full truncate font-bold text-zinc-200 hover:underline" href={appPreview} target="_blank" rel="noreferrer">{appPreview}</a>}
+            {app.domain && <a className="block max-w-full truncate font-bold text-zinc-200 hover:underline" href={`https://${app.domain}`} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{app.domain}</a>}
+            {appPreview && <a className="block max-w-full truncate font-bold text-zinc-200 hover:underline" href={appPreview} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{appPreview}</a>}
             {!app.domain && !appPreview && <p className="text-zinc-600">No public URL</p>}
             {app.previewDomainStatus === "error" && <p className="line-clamp-2 text-zinc-500">{compactError(app.previewDomainError || "Preview error")}</p>}
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
             <button className="dio-button" onClick={() => void onLogs(app.id)}>
               <Terminal size={14} />
               Logs
