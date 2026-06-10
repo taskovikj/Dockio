@@ -1585,7 +1585,6 @@ export function PanelShell() {
   const selectedServiceLastDeployment = selectedService ? visibleDeployments[0] : undefined;
   const selectedServicePreviewUrl = selectedService ? previewUrl(selectedService, vpsIp) : "";
   const selectedServiceDomainUrl = selectedService?.domain ? `https://${selectedService.domain}` : "";
-  const selectedServicePrimaryUrl = selectedServiceDomainUrl || selectedServicePreviewUrl;
   const projectPreviewItems = apps
     .map((app) => ({ app, url: app.domain ? `https://${app.domain}` : previewUrl(app, vpsIp) }))
     .filter((item) => Boolean(item.url));
@@ -2278,19 +2277,7 @@ export function PanelShell() {
               <div className="flex flex-wrap items-center gap-2">
                 {selectedService ? (
                   <>
-                    {selectedServicePrimaryUrl && (
-                      <a className="dio-button-primary" href={selectedServicePrimaryUrl} target="_blank" rel="noreferrer">
-                        <ExternalLink size={15} />
-                        Open
-                      </a>
-                    )}
-                    {!selectedServicePreviewUrl && selectedService.status === "running" && (
-                      <button className="dio-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy)}>
-                        <RefreshCw size={15} />
-                        Preview
-                      </button>
-                    )}
-                    <button className="dio-button" onClick={() => isGitManagedService(selectedService) ? editGitDeployment(selectedService) : void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
+                    <button className="dio-button-primary" onClick={() => isGitManagedService(selectedService) ? editGitDeployment(selectedService) : void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
                       <Play size={15} />
                       Deploy
                     </button>
@@ -2306,9 +2293,9 @@ export function PanelShell() {
                       <Square size={15} />
                       {selectedService.status === "running" ? "Stop" : "Start"}
                     </button>
-                    <button className="dio-button-danger" onClick={() => void appAction(selectedService.id, "delete")} disabled={Boolean(busy)}>
-                      <Trash2 size={15} />
-                      Delete
+                    <button className="dio-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
+                      <Terminal size={15} />
+                      Logs
                     </button>
                   </>
                 ) : (
@@ -2349,90 +2336,63 @@ export function PanelShell() {
 
         {tab === "general" && selectedService && (
           <div className="space-y-4">
-            <Panel title="Production Deployment" icon={Server}>
-              <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-                <div className="grid min-h-60 content-between rounded-md border border-line bg-[#050505] p-4">
-                  <div>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="dio-label">Service</p>
-                        <h2 className="mt-2 truncate text-2xl font-black text-ink">{selectedService.name}</h2>
-                        <p className="mt-1 truncate text-sm text-zinc-500">{selectedService.serviceRole || "fullstack"} / {selectedService.deployMode || selectedService.strategy}</p>
+            <Panel title="Service Control" icon={Server}>
+              <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+                <div className="min-w-0 rounded-md border border-line bg-[#050505] p-4">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusPill ok={selectedService.status === "running"} label={selectedService.status} />
+                        <span className="dio-badge">{selectedService.serviceRole || "fullstack"}</span>
+                        <span className="dio-badge">{selectedService.deployMode || selectedService.strategy}</span>
                       </div>
-                      <StatusPill ok={selectedService.status === "running"} label={selectedService.status} />
+                      <h2 className="mt-3 truncate text-2xl font-black text-ink">{selectedService.name}</h2>
+                      <p className="mt-1 truncate text-sm text-zinc-500">{selectedService.slug}</p>
                     </div>
-                    <div className="mt-5 grid gap-3">
-                      <PrimaryUrlRow label="Preview" url={selectedServicePreviewUrl} empty="No preview URL" />
-                      <PrimaryUrlRow label="Domain" url={selectedServiceDomainUrl} empty="No production domain" />
-                      <div className="grid gap-1 text-sm">
-                        <span className="dio-label">Internal</span>
-                        <span className="truncate text-zinc-300">{selectedService.localProxyPort || selectedService.port ? `127.0.0.1:${selectedService.localProxyPort || selectedService.port} -> :${selectedService.internalPort || selectedService.containerPort || selectedService.port}` : "No runtime port"}</span>
-                      </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedServicePreviewUrl ? (
+                        <a className="dio-button-primary" href={selectedServicePreviewUrl} target="_blank" rel="noreferrer">
+                          <ExternalLink size={14} />
+                          Preview
+                        </a>
+                      ) : (
+                        <button className="dio-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.status !== "running"}>
+                          <RefreshCw size={14} />
+                          Generate Preview
+                        </button>
+                      )}
+                      {selectedServiceDomainUrl ? (
+                        <a className="dio-button" href={selectedServiceDomainUrl} target="_blank" rel="noreferrer">
+                          <Globe2 size={14} />
+                          Domain
+                        </a>
+                      ) : (
+                        <button className="dio-button" onClick={() => setTab("domains")}>
+                          <Globe2 size={14} />
+                          Domain
+                        </button>
+                      )}
                     </div>
                   </div>
-                  <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">
-                    {selectedServicePreviewUrl ? (
-                      <a className="dio-button-primary" href={selectedServicePreviewUrl} target="_blank" rel="noreferrer">
-                        <ExternalLink size={14} />
-                        Preview
-                      </a>
-                    ) : (
-                      <button className="dio-button-primary" onClick={() => void regeneratePreview(selectedService.id)} disabled={Boolean(busy) || selectedService.status !== "running"}>
-                        <RefreshCw size={14} />
-                        Generate Preview
-                      </button>
-                    )}
-                    {selectedServiceDomainUrl && (
-                      <a className="dio-button" href={selectedServiceDomainUrl} target="_blank" rel="noreferrer">
-                        <Globe2 size={14} />
-                        Domain
-                      </a>
-                    )}
-                    <button className="dio-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
-                      <Terminal size={14} />
-                      Logs
-                    </button>
+
+                  <div className="mt-5 grid gap-3">
+                    <PrimaryUrlRow label="Preview URL" url={selectedServicePreviewUrl} empty="No preview URL configured" />
+                    <PrimaryUrlRow label="Production domain" url={selectedServiceDomainUrl} empty="No custom domain configured" />
                   </div>
                 </div>
 
-                <div className="grid gap-3">
-                  <div className="grid gap-3 rounded-md border border-line bg-panel p-4">
-                    <div className="grid gap-1">
-                      <span className="dio-label">Repository</span>
-                      <span className="truncate text-sm font-bold text-ink">{selectedService.repoFullName || selectedService.repoUrl || selectedService.dockerImage || selectedService.composeProject || "Manual service"}</span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Info title="Branch" body={selectedService.branch || "main"} />
-                      <Info title="Commit" body={shortSha(selectedService.commitSha) || "-"} />
-                      <Info title="Last deploy" body={selectedServiceLastDeployment ? relativeTime(selectedServiceLastDeployment.finishedAt || selectedServiceLastDeployment.createdAt) : "none"} />
-                      <Info title="Database" body={selectedService.databaseId ? databaseName(databases, selectedService.databaseId) : "none"} />
-                    </div>
+                <div className="grid gap-3 rounded-md border border-line bg-panel p-4">
+                  <div className="grid gap-1">
+                    <span className="dio-label">Source</span>
+                    <span className="truncate text-sm font-bold text-ink">{selectedService.repoFullName || selectedService.repoUrl || selectedService.dockerImage || selectedService.composeProject || selectedService.sourceType || "manual"}</span>
                   </div>
-
-                  <div className="grid gap-2 rounded-md border border-line bg-panel p-4">
-                    <p className="font-black text-ink">Actions</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button className="dio-button-primary" onClick={() => isGitManagedService(selectedService) ? editGitDeployment(selectedService) : void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
-                        <Play size={14} />
-                        Deploy
-                      </button>
-                      <button className="dio-button" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
-                        <RefreshCw size={14} />
-                        Redeploy
-                      </button>
-                      <button className="dio-button" onClick={() => void appAction(selectedService.id, selectedService.status === "running" ? "restart" : "start")} disabled={Boolean(busy)}>
-                        <RotateCcw size={14} />
-                        {selectedService.status === "running" ? "Restart" : "Start"}
-                      </button>
-                      <button className="dio-button" onClick={() => selectedService.status === "running" ? void stop(selectedService.id) : void appAction(selectedService.id, "start")} disabled={Boolean(busy)}>
-                        <Square size={14} />
-                        {selectedService.status === "running" ? "Stop" : "Start"}
-                      </button>
-                    </div>
-                    <button className="dio-button-danger mt-1 justify-center" onClick={() => void appAction(selectedService.id, "delete")} disabled={Boolean(busy)}>
-                      <Trash2 size={14} />
-                      Delete Service
-                    </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Info title="Branch" body={selectedService.branch || "main"} />
+                    <Info title="Commit" body={shortSha(selectedService.commitSha) || "-"} />
+                    <Info title="Last deploy" body={selectedServiceLastDeployment ? relativeTime(selectedServiceLastDeployment.finishedAt || selectedServiceLastDeployment.createdAt) : "none"} />
+                    <Info title="Runtime port" body={selectedService.localProxyPort || selectedService.port ? `127.0.0.1:${selectedService.localProxyPort || selectedService.port} -> :${selectedService.internalPort || selectedService.containerPort || selectedService.port}` : "none"} />
+                    <Info title="Database" body={selectedService.databaseId ? databaseName(databases, selectedService.databaseId) : "none"} />
+                    <Info title="Health" body={selectedService.healthPath || "/"} />
                   </div>
                 </div>
               </div>
@@ -2464,10 +2424,6 @@ export function PanelShell() {
                   <Info title="Status" body={selectedServiceLastDeployment?.status || selectedService.status} />
                   <Info title="Started" body={selectedServiceLastDeployment?.startedAt ? relativeTime(selectedServiceLastDeployment.startedAt) : "-"} />
                   <Info title="Duration" body={selectedServiceLastDeployment?.startedAt && selectedServiceLastDeployment.finishedAt ? durationLabel(selectedServiceLastDeployment.startedAt, selectedServiceLastDeployment.finishedAt) : "-"} />
-                  <button className="dio-button w-fit" onClick={() => selectedServiceLastDeployment ? void loadDeploymentLogs(selectedServiceLastDeployment.id) : void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
-                    <Terminal size={14} />
-                    View Logs
-                  </button>
                 </div>
               </Panel>
             </div>
