@@ -462,6 +462,16 @@ export function PanelShell() {
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedServiceId, setSelectedServiceId] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
+  const [serviceSearch, setServiceSearch] = useState("");
+  const [serviceProjectFilter, setServiceProjectFilter] = useState("");
+  const [serviceStatusFilter, setServiceStatusFilter] = useState("");
+  const [deploymentSearch, setDeploymentSearch] = useState("");
+  const [deploymentProjectFilter, setDeploymentProjectFilter] = useState("");
+  const [deploymentServiceFilter, setDeploymentServiceFilter] = useState("");
+  const [deploymentStatusFilter, setDeploymentStatusFilter] = useState("");
+  const [domainSearch, setDomainSearch] = useState("");
+  const [domainProjectFilter, setDomainProjectFilter] = useState("");
+  const [domainRouteFilter, setDomainRouteFilter] = useState("");
   const [projectCreateMode, setProjectCreateMode] = useState(false);
   const [createdProjectId, setCreatedProjectId] = useState("");
   const [notice, setNotice] = useState("");
@@ -470,6 +480,7 @@ export function PanelShell() {
   const [csrfToken, setCsrfToken] = useState("");
   const [deployProvider, setDeployProvider] = useState<DeployProvider>("git");
   const [deployStep, setDeployStep] = useState<DeployStep>("source");
+  const [deployWizardOpen, setDeployWizardOpen] = useState(false);
   const [routeHydrated, setRouteHydrated] = useState(false);
   const routeWriteCount = useRef(0);
   const [authForm, setAuthForm] = useState({ email: "", name: "", password: "", setupCode: "" });
@@ -1019,6 +1030,11 @@ export function PanelShell() {
     setSelectedProjectId(projectId);
     setSelectedServiceId("");
     setProjectCreateMode(false);
+    setServiceProjectFilter(projectId);
+    setDeploymentProjectFilter(projectId);
+    setDeploymentServiceFilter("");
+    setDomainProjectFilter(projectId);
+    setDeployWizardOpen(false);
     setTab("general");
     syncProjectForms(projectId);
     clearLogs();
@@ -1028,6 +1044,13 @@ export function PanelShell() {
     setSelectedProjectId("");
     setSelectedServiceId("");
     setProjectCreateMode(false);
+    if (["services", "deployments", "domains"].includes(nextTab)) {
+      setServiceProjectFilter("");
+      setDeploymentProjectFilter("");
+      setDeploymentServiceFilter("");
+      setDomainProjectFilter("");
+    }
+    setDeployWizardOpen(false);
     setTab(globalTabs.has(nextTab) ? nextTab : "dashboard");
     clearLogs();
   }
@@ -1036,6 +1059,7 @@ export function PanelShell() {
     setSelectedProjectId("");
     setSelectedServiceId("");
     setProjectCreateMode(true);
+    setDeployWizardOpen(false);
     setTab("projects");
     clearLogs();
   }
@@ -1044,6 +1068,7 @@ export function PanelShell() {
     setSelectedProjectId("");
     setSelectedServiceId("");
     setProjectCreateMode(false);
+    setDeployWizardOpen(false);
     setTab(globalTabs.has(nextTab) ? nextTab : "dashboard");
     clearLogs();
   }
@@ -1064,6 +1089,13 @@ export function PanelShell() {
     const projectId = app.projectId || selectedProjectId || "";
     if (projectId && projectId !== selectedProjectId) setSelectedProjectId(projectId);
     if (app.id !== selectedServiceId) clearLogs();
+    if (projectId) {
+      setServiceProjectFilter(projectId);
+      setDeploymentProjectFilter(projectId);
+      setDomainProjectFilter(projectId);
+    }
+    setDeploymentServiceFilter(app.id);
+    setDeployWizardOpen(false);
     setSelectedServiceId(app.id);
     syncServiceForms(app, projectId);
     setTab(nextTab);
@@ -1089,6 +1121,9 @@ export function PanelShell() {
     setEditingAppId("");
     setRepoAnalysis(null);
     setSelectedDetectionId("");
+    setDeploymentProjectFilter(projectId);
+    setDeploymentServiceFilter("");
+    setDeployWizardOpen(true);
     setDeployProvider(provider);
     setDeployStep(provider === "github" && githubForm.repositoryId ? "details" : "source");
     setTab("deployments");
@@ -1101,6 +1136,7 @@ export function PanelShell() {
     setEditingAppId("");
     setRepoAnalysis(null);
     setSelectedDetectionId("");
+    setDeployWizardOpen(false);
     if (allProjects.length === 0) {
       openCreateProject();
       return;
@@ -1154,6 +1190,9 @@ export function PanelShell() {
     setSelectedDetectionId("");
     setDeployProvider(app.sourceType === "github-app" ? "github" : "git");
     setDeployStep("details");
+    setDeploymentProjectFilter(projectId);
+    setDeploymentServiceFilter(app.id);
+    setDeployWizardOpen(true);
     setTab("deployments");
     setGitForm((form) => ({
       ...form,
@@ -1665,7 +1704,7 @@ export function PanelShell() {
                   <div className="grid gap-5 xl:grid-cols-[1fr_0.95fr]">
                     <Panel title="Recent Deployments" icon={Activity}>
                       {allDeployments.length ? (
-                        <DeploymentList deployments={allDeployments} apps={allApps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
+                        <DeploymentList deployments={allDeployments.slice(0, 6)} apps={allApps} projects={allProjects} vpsIp={vpsIp} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} onOpenApp={openService} />
                       ) : (
                         <EmptyState title="No deployments" body="Deploy an app." actionLabel="Deploy App" onAction={() => startGlobalDeployment()} icon={PackagePlus} />
                       )}
@@ -1933,37 +1972,44 @@ export function PanelShell() {
               )}
 
               {tab === "services" && (
-                <Panel title="All Services" icon={Boxes}>
-                  <AppGrid apps={allApps} projects={allProjects} databases={allDatabases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} onPreview={regeneratePreview} onEdit={editGitDeployment} onOpen={openService} />
+                <Panel title="Services" icon={Boxes}>
+                  <ServiceDirectory
+                    apps={allApps}
+                    projects={allProjects}
+                    databases={allDatabases}
+                    vpsIp={vpsIp}
+                    search={serviceSearch}
+                    onSearch={setServiceSearch}
+                    projectFilter={serviceProjectFilter}
+                    onProjectFilter={setServiceProjectFilter}
+                    statusFilter={serviceStatusFilter}
+                    onStatusFilter={setServiceStatusFilter}
+                    onLogs={loadLogs}
+                    onOpen={openService}
+                    onPreview={regeneratePreview}
+                  />
                 </Panel>
               )}
 
               {tab === "deployments" && (
-                <Panel title="Deployments" icon={Activity}>
-                  <div className="mb-4 flex flex-wrap gap-2">
-                    <button className="dio-button-primary" onClick={() => startGlobalDeployment("git")} disabled={Boolean(busy)}>
-                      <GitBranch size={15} />
-                      Deploy from Public Git
-                    </button>
-                    <button className="dio-button" onClick={() => startGlobalDeployment("github")} disabled={Boolean(busy)}>
-                      <Github size={15} />
-                      Deploy GitHub App Repo
-                    </button>
-                    <button className="dio-button" onClick={() => startGlobalDeployment("image")} disabled={Boolean(busy)}>
-                      <Boxes size={15} />
-                      Deploy Docker Image
-                    </button>
-                    <button className="dio-button" onClick={() => startGlobalDeployment("compose")} disabled={Boolean(busy)}>
-                      <Layers3 size={15} />
-                      Deploy Compose
-                    </button>
-                  </div>
-                  {allDeployments.length ? (
-                    <DeploymentList deployments={allDeployments} apps={allApps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
-                  ) : (
-                    <EmptyState title="No deployments yet" body="Choose a project and deploy an app. Build logs and deployment records appear here." actionLabel="Deploy App" onAction={() => startGlobalDeployment()} icon={PackagePlus} />
-                  )}
-                </Panel>
+                <DeploymentDirectory
+                  deployments={allDeployments}
+                  apps={allApps}
+                  projects={allProjects}
+                  vpsIp={vpsIp}
+                  search={deploymentSearch}
+                  onSearch={setDeploymentSearch}
+                  projectFilter={deploymentProjectFilter}
+                  onProjectFilter={setDeploymentProjectFilter}
+                  serviceFilter={deploymentServiceFilter}
+                  onServiceFilter={setDeploymentServiceFilter}
+                  statusFilter={deploymentStatusFilter}
+                  onStatusFilter={setDeploymentStatusFilter}
+                  onLogs={loadDeploymentLogs}
+                  onDelete={deleteDeploymentEvent}
+                  onOpenApp={openService}
+                  onNewDeployment={() => startGlobalDeployment("git")}
+                />
               )}
 
               {tab === "logs" && (
@@ -2070,16 +2116,26 @@ export function PanelShell() {
                         </button>
                       </div>
                     </Panel>
-                    <Panel title="DNS Requirement" icon={Shield}>
-                      <div className="space-y-3 text-sm text-zinc-400">
-                        <p>Point DNS to this VPS.</p>
-                        <pre className="dio-code overflow-auto rounded-md p-3 text-xs">{`A     ${domainForm.domain || "app.example.com"} -> ${vpsIp || "YOUR_VPS_PUBLIC_IP"}\nAAAA  optional if this VPS has IPv6`}</pre>
+                    <Panel title="DNS" icon={Shield}>
+                      <div className="grid gap-3">
+                        <Info title="A record" body={`${domainForm.domain || "app.example.com"} -> ${vpsIp || "server public IP"}`} />
+                        <Info title="HTTPS" body="Caddy issues certificates after DNS resolves." />
                       </div>
                     </Panel>
                   </div>
-                  <Panel title="Domains & Preview URLs" icon={Globe2}>
-                    <DomainGrid apps={allApps} projects={allProjects} vpsIp={vpsIp} onOpen={openService} onPreview={regeneratePreview} />
-                  </Panel>
+                  <DomainDirectory
+                    apps={allApps}
+                    projects={allProjects}
+                    vpsIp={vpsIp}
+                    search={domainSearch}
+                    onSearch={setDomainSearch}
+                    projectFilter={domainProjectFilter}
+                    onProjectFilter={setDomainProjectFilter}
+                    routeFilter={domainRouteFilter}
+                    onRouteFilter={setDomainRouteFilter}
+                    onOpen={openService}
+                    onPreview={regeneratePreview}
+                  />
                 </div>
               )}
 
@@ -2214,12 +2270,12 @@ export function PanelShell() {
           <nav className="mt-5 grid gap-4" aria-label={selectedService ? "Service navigation" : "Project navigation"}>
             <SidebarGroup title={selectedService ? "Service" : "Project"}>
               {currentTabs.filter((item) => ["general", "services", "deployments", "logs", "monitoring"].includes(item.id)).map((item) => (
-                <TabButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />
+                <TabButton key={item.id} item={item} active={tab === item.id} onClick={() => { if (item.id === "deployments") setDeployWizardOpen(false); setTab(item.id); }} />
               ))}
             </SidebarGroup>
             <SidebarGroup title="Configuration">
               {currentTabs.filter((item) => ["environment", "domains", "database"].includes(item.id)).map((item) => (
-                <TabButton key={item.id} item={item} active={tab === item.id} onClick={() => setTab(item.id)} />
+                <TabButton key={item.id} item={item} active={tab === item.id} onClick={() => { if (item.id !== "deployments") setDeployWizardOpen(false); setTab(item.id); }} />
               ))}
             </SidebarGroup>
             <SidebarGroup title="Infrastructure">
@@ -2615,14 +2671,25 @@ export function PanelShell() {
         {tab === "services" && (
           <div className="space-y-4">
             <Panel title="Services" icon={Server}>
-              <AppGrid apps={apps} projects={projects} databases={databases} vpsIp={vpsIp} onLogs={loadLogs} onStop={stop} onAction={appAction} onPreview={regeneratePreview} onEdit={editGitDeployment} onOpen={openService} />
-            </Panel>
-            <Panel title="Service Roles" icon={Boxes}>
-              <div className="grid gap-3 md:grid-cols-4">
-                {roleOptions().map((role) => (
-                  <Info key={role.value} title={role.label} body={`${apps.filter((app) => (app.serviceRole || "fullstack") === role.value).length} service${apps.filter((app) => (app.serviceRole || "fullstack") === role.value).length === 1 ? "" : "s"}`} />
-                ))}
-              </div>
+              <ServiceDirectory
+                apps={allApps}
+                projects={allProjects}
+                databases={allDatabases}
+                vpsIp={vpsIp}
+                search={serviceSearch}
+                onSearch={setServiceSearch}
+                projectFilter={serviceProjectFilter || currentProject.id}
+                onProjectFilter={(projectId) => {
+                  setServiceProjectFilter(projectId);
+                  if (projectId && projectId !== currentProject.id) openProject(projectId);
+                  if (!projectId) showAllProjects("services");
+                }}
+                statusFilter={serviceStatusFilter}
+                onStatusFilter={setServiceStatusFilter}
+                onLogs={loadLogs}
+                onOpen={openService}
+                onPreview={regeneratePreview}
+              />
             </Panel>
           </div>
         )}
@@ -2879,40 +2946,71 @@ export function PanelShell() {
 
         {tab === "deployments" && selectedService && (
           <div className="space-y-4">
-            <Panel title="Service Deployments" icon={Activity}>
-              <div className="mb-4 flex flex-wrap gap-2">
-                <button className="dio-button-primary" onClick={() => void appAction(selectedService.id, "redeploy")} disabled={Boolean(busy) || !(selectedService.source || selectedService.sourceType === "docker-image")}>
-                  <RefreshCw size={15} />
-                  Redeploy Latest
-                </button>
-                {isGitManagedService(selectedService) && (
-                  <button className="dio-button" onClick={() => editGitDeployment(selectedService)} disabled={Boolean(busy)}>
-                    <Wrench size={15} />
-                    Edit Source & Build
-                  </button>
-                )}
-                <button className="dio-button" onClick={() => void loadLogs(selectedService.id)} disabled={Boolean(busy)}>
-                  <Terminal size={15} />
-                  Runtime Logs
-                </button>
-              </div>
-              <DeploymentList deployments={visibleDeployments} apps={apps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
-              {selectedService.sourceType === "github-app" && (
-                <div className="mt-4">
-                  <AutoDeployCard
-                    app={selectedService}
-                    webhookUrl={webhookUrl}
-                    publicDockioUrl={state?.settings.publicDockioUrl || ""}
-                    busy={busy}
-                    onToggle={saveAutoDeploy}
-                  />
-                </div>
-              )}
-            </Panel>
+            <DeploymentDirectory
+              deployments={deployments}
+              apps={allApps}
+              projects={allProjects}
+              vpsIp={vpsIp}
+              search={deploymentSearch}
+              onSearch={setDeploymentSearch}
+              projectFilter={selectedService.projectId || currentProject.id}
+              onProjectFilter={(projectId) => {
+                setDeploymentProjectFilter(projectId);
+                if (projectId && projectId !== currentProject.id) openProject(projectId);
+                if (!projectId) showAllProjects("deployments");
+              }}
+              serviceFilter={selectedService.id}
+              onServiceFilter={(serviceId) => {
+                setDeploymentServiceFilter(serviceId);
+                const nextApp = allApps.find((app) => app.id === serviceId);
+                if (nextApp) openService(nextApp, "deployments");
+              }}
+              statusFilter={deploymentStatusFilter}
+              onStatusFilter={setDeploymentStatusFilter}
+              onLogs={loadDeploymentLogs}
+              onDelete={deleteDeploymentEvent}
+              onOpenApp={openService}
+              onNewDeployment={() => startDeployment("git", selectedService.projectId || currentProject.id)}
+            />
+            {selectedService.sourceType === "github-app" && (
+              <AutoDeployCard
+                app={selectedService}
+                webhookUrl={webhookUrl}
+                publicDockioUrl={state?.settings.publicDockioUrl || ""}
+                busy={busy}
+                onToggle={saveAutoDeploy}
+              />
+            )}
           </div>
         )}
 
-        {tab === "deployments" && !selectedService && (
+        {tab === "deployments" && !selectedService && !deployWizardOpen && (
+          <DeploymentDirectory
+            deployments={allDeployments}
+            apps={allApps}
+            projects={allProjects}
+            vpsIp={vpsIp}
+            search={deploymentSearch}
+            onSearch={setDeploymentSearch}
+            projectFilter={deploymentProjectFilter || currentProject.id}
+            onProjectFilter={(projectId) => {
+              setDeploymentProjectFilter(projectId);
+              setDeploymentServiceFilter("");
+              if (projectId && projectId !== currentProject.id) openProject(projectId);
+              if (!projectId) showAllProjects("deployments");
+            }}
+            serviceFilter={deploymentServiceFilter}
+            onServiceFilter={setDeploymentServiceFilter}
+            statusFilter={deploymentStatusFilter}
+            onStatusFilter={setDeploymentStatusFilter}
+            onLogs={loadDeploymentLogs}
+            onDelete={deleteDeploymentEvent}
+            onOpenApp={openService}
+            onNewDeployment={() => startDeployment("git", currentProject.id)}
+          />
+        )}
+
+        {tab === "deployments" && !selectedService && deployWizardOpen && (
           <div className="space-y-4">
             <Panel title={editingAppId ? "Edit & Redeploy Service" : "Create Service"} icon={editingAppId ? Wrench : PackagePlus}>
               {editingAppId && (
@@ -3211,44 +3309,66 @@ export function PanelShell() {
                     Cancel Edit
                   </button>
                 )}
+                <button className="dio-button" onClick={() => { setDeployWizardOpen(false); setEditingAppId(""); setRepoAnalysis(null); setSelectedDetectionId(""); }} disabled={Boolean(busy)}>
+                  Close
+                </button>
               </div>
             </Panel>
 
             <Panel title="Recent Deployments" icon={Activity}>
-              <DeploymentList deployments={visibleDeployments} apps={apps} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} />
+              <DeploymentList deployments={visibleDeployments} apps={allApps} projects={allProjects} vpsIp={vpsIp} onLogs={loadDeploymentLogs} onDelete={deleteDeploymentEvent} onOpenApp={openService} />
             </Panel>
           </div>
         )}
 
         {tab === "domains" && (
-          <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-            <Panel title="Add Domain" icon={Globe2}>
-              <div className="grid gap-3">
-                <label className="grid gap-1">
-                  <span className="dio-label">App</span>
-                  <select className="dio-input" value={domainForm.appId} onChange={(event) => setDomainForm({ ...domainForm, appId: event.target.value })}>
-                    <option value="">Select app</option>
-                    {visibleApps.map((app) => (
-                      <option key={app.id} value={app.id}>
-                        {app.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <Field label="Domain" value={domainForm.domain} onChange={(domain) => setDomainForm({ ...domainForm, domain })} placeholder="app.example.com" />
-                <button className="dio-button-primary" onClick={() => void configureAppDomain()} disabled={!domainForm.appId || !domainForm.domain || Boolean(busy)}>
-                  <Globe2 size={16} />
-                  Configure Caddy
-                </button>
-              </div>
-            </Panel>
-            <Panel title="DNS Requirement" icon={Shield}>
-              <div className="space-y-3 text-sm text-zinc-400">
-                <p>Point domains to this VPS public IP, then configure Caddy here. Caddy will request HTTPS certificates automatically.</p>
-                <pre className="dio-code overflow-auto rounded-md p-3 text-xs">{`A     ${domainForm.domain || "app.example.com"} -> ${vpsIp || "YOUR_VPS_PUBLIC_IP"}\nAAAA  optional if this VPS has IPv6`}</pre>
-                {selectedDomainApp && <Info title="Selected app" body={`${selectedDomainApp.name} via ${selectedDomainApp.strategy}${selectedDomainApp.localProxyPort || selectedDomainApp.port ? ` on 127.0.0.1:${selectedDomainApp.localProxyPort || selectedDomainApp.port}` : ""}`} />}
-              </div>
-            </Panel>
+          <div className="space-y-4">
+            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+              <Panel title="Add Domain" icon={Globe2}>
+                <div className="grid gap-3">
+                  <label className="grid gap-1">
+                    <span className="dio-label">Service</span>
+                    <select className="dio-input" value={domainForm.appId} onChange={(event) => setDomainForm({ ...domainForm, appId: event.target.value })}>
+                      <option value="">Select service</option>
+                      {visibleApps.map((app) => (
+                        <option key={app.id} value={app.id}>
+                          {projectName(allProjects, app.projectId)} / {app.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <Field label="Domain" value={domainForm.domain} onChange={(domain) => setDomainForm({ ...domainForm, domain })} placeholder="app.example.com" />
+                  <button className="dio-button-primary" onClick={() => void configureAppDomain()} disabled={!domainForm.appId || !domainForm.domain || Boolean(busy)}>
+                    <Globe2 size={16} />
+                    Configure Caddy
+                  </button>
+                </div>
+              </Panel>
+              <Panel title="DNS" icon={Shield}>
+                <div className="grid gap-3">
+                  <Info title="A record" body={`${domainForm.domain || "app.example.com"} -> ${vpsIp || "server public IP"}`} />
+                  <Info title="HTTPS" body="Caddy issues certificates after DNS resolves." />
+                  {selectedDomainApp && <Info title="Target" body={`${selectedDomainApp.name} / 127.0.0.1:${selectedDomainApp.localProxyPort || selectedDomainApp.port || "port"}`} />}
+                </div>
+              </Panel>
+            </div>
+            <DomainDirectory
+              apps={selectedService ? allApps.filter((app) => app.id === selectedService.id) : allApps}
+              projects={allProjects}
+              vpsIp={vpsIp}
+              search={domainSearch}
+              onSearch={setDomainSearch}
+              projectFilter={selectedService ? selectedService.projectId || currentProject.id : domainProjectFilter || currentProject.id}
+              onProjectFilter={(projectId) => {
+                setDomainProjectFilter(projectId);
+                if (projectId && projectId !== currentProject.id) openProject(projectId);
+                if (!projectId) showAllProjects("domains");
+              }}
+              routeFilter={domainRouteFilter}
+              onRouteFilter={setDomainRouteFilter}
+              onOpen={openService}
+              onPreview={regeneratePreview}
+            />
           </div>
         )}
 
@@ -3709,58 +3829,299 @@ function ServerSnapshot({ status, vpsIp, dataDir }: { status: Record<string, unk
   );
 }
 
-function DomainGrid({
+function ServiceDirectory({
+  apps,
+  projects,
+  databases,
+  vpsIp,
+  search,
+  onSearch,
+  projectFilter,
+  onProjectFilter,
+  statusFilter,
+  onStatusFilter,
+  onLogs,
+  onOpen,
+  onPreview
+}: {
+  apps: ManagedApp[];
+  projects: ProjectRecord[];
+  databases: DatabaseResource[];
+  vpsIp: string;
+  search: string;
+  onSearch: (value: string) => void;
+  projectFilter: string;
+  onProjectFilter: (value: string) => void;
+  statusFilter: string;
+  onStatusFilter: (value: string) => void;
+  onLogs: (id: string) => Promise<void>;
+  onOpen: (app: ManagedApp, tab?: Tab) => void;
+  onPreview: (id: string) => Promise<void>;
+}) {
+  const query = search.trim().toLowerCase();
+  const filteredApps = apps.filter((app) => {
+    if (projectFilter && app.projectId !== projectFilter) return false;
+    if (statusFilter && app.status !== statusFilter) return false;
+    if (!query) return true;
+    return [app.name, app.slug, projectName(projects, app.projectId), compactSource(app), app.repoFullName, app.repoUrl, app.domain, app.previewDomainHostname].filter(Boolean).join(" ").toLowerCase().includes(query);
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_220px_170px]">
+        <input className="dio-input" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search services..." />
+        <select className="dio-input" value={projectFilter} onChange={(event) => onProjectFilter(event.target.value)}>
+          <option value="">All projects</option>
+          {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select>
+        <select className="dio-input" value={statusFilter} onChange={(event) => onStatusFilter(event.target.value)}>
+          <option value="">All statuses</option>
+          <option value="running">Running</option>
+          <option value="stopped">Stopped</option>
+          <option value="failed">Failed</option>
+        </select>
+      </div>
+
+      {filteredApps.length === 0 ? (
+        <p className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">No services match this view.</p>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-line">
+          <div className="hidden grid-cols-[minmax(220px,1.2fr)_minmax(190px,1fr)_120px_150px_220px] gap-3 border-b border-line bg-[#050505] px-3 py-2 text-xs font-bold uppercase tracking-normal text-zinc-500 lg:grid">
+            <span>Service</span>
+            <span>Source</span>
+            <span>Status</span>
+            <span>Runtime</span>
+            <span className="text-right">Actions</span>
+          </div>
+          {filteredApps.map((app) => {
+            const appPreview = previewUrl(app, vpsIp);
+            const primaryUrl = app.domain ? `https://${app.domain}` : appPreview;
+            return (
+              <article key={app.id} className="grid gap-3 border-b border-line bg-panel px-3 py-3 text-sm last:border-b-0 lg:grid-cols-[minmax(220px,1.2fr)_minmax(190px,1fr)_120px_150px_220px] lg:items-center">
+                <button className="min-w-0 text-left" onClick={() => onOpen(app)}>
+                  <span className="flex min-w-0 items-center gap-3">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12]"><ServiceLogo app={app} /></span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-bold text-ink">{app.name}</span>
+                      <span className="block truncate text-xs text-zinc-500">{projectName(projects, app.projectId)} / {app.serviceRole || "fullstack"}</span>
+                    </span>
+                  </span>
+                </button>
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-zinc-300">{compactSource(app)}</p>
+                  <p className="mt-1 truncate text-xs text-zinc-500">{app.branch || app.deployMode || app.strategy}{app.commitSha ? ` / ${shortSha(app.commitSha)}` : ""}</p>
+                </div>
+                <StatusPill ok={app.status === "running"} label={app.status} />
+                <div className="min-w-0 text-xs text-zinc-500">
+                  <p className="truncate">{app.localProxyPort || app.port ? `127.0.0.1:${app.localProxyPort || app.port}` : "no port"}</p>
+                  {app.databaseId && <p className="truncate">{databaseName(databases, app.databaseId)}</p>}
+                </div>
+                <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+                  {primaryUrl ? (
+                    <a className="dio-button-primary px-2 py-1 text-xs" href={primaryUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink size={12} />
+                      Open
+                    </a>
+                  ) : app.status === "running" ? (
+                    <button className="dio-button-primary px-2 py-1 text-xs" onClick={() => void onPreview(app.id)}>
+                      <RefreshCw size={12} />
+                      Preview
+                    </button>
+                  ) : null}
+                  <button className="dio-button px-2 py-1 text-xs" onClick={() => onOpen(app)}>
+                    <Settings size={12} />
+                    Manage
+                  </button>
+                  <button className="dio-button px-2 py-1 text-xs" onClick={() => void onLogs(app.id)}>
+                    <Terminal size={12} />
+                    Logs
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeploymentDirectory({
+  deployments,
   apps,
   projects,
   vpsIp,
+  search,
+  onSearch,
+  projectFilter,
+  onProjectFilter,
+  serviceFilter,
+  onServiceFilter,
+  statusFilter,
+  onStatusFilter,
+  onLogs,
+  onDelete,
+  onOpenApp,
+  onNewDeployment
+}: {
+  deployments: DeploymentEvent[];
+  apps: ManagedApp[];
+  projects: ProjectRecord[];
+  vpsIp: string;
+  search: string;
+  onSearch: (value: string) => void;
+  projectFilter: string;
+  onProjectFilter: (value: string) => void;
+  serviceFilter: string;
+  onServiceFilter: (value: string) => void;
+  statusFilter: string;
+  onStatusFilter: (value: string) => void;
+  onLogs: (id: string) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onOpenApp: (app: ManagedApp, tab?: Tab) => void;
+  onNewDeployment: () => void;
+}) {
+  const serviceOptions = apps.filter((app) => !projectFilter || app.projectId === projectFilter);
+  const query = search.trim().toLowerCase();
+  const filteredDeployments = deployments.filter((deployment) => {
+    const app = apps.find((item) => item.id === deployment.appId);
+    if (projectFilter && (deployment.projectId || app?.projectId) !== projectFilter) return false;
+    if (serviceFilter && deployment.appId !== serviceFilter) return false;
+    if (statusFilter && deployment.status !== statusFilter) return false;
+    if (!query) return true;
+    return [deployment.action, deployment.message, deployment.commitMessage, deployment.branch, deployment.commitSha, deployment.repositoryFullName, app?.name, projectName(projects, app?.projectId)].filter(Boolean).join(" ").toLowerCase().includes(query);
+  });
+
+  return (
+    <Panel title="Deployments" icon={Activity}>
+      <div className="mb-4 grid gap-2 xl:grid-cols-[minmax(220px,1fr)_190px_190px_150px_auto]">
+        <input className="dio-input" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search deployments..." />
+        <select className="dio-input" value={projectFilter} onChange={(event) => { onProjectFilter(event.target.value); onServiceFilter(""); }}>
+          <option value="">All projects</option>
+          {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select>
+        <select className="dio-input" value={serviceFilter} onChange={(event) => onServiceFilter(event.target.value)}>
+          <option value="">All services</option>
+          {serviceOptions.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}
+        </select>
+        <select className="dio-input" value={statusFilter} onChange={(event) => onStatusFilter(event.target.value)}>
+          <option value="">All statuses</option>
+          <option value="succeeded">Succeeded</option>
+          <option value="running">Running</option>
+          <option value="failed">Failed</option>
+        </select>
+        <button className="dio-button-primary justify-center" onClick={onNewDeployment}>
+          <PackagePlus size={15} />
+          New Deployment
+        </button>
+      </div>
+      <DeploymentList deployments={filteredDeployments} apps={apps} projects={projects} vpsIp={vpsIp} onLogs={onLogs} onDelete={onDelete} onOpenApp={onOpenApp} />
+    </Panel>
+  );
+}
+
+function DomainDirectory({
+  apps,
+  projects,
+  vpsIp,
+  search,
+  onSearch,
+  projectFilter,
+  onProjectFilter,
+  routeFilter,
+  onRouteFilter,
   onOpen,
   onPreview
 }: {
   apps: ManagedApp[];
   projects: ProjectRecord[];
   vpsIp: string;
+  search: string;
+  onSearch: (value: string) => void;
+  projectFilter: string;
+  onProjectFilter: (value: string) => void;
+  routeFilter: string;
+  onRouteFilter: (value: string) => void;
   onOpen: (app: ManagedApp, tab?: Tab) => void;
   onPreview: (id: string) => Promise<void>;
 }) {
-  if (apps.length === 0) {
-    return <p className="text-sm text-zinc-500">Deploy an app first, then add a custom domain or generate an automatic preview URL.</p>;
-  }
+  const query = search.trim().toLowerCase();
+  const filteredApps = apps.filter((app) => {
+    const appPreview = previewUrl(app, vpsIp);
+    const hasCustom = Boolean(app.domain);
+    const hasPreview = Boolean(appPreview);
+    if (projectFilter && app.projectId !== projectFilter) return false;
+    if (routeFilter === "custom" && !hasCustom) return false;
+    if (routeFilter === "preview" && !hasPreview) return false;
+    if (routeFilter === "missing" && (hasCustom || hasPreview)) return false;
+    if (routeFilter === "error" && app.previewDomainStatus !== "error") return false;
+    if (!query) return true;
+    return [app.name, app.domain, appPreview, projectName(projects, app.projectId), app.previewDomainStatus].filter(Boolean).join(" ").toLowerCase().includes(query);
+  });
+
   return (
-    <div className="grid gap-3 lg:grid-cols-2">
-      {apps.map((app) => {
-        const appPreview = previewUrl(app, vpsIp);
-        return (
-          <article key={app.id} className="rounded-md border border-line bg-panel p-3">
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div className="min-w-0">
-                <p className="font-bold text-ink">{app.name}</p>
-                <p className="text-xs text-zinc-500">{projectName(projects, app.projectId)} - {app.serviceRole || "fullstack"}</p>
-                {app.domain ? <a className="mt-2 block max-w-full truncate text-sm font-bold text-zinc-200 hover:underline" href={`https://${app.domain}`} target="_blank" rel="noreferrer">https://{app.domain}</a> : <p className="mt-2 text-sm text-zinc-500">No custom domain</p>}
-                {appPreview ? <a className="mt-1 block max-w-full truncate text-sm font-bold text-zinc-200 hover:underline" href={appPreview} target="_blank" rel="noreferrer">{appPreview}</a> : <p className="mt-1 text-sm text-zinc-500">No preview URL</p>}
-              </div>
-              <StatusPill ok={app.previewDomainStatus === "active" || Boolean(app.domain)} label={app.domain ? "custom" : app.previewDomainStatus || "no route"} />
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button className="dio-button" onClick={() => onOpen(app, "domains")}>
-                <Settings size={14} />
-                Manage
-              </button>
-              {appPreview ? (
-                <a className="dio-button-primary" href={appPreview} target="_blank" rel="noreferrer">
-                  <ExternalLink size={14} />
-                  Open Preview
-                </a>
-              ) : app.status === "running" ? (
-                <button className="dio-button-primary" onClick={() => void onPreview(app.id)}>
-                  <RefreshCw size={14} />
-                  Generate Preview
+    <Panel title="Domains" icon={Globe2}>
+      <div className="mb-4 grid gap-2 lg:grid-cols-[minmax(220px,1fr)_220px_170px]">
+        <input className="dio-input" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search domains..." />
+        <select className="dio-input" value={projectFilter} onChange={(event) => onProjectFilter(event.target.value)}>
+          <option value="">All projects</option>
+          {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select>
+        <select className="dio-input" value={routeFilter} onChange={(event) => onRouteFilter(event.target.value)}>
+          <option value="">All routes</option>
+          <option value="custom">Custom domains</option>
+          <option value="preview">Preview URLs</option>
+          <option value="missing">Missing route</option>
+          <option value="error">Errors</option>
+        </select>
+      </div>
+      {filteredApps.length === 0 ? (
+        <p className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">No domains match this view.</p>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-line">
+          <div className="hidden grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_140px_190px] gap-3 border-b border-line bg-[#050505] px-3 py-2 text-xs font-bold uppercase tracking-normal text-zinc-500 lg:grid">
+            <span>Domain</span>
+            <span>Service</span>
+            <span>Status</span>
+            <span className="text-right">Actions</span>
+          </div>
+          {filteredApps.map((app) => {
+            const appPreview = previewUrl(app, vpsIp);
+            const statusLabel = app.domain ? "custom" : app.previewDomainStatus || (appPreview ? "preview" : "missing");
+            return (
+              <article key={app.id} className="grid gap-3 border-b border-line bg-panel px-3 py-3 text-sm last:border-b-0 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_140px_190px] lg:items-center">
+                <div className="min-w-0">
+                  {app.domain ? <a className="block truncate font-bold text-ink hover:underline" href={`https://${app.domain}`} target="_blank" rel="noreferrer">https://{app.domain}</a> : <p className="font-bold text-zinc-500">No custom domain</p>}
+                  {appPreview ? <a className="mt-1 block truncate text-xs font-medium text-zinc-400 hover:text-ink hover:underline" href={appPreview} target="_blank" rel="noreferrer">{appPreview}</a> : <p className="mt-1 text-xs text-zinc-600">No preview URL</p>}
+                </div>
+                <button className="min-w-0 text-left" onClick={() => onOpen(app, "domains")}>
+                  <span className="block truncate font-bold text-ink">{app.name}</span>
+                  <span className="block truncate text-xs text-zinc-500">{projectName(projects, app.projectId)} / {app.serviceRole || "fullstack"}</span>
                 </button>
-              ) : null}
-            </div>
-          </article>
-        );
-      })}
-    </div>
+                <StatusPill ok={Boolean(app.domain) || app.previewDomainStatus === "active"} label={statusLabel} />
+                <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+                  {appPreview ? (
+                    <a className="dio-button-primary px-2 py-1 text-xs" href={appPreview} target="_blank" rel="noreferrer">
+                      <ExternalLink size={12} />
+                      Open
+                    </a>
+                  ) : app.status === "running" ? (
+                    <button className="dio-button-primary px-2 py-1 text-xs" onClick={() => void onPreview(app.id)}>
+                      <RefreshCw size={12} />
+                      Preview
+                    </button>
+                  ) : null}
+                  <button className="dio-button px-2 py-1 text-xs" onClick={() => onOpen(app, "domains")}>
+                    <Settings size={12} />
+                    Manage
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -4396,43 +4757,89 @@ function DetectionReview({
   );
 }
 
-function DeploymentList({ deployments, apps, onLogs, onDelete }: { deployments: DeploymentEvent[]; apps: ManagedApp[]; onLogs: (id: string) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
-  if (deployments.length === 0) return <p className="text-sm text-zinc-500">No deployments.</p>;
+function DeploymentList({
+  deployments,
+  apps,
+  projects,
+  vpsIp,
+  onLogs,
+  onDelete,
+  onOpenApp
+}: {
+  deployments: DeploymentEvent[];
+  apps: ManagedApp[];
+  projects: ProjectRecord[];
+  vpsIp?: string;
+  onLogs: (id: string) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onOpenApp?: (app: ManagedApp, tab?: Tab) => void;
+}) {
+  if (deployments.length === 0) return <p className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">No deployments match this view.</p>;
   return (
-    <div className="grid gap-2">
-      {deployments.slice(0, 8).map((event) => {
+    <div className="overflow-hidden rounded-md border border-line">
+      <div className="hidden grid-cols-[minmax(240px,1.3fr)_minmax(220px,1fr)_120px_180px_190px] gap-3 border-b border-line bg-[#050505] px-3 py-2 text-xs font-bold uppercase tracking-normal text-zinc-500 lg:grid">
+        <span>Deployment</span>
+        <span>Project / Service</span>
+        <span>Status</span>
+        <span>Source</span>
+        <span className="text-right">Actions</span>
+      </div>
+      {deployments.slice(0, 50).map((event) => {
         const app = apps.find((item) => item.id === event.appId);
+        const appUrl = app ? (app.domain ? `https://${app.domain}` : previewUrl(app, vpsIp || "")) : "";
+        const active = Boolean(app && app.status === "running" && event.status === "succeeded" && deployments.find((item) => item.appId === event.appId && item.status === "succeeded")?.id === event.id);
+        const rowTitle = event.commitMessage || event.action.replace(/_/g, " ") || app?.name || event.id;
         return (
-          <div key={event.id} className="grid gap-3 rounded-md border border-line bg-panel p-3 text-sm transition hover:border-zinc-600 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+          <article key={event.id} className="grid gap-3 border-b border-line bg-panel px-3 py-3 text-sm last:border-b-0 lg:grid-cols-[minmax(240px,1.3fr)_minmax(220px,1fr)_120px_180px_190px] lg:items-center">
             <div className="flex min-w-0 items-start gap-3">
               <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12]">
                 {app ? <ServiceLogo app={app} /> : <Activity size={18} className="text-zinc-300" />}
               </div>
               <div className="min-w-0">
-                <p className="truncate font-bold text-ink">{app?.name || event.appId}</p>
+                <p className="truncate font-bold text-ink">{rowTitle}</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {relativeTime(event.finishedAt || event.startedAt || event.createdAt)}
+                  {event.finishedAt && event.startedAt ? ` / ${durationLabel(event.startedAt, event.finishedAt)}` : ""}
+                </p>
                 <div className="mt-1 flex flex-wrap gap-2">
+                  {active && <span className="dio-badge">active</span>}
                   <span className="dio-badge">{event.action.replace(/_/g, " ")}</span>
-                  {event.sourceType && <span className="dio-badge">{event.sourceType}</span>}
-                  {event.strategy && <span className="dio-badge">{event.strategy}</span>}
-                  {event.branch && <span className="dio-badge">{event.branch}</span>}
-                  {event.commitSha && <span className="dio-badge">{shortSha(event.commitSha)}</span>}
                 </div>
                 {event.status === "failed" && <p className="mt-2 line-clamp-2 text-xs text-zinc-500">{compactError(event.message)}</p>}
-                <p className="mt-2 text-xs text-zinc-600">{relativeTime(event.finishedAt || event.startedAt || event.createdAt)}{event.finishedAt && event.startedAt ? ` - ${durationLabel(event.startedAt, event.finishedAt)}` : ""}</p>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 md:justify-end">
-              <button className="dio-button" onClick={() => void onLogs(event.id)}>
+            <button className="min-w-0 text-left" onClick={() => app && onOpenApp?.(app, "general")} disabled={!app}>
+              <span className="block truncate font-bold text-ink">{app?.name || event.appId}</span>
+              <span className="block truncate text-xs text-zinc-500">{projectName(projects, event.projectId || app?.projectId)}</span>
+            </button>
+            <StatusPill ok={event.status === "succeeded"} label={event.status} />
+            <div className="min-w-0 text-xs text-zinc-500">
+              <p className="truncate">{event.repositoryFullName || app?.repoFullName || (app ? compactSource(app) : event.sourceType || event.strategy || "unknown source")}</p>
+              <p className="mt-1 truncate">{event.branch || app?.branch || "main"}{event.commitSha ? ` / ${shortSha(event.commitSha)}` : app?.commitSha ? ` / ${shortSha(app.commitSha)}` : ""}</p>
+            </div>
+            <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+              <button className="dio-button px-2 py-1 text-xs" onClick={() => void onLogs(event.id)}>
                 <Terminal size={14} />
                 Logs
               </button>
-              <button className="dio-button-danger" onClick={() => void onDelete(event.id)}>
+              {appUrl && (
+                <a className="dio-button px-2 py-1 text-xs" href={appUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink size={12} />
+                  Visit
+                </a>
+              )}
+              {app && onOpenApp && (
+                <button className="dio-button px-2 py-1 text-xs" onClick={() => onOpenApp(app, "general")}>
+                  <Settings size={12} />
+                  App
+                </button>
+              )}
+              <button className="dio-button-danger px-2 py-1 text-xs" onClick={() => void onDelete(event.id)}>
                 <Trash2 size={14} />
                 Delete
               </button>
-              <StatusPill ok={event.status === "succeeded"} label={event.status} />
             </div>
-          </div>
+          </article>
         );
       })}
     </div>
