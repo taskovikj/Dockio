@@ -793,6 +793,18 @@ export function PanelShell() {
     });
   }
 
+  async function continueDeployFlow() {
+    if (deployStep === "details" && deployProvider === "git") {
+      await detectGitStack();
+      return;
+    }
+    if (deployStep === "details" && deployProvider === "github") {
+      await detectGitHubStack();
+      return;
+    }
+    setDeployStep(nextDeployStep(deployStep, deployProvider));
+  }
+
   async function saveGitHubConnection() {
     await run("Saving GitHub App", async () => {
       const result = await api<{ connection: GitProviderConnection }>("/api/git/github/connections", {
@@ -2097,32 +2109,16 @@ export function PanelShell() {
 
               {tab === "domains" && (
                 <div className="space-y-4">
-                  <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-                    <Panel title="Add Domain" icon={Globe2}>
-                      <div className="grid gap-3">
-                        <label className="grid gap-1">
-                          <span className="dio-label">Service</span>
-                          <select className="dio-input" value={domainForm.appId} onChange={(event) => setDomainForm({ ...domainForm, appId: event.target.value })}>
-                            <option value="">Select service</option>
-                            {allApps.map((app) => (
-                              <option key={app.id} value={app.id}>{projectName(allProjects, app.projectId)} / {app.name}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <Field label="Domain" value={domainForm.domain} onChange={(domain) => setDomainForm({ ...domainForm, domain })} placeholder="app.example.com" />
-                        <button className="dio-button-primary justify-center" onClick={() => void configureAppDomain()} disabled={!domainForm.appId || !domainForm.domain || Boolean(busy)}>
-                          <Globe2 size={16} />
-                          Configure Caddy
-                        </button>
-                      </div>
-                    </Panel>
-                    <Panel title="DNS" icon={Shield}>
-                      <div className="grid gap-3">
-                        <Info title="A record" body={`${domainForm.domain || "app.example.com"} -> ${vpsIp || "server public IP"}`} />
-                        <Info title="HTTPS" body="Caddy issues certificates after DNS resolves." />
-                      </div>
-                    </Panel>
-                  </div>
+                  <DomainAssignPanel
+                    apps={allApps}
+                    projects={allProjects}
+                    value={domainForm}
+                    onChange={setDomainForm}
+                    onSubmit={() => void configureAppDomain()}
+                    busy={busy}
+                    vpsIp={vpsIp}
+                    selectedApp={selectedDomainApp}
+                  />
                   <DomainDirectory
                     apps={allApps}
                     projects={allProjects}
@@ -3048,6 +3044,10 @@ export function PanelShell() {
               {deployStep === "details" && deployProvider === "git" && (
                 <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
                   <div className="grid gap-3">
+                    <div className="rounded-md border border-line bg-panel p-3">
+                      <p className="font-black text-ink">Repository</p>
+                      <p className="mt-1 text-sm text-zinc-500">Paste a public Git URL. Continue will analyze the repo, choose the best build mode, and ask you to confirm one service before deploying.</p>
+                    </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <Field label="App name" value={gitForm.name} onChange={(name) => setGitForm({ ...gitForm, name })} />
                       <Select label="Service role" value={gitForm.serviceRole} onChange={(serviceRole) => setGitForm({ ...gitForm, serviceRole: serviceRole as ServiceRole })} options={roleOptions()} />
@@ -3057,12 +3057,12 @@ export function PanelShell() {
                       <Field label="Branch" value={gitForm.branch} onChange={(branch) => { setGitForm({ ...gitForm, branch }); setRepoAnalysis(null); }} />
                       <Field label="Root directory optional" value={gitForm.appDirectory} onChange={(appDirectory) => { setGitForm({ ...gitForm, appDirectory }); setRepoAnalysis(null); }} placeholder="apps/web or blank" />
                     </div>
-                    <button className="dio-button-primary w-fit" onClick={() => void detectGitStack()} disabled={Boolean(busy) || !gitForm.repoUrl.trim()}>
-                      <Activity size={16} />
-                      Detect Stack
-                    </button>
                   </div>
-                  <Info title="What happens next" body="Detection clones the repo temporarily, finds deployable services, and fills build/start/port/health defaults. You confirm before deploy." />
+                  <div className="grid content-start gap-3">
+                    <Info title="Default build" body="Nixpacks when possible" />
+                    <Info title="Detection" body="Finds app root, role, port, env keys, health path, Dockerfile/static exceptions." />
+                    <Info title="Next" body="Confirm detected service" />
+                  </div>
                 </div>
               )}
 
@@ -3169,10 +3169,6 @@ export function PanelShell() {
                               <GitBranch size={14} />
                               Branches
                             </button>
-                            <button className="dio-button-primary" onClick={() => void detectGitHubStack()} disabled={Boolean(busy) || !githubForm.repositoryId}>
-                              <Activity size={16} />
-                              Detect Stack
-                            </button>
                           </div>
                         </div>
                       ) : (
@@ -3213,7 +3209,7 @@ export function PanelShell() {
               {deployStep === "build" && (deployProvider === "git" || deployProvider === "github") && (
                 <div className="grid gap-4 xl:grid-cols-[1fr_1.15fr]">
                   <div className="grid gap-3">
-                    <p className="text-sm text-zinc-400">Confirm one detected service, then adjust build/runtime settings only here.</p>
+                    <p className="text-sm text-zinc-400">Dockio detected the repo. Pick the service you want, then confirm the build mode and runtime settings here.</p>
                     {repoAnalysis ? (
                       <DetectionReview analysis={repoAnalysis} selectedServiceId={selectedDetectionId} onSelect={(service) => applyDetectedService(service, repoAnalysis.branch)} />
                     ) : (
@@ -3300,8 +3296,8 @@ export function PanelShell() {
               <div className="mt-5 flex flex-wrap justify-between gap-2 border-t border-line pt-4">
                 <button className="dio-button" onClick={() => setDeployStep(previousDeployStep(deployStep, deployProvider))} disabled={deployStep === "source" || Boolean(busy)}>Back</button>
                 {deployStep !== "runtime" && (
-                  <button className="dio-button-primary" onClick={() => setDeployStep(nextDeployStep(deployStep, deployProvider))} disabled={Boolean(busy) || !canContinueDeploy(deployStep, deployProvider, gitForm, githubForm, imageForm, composeForm, composeYamlForm)}>
-                    Continue
+                  <button className="dio-button-primary" onClick={() => void continueDeployFlow()} disabled={Boolean(busy) || !canContinueDeploy(deployStep, deployProvider, gitForm, githubForm, imageForm, composeForm, composeYamlForm)}>
+                    {continueDeployLabel(deployStep, deployProvider)}
                   </button>
                 )}
                 {editingAppId && (
@@ -3323,35 +3319,16 @@ export function PanelShell() {
 
         {tab === "domains" && (
           <div className="space-y-4">
-            <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-              <Panel title="Add Domain" icon={Globe2}>
-                <div className="grid gap-3">
-                  <label className="grid gap-1">
-                    <span className="dio-label">Service</span>
-                    <select className="dio-input" value={domainForm.appId} onChange={(event) => setDomainForm({ ...domainForm, appId: event.target.value })}>
-                      <option value="">Select service</option>
-                      {visibleApps.map((app) => (
-                        <option key={app.id} value={app.id}>
-                          {projectName(allProjects, app.projectId)} / {app.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <Field label="Domain" value={domainForm.domain} onChange={(domain) => setDomainForm({ ...domainForm, domain })} placeholder="app.example.com" />
-                  <button className="dio-button-primary" onClick={() => void configureAppDomain()} disabled={!domainForm.appId || !domainForm.domain || Boolean(busy)}>
-                    <Globe2 size={16} />
-                    Configure Caddy
-                  </button>
-                </div>
-              </Panel>
-              <Panel title="DNS" icon={Shield}>
-                <div className="grid gap-3">
-                  <Info title="A record" body={`${domainForm.domain || "app.example.com"} -> ${vpsIp || "server public IP"}`} />
-                  <Info title="HTTPS" body="Caddy issues certificates after DNS resolves." />
-                  {selectedDomainApp && <Info title="Target" body={`${selectedDomainApp.name} / 127.0.0.1:${selectedDomainApp.localProxyPort || selectedDomainApp.port || "port"}`} />}
-                </div>
-              </Panel>
-            </div>
+            <DomainAssignPanel
+              apps={visibleApps}
+              projects={allProjects}
+              value={domainForm}
+              onChange={setDomainForm}
+              onSubmit={() => void configureAppDomain()}
+              busy={busy}
+              vpsIp={vpsIp}
+              selectedApp={selectedDomainApp}
+            />
             <DomainDirectory
               apps={selectedService ? allApps.filter((app) => app.id === selectedService.id) : allApps}
               projects={allProjects}
@@ -4020,6 +3997,72 @@ function DeploymentDirectory({
   );
 }
 
+function DomainAssignPanel({
+  apps,
+  projects,
+  value,
+  onChange,
+  onSubmit,
+  busy,
+  vpsIp,
+  selectedApp
+}: {
+  apps: ManagedApp[];
+  projects: ProjectRecord[];
+  value: { appId: string; domain: string };
+  onChange: (value: { appId: string; domain: string }) => void;
+  onSubmit: () => void;
+  busy: string;
+  vpsIp: string;
+  selectedApp?: ManagedApp;
+}) {
+  const domain = value.domain.trim().toLowerCase();
+  const dnsRecord = `${domain || "app.example.com"} A ${vpsIp || "SERVER_IP"}`;
+  const targetPort = selectedApp?.localProxyPort || selectedApp?.port || selectedApp?.containerPort;
+  const currentRoute = selectedApp ? selectedApp.domain ? `https://${selectedApp.domain}` : previewUrl(selectedApp, vpsIp) : "";
+  return (
+    <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+      <Panel title="Add Domain" icon={Globe2}>
+        <div className="grid gap-3">
+          <label className="grid gap-1">
+            <span className="dio-label">Service</span>
+            <select className="dio-input" value={value.appId} onChange={(event) => onChange({ ...value, appId: event.target.value })}>
+              <option value="">Select service</option>
+              {apps.map((app) => (
+                <option key={app.id} value={app.id}>{projectName(projects, app.projectId)} / {app.name}</option>
+              ))}
+            </select>
+          </label>
+          <Field label="Domain" value={value.domain} onChange={(nextDomain) => onChange({ ...value, domain: nextDomain })} placeholder="app.example.com" />
+          <button className="dio-button-primary justify-center" onClick={onSubmit} disabled={!value.appId || !domain || Boolean(busy)}>
+            <Globe2 size={16} />
+            Configure Route
+          </button>
+        </div>
+      </Panel>
+      <Panel title="DNS & Target" icon={Shield}>
+        <div className="grid gap-3 md:grid-cols-3">
+          <Info title="A record" body={dnsRecord} />
+          <Info title="Service target" body={selectedApp ? `${selectedApp.name} -> 127.0.0.1:${targetPort || "port"}` : "Select service"} />
+          <Info title="HTTPS" body="Caddy after DNS resolves" />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button className="dio-button" onClick={() => void navigator.clipboard?.writeText(dnsRecord)} disabled={!domain}>
+            <Copy size={14} />
+            Copy DNS
+          </button>
+          {currentRoute && (
+            <a className="dio-button" href={currentRoute} target="_blank" rel="noreferrer">
+              <ExternalLink size={14} />
+              Open Current Route
+            </a>
+          )}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 function DomainDirectory({
   apps,
   projects,
@@ -4079,29 +4122,55 @@ function DomainDirectory({
         <p className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">No domains match this view.</p>
       ) : (
         <div className="overflow-hidden rounded-md border border-line">
-          <div className="hidden grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_140px_190px] gap-3 border-b border-line bg-[#050505] px-3 py-2 text-xs font-bold uppercase tracking-normal text-zinc-500 lg:grid">
-            <span>Domain</span>
+          <div className="hidden grid-cols-[minmax(240px,1.1fr)_minmax(210px,1fr)_minmax(210px,1fr)_130px_210px] gap-3 border-b border-line bg-[#050505] px-3 py-2 text-xs font-bold uppercase tracking-normal text-zinc-500 xl:grid">
+            <span>Route</span>
             <span>Service</span>
+            <span>DNS target</span>
             <span>Status</span>
             <span className="text-right">Actions</span>
           </div>
           {filteredApps.map((app) => {
             const appPreview = previewUrl(app, vpsIp);
-            const statusLabel = app.domain ? "custom" : app.previewDomainStatus || (appPreview ? "preview" : "missing");
+            const primaryUrl = app.domain ? `https://${app.domain}` : appPreview;
+            const statusLabel = domainStatusLabel(app, appPreview);
+            const dnsRecord = app.domain ? `${app.domain} A ${vpsIp || "SERVER_IP"}` : "";
             return (
-              <article key={app.id} className="grid gap-3 border-b border-line bg-panel px-3 py-3 text-sm last:border-b-0 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_140px_190px] lg:items-center">
+              <article key={app.id} className="grid gap-3 border-b border-line bg-panel px-3 py-3 text-sm last:border-b-0 xl:grid-cols-[minmax(240px,1.1fr)_minmax(210px,1fr)_minmax(210px,1fr)_130px_210px] xl:items-center">
                 <div className="min-w-0">
-                  {app.domain ? <a className="block truncate font-bold text-ink hover:underline" href={`https://${app.domain}`} target="_blank" rel="noreferrer">https://{app.domain}</a> : <p className="font-bold text-zinc-500">No custom domain</p>}
-                  {appPreview ? <a className="mt-1 block truncate text-xs font-medium text-zinc-400 hover:text-ink hover:underline" href={appPreview} target="_blank" rel="noreferrer">{appPreview}</a> : <p className="mt-1 text-xs text-zinc-600">No preview URL</p>}
+                  {app.domain ? (
+                    <a className="block truncate font-bold text-ink hover:underline" href={`https://${app.domain}`} target="_blank" rel="noreferrer">{app.domain}</a>
+                  ) : (
+                    <p className="font-bold text-zinc-500">No custom domain</p>
+                  )}
+                  {appPreview ? (
+                    <a className="mt-1 block truncate text-xs font-medium text-zinc-400 hover:text-ink hover:underline" href={appPreview} target="_blank" rel="noreferrer">{appPreview.replace(/^https?:\/\//, "")}</a>
+                  ) : (
+                    <p className="mt-1 text-xs text-zinc-600">No preview route</p>
+                  )}
                 </div>
                 <button className="min-w-0 text-left" onClick={() => onOpen(app, "domains")}>
                   <span className="block truncate font-bold text-ink">{app.name}</span>
                   <span className="block truncate text-xs text-zinc-500">{projectName(projects, app.projectId)} / {app.serviceRole || "fullstack"}</span>
                 </button>
-                <StatusPill ok={Boolean(app.domain) || app.previewDomainStatus === "active"} label={statusLabel} />
+                <div className="min-w-0 text-xs text-zinc-500">
+                  {dnsRecord ? (
+                    <>
+                      <p className="truncate font-medium text-zinc-300">A {vpsIp || "SERVER_IP"}</p>
+                      <p className="mt-1 truncate">{app.domain}</p>
+                    </>
+                  ) : appPreview ? (
+                    <>
+                      <p className="truncate font-medium text-zinc-300">{app.previewDomainMode === "custom" ? "Wildcard DNS" : "sslip.io"}</p>
+                      <p className="mt-1 truncate">{app.previewDomainMode === "custom" ? `*.${appPreview.split(".").slice(1).join(".")}` : "zero config"}</p>
+                    </>
+                  ) : (
+                    <p className="truncate">Not routed</p>
+                  )}
+                </div>
+                <StatusPill ok={domainStatusOk(app, appPreview)} label={statusLabel} />
                 <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
-                  {appPreview ? (
-                    <a className="dio-button-primary px-2 py-1 text-xs" href={appPreview} target="_blank" rel="noreferrer">
+                  {primaryUrl ? (
+                    <a className="dio-button-primary px-2 py-1 text-xs" href={primaryUrl} target="_blank" rel="noreferrer">
                       <ExternalLink size={12} />
                       Open
                     </a>
@@ -4111,6 +4180,12 @@ function DomainDirectory({
                       Preview
                     </button>
                   ) : null}
+                  {dnsRecord && (
+                    <button className="dio-button px-2 py-1 text-xs" onClick={() => void navigator.clipboard?.writeText(dnsRecord)}>
+                      <Copy size={12} />
+                      DNS
+                    </button>
+                  )}
                   <button className="dio-button px-2 py-1 text-xs" onClick={() => onOpen(app, "domains")}>
                     <Settings size={12} />
                     Manage
@@ -4239,6 +4314,12 @@ function previousDeployStep(step: DeployStep, provider: DeployProvider): DeployS
   if (step === "build") return "details";
   if (step === "details") return "source";
   return "source";
+}
+
+function continueDeployLabel(step: DeployStep, provider: DeployProvider) {
+  if (step === "details" && isGitBuildProvider(provider)) return "Analyze Repository";
+  if (step === "build" && isGitBuildProvider(provider)) return "Confirm Service";
+  return "Continue";
 }
 
 function canContinueDeploy(
@@ -5464,6 +5545,19 @@ function previewHelp(app: ManagedApp) {
   if (app.previewDomainStatus === "pending") return "Preview domain will be written during the next deploy or regenerate action.";
   if (app.publicPreview) return "Auto preview domain is disabled; this is the public debug port fallback.";
   return "Preview is disabled for this service.";
+}
+
+function domainStatusLabel(app: ManagedApp, appPreview: string) {
+  if (app.domain) return app.status === "running" ? "custom active" : "custom";
+  if (app.previewDomainStatus === "active") return "preview active";
+  if (app.previewDomainStatus === "error") return "preview error";
+  if (app.previewDomainStatus === "pending") return "pending";
+  if (appPreview) return "preview";
+  return "missing";
+}
+
+function domainStatusOk(app: ManagedApp, appPreview: string) {
+  return Boolean(app.domain && app.status === "running") || app.previewDomainStatus === "active" || Boolean(!app.domain && appPreview && app.previewDomainStatus !== "error");
 }
 
 function previewImportMessage(status: Record<string, unknown> | null) {
