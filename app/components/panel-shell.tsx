@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Boxes,
   CheckCircle2,
+  ChevronDown,
   CircleAlert,
   Copy,
   Cpu,
@@ -2209,7 +2210,7 @@ export function PanelShell() {
                 {apps.slice(0, 6).map((app) => (
                   <button key={app.id} className="w-full min-w-0 rounded-md px-3 py-2 text-left text-sm font-bold text-zinc-400 hover:bg-panel hover:text-ink" onClick={() => openService(app)}>
                     <span className="block max-w-full truncate">{app.name}</span>
-                    <span className="block max-w-full truncate text-xs font-medium text-zinc-600">{app.serviceRole || "fullstack"} - {app.status}</span>
+                    <span className="block max-w-full truncate text-xs font-medium text-zinc-600">{app.serviceRole || "fullstack"} / {app.status}</span>
                   </button>
                 ))}
               </div>
@@ -2230,18 +2231,10 @@ export function PanelShell() {
           <header className="border-b border-line bg-[#050505]/95 px-4 py-3 md:px-6">
             <div className="mx-auto flex max-w-7xl flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="min-w-0">
-                <p className="text-xs font-bold text-zinc-500">
-                  Projects / {currentProject.name}{selectedService ? ` / ${selectedService.name}` : ""}
-                </p>
-                <h1 className="mt-1 truncate text-2xl font-black tracking-normal text-ink">{selectedService?.name || currentProject.name}</h1>
-                <p className="mt-1 max-w-3xl text-sm text-zinc-400">
-                  {selectedService
-                    ? `${selectedService.serviceRole || "fullstack"} service - ${selectedService.sourceType || selectedService.source || selectedService.strategy} - ${selectedService.slug}`
-                    : currentProject.description || `${apps.length} services / ${databases.length} databases`}
-                </p>
+                <h1 className="truncate text-2xl font-black tracking-normal text-ink">{selectedService?.name || currentProject.name}</h1>
                 {selectedService && (
                   <div className="mt-2 flex flex-wrap gap-2">
-                    <StatusPill ok={selectedService.status === "running"} label={selectedService.status} />
+                    <CompactStatus status={selectedService.status} active={selectedService.status === "running"} />
                     <span className="dio-badge">{selectedService.serviceRole || "fullstack"}</span>
                     <span className="dio-badge">{selectedService.deployMode || selectedService.strategy}</span>
                     {selectedService.previewDomainStatus && <span className="dio-badge">preview {selectedService.previewDomainStatus}</span>}
@@ -2493,7 +2486,7 @@ export function PanelShell() {
                         <p className="dio-label">Primary service</p>
                         <h2 className="mt-2 truncate text-xl font-black text-ink">{activeApp.name}</h2>
                         <p className="mt-1 text-sm text-zinc-500">
-                          {activeApp.serviceRole || "fullstack"} - {activeApp.strategy} - {activeApp.source || "manual"}
+                          {activeApp.serviceRole || "fullstack"} / {activeApp.strategy} / {activeApp.source || "manual"}
                         </p>
                       </div>
                       <StatusPill ok={activeApp.status === "running"} label={activeApp.status} />
@@ -2606,8 +2599,11 @@ export function PanelShell() {
                 statusFilter={serviceStatusFilter}
                 onStatusFilter={setServiceStatusFilter}
                 onLogs={loadLogs}
+                onStop={stop}
+                onAction={appAction}
                 onOpen={openService}
                 onPreview={regeneratePreview}
+                onEdit={editGitDeployment}
               />
             </Panel>
           </div>
@@ -2831,7 +2827,7 @@ export function PanelShell() {
                     <Terminal size={14} />
                     <span className="min-w-0">
                       <span className="block truncate">{app.name}</span>
-                      <span className="block truncate text-xs font-medium text-zinc-500">{currentProject.name} - {app.serviceRole || "fullstack"} - {app.status}</span>
+                      <span className="block truncate text-xs font-medium text-zinc-500">{currentProject.name} / {app.serviceRole || "fullstack"} / {app.status}</span>
                     </span>
                   </button>
                 ))}
@@ -3470,13 +3466,12 @@ function GlobalSidebar({
   );
 }
 
-function GlobalPageHeader({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+function GlobalPageHeader({ title, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <header className="border-b border-line bg-[#050505]/95 px-4 py-4 md:px-6">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-black tracking-normal text-ink">{title}</h1>
-          <p className="mt-1 max-w-3xl text-sm text-zinc-400">{subtitle}</p>
         </div>
         {children}
       </div>
@@ -3741,8 +3736,11 @@ function ServiceDirectory({
   statusFilter,
   onStatusFilter,
   onLogs,
+  onStop,
+  onAction,
   onOpen,
-  onPreview
+  onPreview,
+  onEdit
 }: {
   apps: ManagedApp[];
   projects: ProjectRecord[];
@@ -3755,9 +3753,13 @@ function ServiceDirectory({
   statusFilter: string;
   onStatusFilter: (value: string) => void;
   onLogs: (id: string) => Promise<void>;
+  onStop: (id: string) => Promise<void>;
+  onAction: (id: string, action: "start" | "restart" | "redeploy" | "health" | "delete") => Promise<void>;
   onOpen: (app: ManagedApp, tab?: Tab) => void;
   onPreview: (id: string) => Promise<void>;
+  onEdit: (app: ManagedApp) => void;
 }) {
+  const [expandedAppId, setExpandedAppId] = useState("");
   const query = search.trim().toLowerCase();
   const filteredApps = apps.filter((app) => {
     if (projectFilter && app.projectId !== projectFilter) return false;
@@ -3785,58 +3787,93 @@ function ServiceDirectory({
       {filteredApps.length === 0 ? (
         <p className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">No services match this view.</p>
       ) : (
-        <div className="overflow-hidden rounded-md border border-line">
-          <div className="hidden grid-cols-[minmax(220px,1.2fr)_minmax(190px,1fr)_120px_150px_220px] gap-3 border-b border-line bg-[#050505] px-3 py-2 text-xs font-bold uppercase tracking-normal text-zinc-500 lg:grid">
-            <span>Service</span>
-            <span>Source</span>
-            <span>Status</span>
-            <span>Runtime</span>
-            <span className="text-right">Actions</span>
-          </div>
+        <div className="overflow-hidden rounded-md border border-line bg-panel">
           {filteredApps.map((app) => {
             const appPreview = previewUrl(app, vpsIp);
             const primaryUrl = app.domain ? `https://${app.domain}` : appPreview;
+            const expanded = expandedAppId === app.id;
             return (
-              <article key={app.id} className="grid gap-3 border-b border-line bg-panel px-3 py-3 text-sm last:border-b-0 lg:grid-cols-[minmax(220px,1.2fr)_minmax(190px,1fr)_120px_150px_220px] lg:items-center">
-                <button className="min-w-0 text-left" onClick={() => onOpen(app)}>
-                  <span className="flex min-w-0 items-center gap-3">
-                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12]"><ServiceLogo app={app} /></span>
-                    <span className="min-w-0">
-                      <span className="block truncate font-bold text-ink">{app.name}</span>
-                      <span className="block truncate text-xs text-zinc-500">{projectName(projects, app.projectId)} / {app.serviceRole || "fullstack"}</span>
+              <article key={app.id} className="border-b border-line last:border-b-0">
+                <div className="grid gap-3 px-3 py-3 text-sm lg:grid-cols-[minmax(260px,1.2fr)_minmax(180px,0.8fr)_110px_minmax(220px,auto)] lg:items-center">
+                  <button className="min-w-0 text-left" onClick={() => setExpandedAppId(expanded ? "" : app.id)} aria-expanded={expanded}>
+                    <span className="flex min-w-0 items-center gap-3">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12]"><ServiceLogo app={app} /></span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-bold text-ink">{app.name}</span>
+                        <span className="block truncate text-xs text-zinc-500">{projectName(projects, app.projectId)} / {app.serviceRole || "fullstack"}</span>
+                      </span>
                     </span>
-                  </span>
-                </button>
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-zinc-300">{compactSource(app)}</p>
-                  <p className="mt-1 truncate text-xs text-zinc-500">{app.branch || app.deployMode || app.strategy}{app.commitSha ? ` / ${shortSha(app.commitSha)}` : ""}</p>
-                </div>
-                <StatusPill ok={app.status === "running"} label={app.status} />
-                <div className="min-w-0 text-xs text-zinc-500">
-                  <p className="truncate">{app.localProxyPort || app.port ? `127.0.0.1:${app.localProxyPort || app.port}` : "no port"}</p>
-                  {app.databaseId && <p className="truncate">{databaseName(databases, app.databaseId)}</p>}
-                </div>
-                <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
-                  {primaryUrl ? (
-                    <a className="dio-button-primary px-2 py-1 text-xs" href={primaryUrl} target="_blank" rel="noreferrer">
-                      <ExternalLink size={12} />
-                      Open
-                    </a>
-                  ) : app.status === "running" ? (
-                    <button className="dio-button-primary px-2 py-1 text-xs" onClick={() => void onPreview(app.id)}>
-                      <RefreshCw size={12} />
-                      Preview
+                  </button>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-zinc-300">{compactSource(app)}</p>
+                    <p className="mt-1 truncate text-xs text-zinc-600">{app.branch || app.deployMode || app.strategy}{app.commitSha ? ` / ${shortSha(app.commitSha)}` : ""}</p>
+                  </div>
+                  <CompactStatus status={app.status} active={app.status === "running"} />
+                  <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+                    {primaryUrl ? (
+                      <a className="dio-button-primary px-2 py-1 text-xs" href={primaryUrl} target="_blank" rel="noreferrer">
+                        <ExternalLink size={12} />
+                        Open
+                      </a>
+                    ) : app.status === "running" ? (
+                      <button className="dio-button-primary px-2 py-1 text-xs" onClick={() => void onPreview(app.id)}>
+                        <RefreshCw size={12} />
+                        Preview
+                      </button>
+                    ) : null}
+                    <button className="dio-button px-2 py-1 text-xs" onClick={() => onOpen(app)}>
+                      <Settings size={12} />
+                      Manage
                     </button>
-                  ) : null}
-                  <button className="dio-button px-2 py-1 text-xs" onClick={() => onOpen(app)}>
-                    <Settings size={12} />
-                    Manage
-                  </button>
-                  <button className="dio-button px-2 py-1 text-xs" onClick={() => void onLogs(app.id)}>
-                    <Terminal size={12} />
-                    Logs
-                  </button>
+                    <button className="dio-button px-2 py-1 text-xs" onClick={() => void onLogs(app.id)}>
+                      <Terminal size={12} />
+                      Logs
+                    </button>
+                    <button className="dio-button px-2 py-1 text-xs" onClick={() => setExpandedAppId(expanded ? "" : app.id)} aria-expanded={expanded}>
+                      <ChevronDown size={13} className={`transition ${expanded ? "rotate-180" : ""}`} />
+                    </button>
+                  </div>
                 </div>
+                {expanded && (
+                  <div className="mx-3 mb-3 rounded-md border border-line bg-[#080808] p-3">
+                    <div className="grid gap-3 text-xs text-zinc-500 md:grid-cols-4">
+                      <Info title="Route" body={primaryUrl || "not configured"} />
+                      <Info title="Runtime" body={app.localProxyPort || app.port ? `127.0.0.1:${app.localProxyPort || app.port}` : "no port"} />
+                      <Info title="Database" body={app.databaseId ? databaseName(databases, app.databaseId) : "none"} />
+                      <Info title="Health" body={app.healthPath || "/"} />
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button className="dio-button" onClick={() => void onAction(app.id, app.status === "running" ? "restart" : "start")}>
+                        <RotateCcw size={14} />
+                        {app.status === "running" ? "Restart" : "Start"}
+                      </button>
+                      {(app.source || app.sourceType === "docker-image") && (
+                        <button className="dio-button" onClick={() => void onAction(app.id, "redeploy")}>
+                          <GitBranch size={14} />
+                          Redeploy
+                        </button>
+                      )}
+                      {isGitManagedService(app) && (
+                        <button className="dio-button" onClick={() => onEdit(app)}>
+                          <Wrench size={14} />
+                          Edit
+                        </button>
+                      )}
+                      <button className="dio-button" onClick={() => void onAction(app.id, "health")}>
+                        <HeartPulse size={14} />
+                        Health
+                      </button>
+                      <button className="dio-button" onClick={() => void onStop(app.id)}>
+                        <Square size={14} />
+                        Stop
+                      </button>
+                      <button className="dio-button-danger" onClick={() => void onAction(app.id, "delete")}>
+                        <Trash2 size={14} />
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                )}
               </article>
             );
           })}
@@ -4136,7 +4173,7 @@ function DockerResourceGrid({ apps, databases, projects }: { apps: ManagedApp[];
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate font-bold text-ink">{app.name}</p>
-              <p className="text-xs text-zinc-500">{projectName(projects, app.projectId)} - {app.strategy}</p>
+              <p className="text-xs text-zinc-500">{projectName(projects, app.projectId)} / {app.strategy}</p>
               <p className="mt-1 break-all text-xs text-zinc-600">{app.containerName || app.composeProject || "no container name"}</p>
               {app.imageTag && <p className="mt-1 break-all text-xs text-zinc-600">image {app.imageTag}</p>}
             </div>
@@ -4149,7 +4186,7 @@ function DockerResourceGrid({ apps, databases, projects }: { apps: ManagedApp[];
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate font-bold text-ink">{database.name}</p>
-              <p className="text-xs text-zinc-500">{projectName(projects, database.projectId)} - {database.kind}</p>
+              <p className="text-xs text-zinc-500">{projectName(projects, database.projectId)} / {database.kind}</p>
               <p className="mt-1 break-all text-xs text-zinc-600">{database.dockerContainer || "no container"} / {database.dockerVolume || "no volume"}</p>
             </div>
             <StatusPill ok={["running", "reachable"].includes(database.status)} label={database.status} />
@@ -4508,7 +4545,6 @@ function ProjectSelectGate({
             <meta.icon size={18} />
           </div>
           <h2 className="mt-4 text-lg font-black text-ink">{meta.title}</h2>
-          <p className="mt-1 text-sm text-zinc-500">{meta.subtitle}</p>
         </div>
 
         <div className="mt-6 rounded-md border border-line bg-panel p-3">
@@ -4556,7 +4592,7 @@ function ProjectSelectGate({
                     </span>
                     <span className="hidden items-center gap-2 text-xs text-zinc-500 sm:flex">
                       {lastDeploy && <span>{relativeTime(lastDeploy.finishedAt || lastDeploy.createdAt)}</span>}
-                      <StatusPill ok={projectApps.length === 0 || running > 0} label={projectApps.length ? `${running}/${projectApps.length}` : "new"} />
+                      <CompactStatus status={projectApps.length ? `${running}/${projectApps.length}` : "new"} active={running > 0} />
                     </span>
                   </button>
                 );
@@ -4608,44 +4644,41 @@ function ProjectCards({
         const projectDbs = databases.filter((database) => database.projectId === project.id);
         const projectAppIds = new Set(projectApps.map((app) => app.id));
         const lastDeployment = deployments.find((deployment) => projectAppIds.has(deployment.appId));
-        const primaryDomain = projectApps.find((app) => app.domain)?.domain;
         const previewItems = projectApps
           .map((app) => ({ app, url: app.domain ? `https://${app.domain}` : previewUrl(app, vpsIp) }))
           .filter((item) => Boolean(item.url));
         const primaryPreview = previewItems[0];
         const runningCount = projectApps.filter((app) => app.status === "running").length;
+        const deployCount = deployments.filter((deployment) => projectAppIds.has(deployment.appId)).length;
         return (
           <article
             key={project.id}
-            className="cursor-pointer rounded-md border border-line bg-panel p-4 text-left transition hover:border-zinc-600 hover:bg-[#111113]"
+            className="cursor-pointer rounded-md border border-line bg-panel p-3 text-left transition hover:border-zinc-600 hover:bg-[#111113]"
             onClick={() => onOpen(project.id)}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-start gap-3">
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12] text-zinc-300">
-                  <Layers3 size={18} />
-                </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <ProjectMark />
                 <div className="min-w-0">
                   <p className="truncate text-base font-black text-ink">{project.name}</p>
-                  <p className="mt-1 truncate text-xs text-zinc-500">{primaryDomain || project.slug}</p>
                 </div>
               </div>
-              <StatusPill ok={runningCount > 0 || projectApps.length === 0} label={projectApps.length ? `${runningCount}/${projectApps.length} running` : "new"} />
+              <CompactStatus status={projectApps.length ? `${runningCount}/${projectApps.length}` : "new"} active={runningCount > 0} />
             </div>
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              <MiniStat label="Services" value={projectApps.length} />
-              <MiniStat label="DB" value={projectDbs.length} />
-              <MiniStat label="Deploys" value={deployments.filter((deployment) => projectAppIds.has(deployment.appId)).length} />
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-zinc-500">
+              <span>{projectApps.length} services</span>
+              <span>{projectDbs.length} db</span>
+              <span>{deployCount} deploys</span>
             </div>
             <div className="mt-4 grid gap-1 text-xs text-zinc-500">
               {primaryPreview ? (
-                <a className="block max-w-full truncate font-bold text-zinc-200 hover:underline" href={primaryPreview.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
+                <a className="block max-w-full truncate font-semibold text-zinc-300 hover:underline" href={primaryPreview.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
                   {primaryPreview.url}
                 </a>
               ) : (
                 <p className="text-zinc-600">No preview</p>
               )}
-              {lastDeployment && <p className="truncate">{lastDeployment.status} - {relativeTime(lastDeployment.finishedAt || lastDeployment.createdAt)}</p>}
+              {lastDeployment && <p className="truncate">{lastDeployment.status} / {relativeTime(lastDeployment.finishedAt || lastDeployment.createdAt)}</p>}
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <button className="dio-button-primary" onClick={(event) => { event.stopPropagation(); onOpen(project.id); }}>
@@ -4885,76 +4918,95 @@ function DeploymentList({
   onDelete: (id: string) => Promise<void>;
   onOpenApp?: (app: ManagedApp, tab?: Tab) => void;
 }) {
+  const [expandedDeploymentId, setExpandedDeploymentId] = useState("");
   if (deployments.length === 0) return <p className="rounded-md border border-line bg-panel p-4 text-sm text-zinc-500">No deployments match this view.</p>;
   return (
-    <div className="overflow-hidden rounded-md border border-line">
-      <div className="hidden grid-cols-[minmax(240px,1.3fr)_minmax(220px,1fr)_120px_180px_190px] gap-3 border-b border-line bg-[#050505] px-3 py-2 text-xs font-bold uppercase tracking-normal text-zinc-500 lg:grid">
-        <span>Deployment</span>
-        <span>Project / Service</span>
-        <span>Status</span>
-        <span>Source</span>
-        <span className="text-right">Actions</span>
-      </div>
+    <div className="overflow-hidden rounded-md border border-line bg-panel">
       {deployments.slice(0, 50).map((event) => {
         const app = apps.find((item) => item.id === event.appId);
         const appUrl = app ? (app.domain ? `https://${app.domain}` : previewUrl(app, vpsIp || "")) : "";
         const active = Boolean(app && app.status === "running" && event.status === "succeeded" && deployments.find((item) => item.appId === event.appId && item.status === "succeeded")?.id === event.id);
-        const statusLabel = active ? "production active" : event.status;
         const rowTitle = event.commitMessage || event.action.replace(/_/g, " ") || app?.name || event.id;
+        const expanded = expandedDeploymentId === event.id;
         return (
-          <article key={event.id} className={`grid gap-3 border-b border-line bg-panel px-3 py-3 text-sm last:border-b-0 lg:grid-cols-[minmax(240px,1.3fr)_minmax(220px,1fr)_120px_180px_190px] lg:items-center ${active ? "border-l-2 border-l-emerald-400/80 bg-emerald-950/10" : ""}`}>
-            <div className="flex min-w-0 items-start gap-3">
-              <div className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-md border bg-[#080a12] ${active ? "border-emerald-400/60" : "border-line"}`}>
-                {app ? <ServiceLogo app={app} /> : <Activity size={18} className="text-zinc-300" />}
-                {active && <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-[#080a12] bg-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.12)]" aria-label="Active production deployment" />}
-              </div>
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2">
-                  {active && <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" aria-hidden="true" />}
-                  <p className="truncate font-bold text-ink">{rowTitle}</p>
+          <article key={event.id} className={`border-b border-line last:border-b-0 ${active ? "border-l-2 border-l-[#34d399]" : ""}`}>
+            <div className="grid gap-3 px-3 py-3 text-sm lg:grid-cols-[minmax(260px,1.25fr)_minmax(200px,0.9fr)_120px_minmax(220px,auto)] lg:items-center">
+              <button className="flex min-w-0 items-start gap-3 text-left" onClick={() => setExpandedDeploymentId(expanded ? "" : event.id)} aria-expanded={expanded}>
+                <div className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-md border bg-[#080a12] ${active ? "border-[#34d399]/70" : "border-line"}`}>
+                  {app ? <ServiceLogo app={app} /> : <Activity size={18} className="text-zinc-300" />}
+                  {active && <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-[#080a12] bg-[#34d399] shadow-[0_0_0_3px_rgba(52,211,153,0.12)]" aria-label="Active production deployment" />}
                 </div>
-                <p className="mt-1 text-xs text-zinc-500">
-                  {relativeTime(event.finishedAt || event.startedAt || event.createdAt)}
-                  {event.finishedAt && event.startedAt ? ` / ${durationLabel(event.startedAt, event.finishedAt)}` : ""}
-                </p>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {active && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/35 bg-emerald-950/40 px-2 py-0.5 text-[0.68rem] font-black uppercase text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />Production</span>}
-                  <span className="dio-badge">{event.action.replace(/_/g, " ")}</span>
-                </div>
-                {event.status === "failed" && <p className="mt-2 line-clamp-2 text-xs text-zinc-500">{compactError(event.message)}</p>}
-              </div>
-            </div>
-            <button className="min-w-0 text-left" onClick={() => app && onOpenApp?.(app, "general")} disabled={!app}>
-              <span className="block truncate font-bold text-ink">{app?.name || event.appId}</span>
-              <span className="block truncate text-xs text-zinc-500">{projectName(projects, event.projectId || app?.projectId)}</span>
-            </button>
-            <StatusPill ok={event.status === "succeeded"} label={statusLabel} />
-            <div className="min-w-0 text-xs text-zinc-500">
-              <p className="truncate">{event.repositoryFullName || app?.repoFullName || (app ? compactSource(app) : event.sourceType || event.strategy || "unknown source")}</p>
-              <p className="mt-1 truncate">{event.branch || app?.branch || "main"}{event.commitSha ? ` / ${shortSha(event.commitSha)}` : app?.commitSha ? ` / ${shortSha(app.commitSha)}` : ""}</p>
-            </div>
-            <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
-              <button className="dio-button px-2 py-1 text-xs" onClick={() => void onLogs(event.id)}>
-                <Terminal size={14} />
-                Logs
+                <span className="min-w-0">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-bold text-ink">{rowTitle}</span>
+                    {active && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#34d399]" aria-hidden="true" />}
+                  </span>
+                  <span className="mt-1 block text-xs text-zinc-500">
+                    {relativeTime(event.finishedAt || event.startedAt || event.createdAt)}
+                    {event.finishedAt && event.startedAt ? ` / ${durationLabel(event.startedAt, event.finishedAt)}` : ""}
+                  </span>
+                </span>
               </button>
-              {appUrl && (
-                <a className="dio-button px-2 py-1 text-xs" href={appUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink size={12} />
-                  Visit
-                </a>
-              )}
-              {app && onOpenApp && (
-                <button className="dio-button px-2 py-1 text-xs" onClick={() => onOpenApp(app, "general")}>
-                  <Settings size={12} />
-                  App
+              <button className="min-w-0 text-left" onClick={() => app && onOpenApp?.(app, "general")} disabled={!app}>
+                <span className="block truncate font-bold text-ink">{app?.name || event.appId}</span>
+                <span className="block truncate text-xs text-zinc-500">{projectName(projects, event.projectId || app?.projectId)}</span>
+              </button>
+              <CompactStatus status={active ? "production" : event.status} active={active || event.status === "succeeded"} />
+              <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+                <button className="dio-button px-2 py-1 text-xs" onClick={() => void onLogs(event.id)}>
+                  <Terminal size={14} />
+                  Logs
                 </button>
-              )}
-              <button className="dio-button-danger px-2 py-1 text-xs" onClick={() => void onDelete(event.id)}>
-                <Trash2 size={14} />
-                Delete
-              </button>
+                {appUrl && (
+                  <a className="dio-button px-2 py-1 text-xs" href={appUrl} target="_blank" rel="noreferrer">
+                    <ExternalLink size={12} />
+                    Visit
+                  </a>
+                )}
+                {app && onOpenApp && (
+                  <button className="dio-button px-2 py-1 text-xs" onClick={() => onOpenApp(app, "general")}>
+                    <Settings size={12} />
+                    App
+                  </button>
+                )}
+                <button className="dio-button px-2 py-1 text-xs" onClick={() => setExpandedDeploymentId(expanded ? "" : event.id)} aria-expanded={expanded}>
+                  <ChevronDown size={13} className={`transition ${expanded ? "rotate-180" : ""}`} />
+                </button>
+              </div>
             </div>
+            {expanded && (
+              <div className="mx-3 mb-3 rounded-md border border-line bg-[#080808] p-3">
+                <div className="grid gap-3 text-xs text-zinc-500 md:grid-cols-4">
+                  <Info title="Action" body={event.action.replace(/_/g, " ")} />
+                  <Info title="Source" body={event.repositoryFullName || app?.repoFullName || (app ? compactSource(app) : event.sourceType || event.strategy || "unknown")} />
+                  <Info title="Branch" body={event.branch || app?.branch || "main"} />
+                  <Info title="Commit" body={event.commitSha ? shortSha(event.commitSha) : app?.commitSha ? shortSha(app.commitSha) : "-"} />
+                </div>
+                {event.message && <p className="mt-3 text-xs text-zinc-500">{event.status === "failed" ? compactError(event.message) : event.message}</p>}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className="dio-button" onClick={() => void onLogs(event.id)}>
+                    <Terminal size={14} />
+                    Logs
+                  </button>
+                  {appUrl && (
+                    <a className="dio-button" href={appUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink size={12} />
+                      Visit
+                    </a>
+                  )}
+                  {app && onOpenApp && (
+                    <button className="dio-button" onClick={() => onOpenApp(app, "general")}>
+                      <Settings size={12} />
+                      App
+                    </button>
+                  )}
+                  <button className="dio-button-danger" onClick={() => void onDelete(event.id)}>
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                </div>
+              </div>
+            )}
           </article>
         );
       })}
@@ -5082,14 +5134,13 @@ function Panel({ title, icon: Icon, children }: { title: string; icon: LucideIco
   );
 }
 
-function Metric({ label, value, detail, icon: Icon }: { label: string; value: number; detail: string; icon: LucideIcon }) {
+function Metric({ label, value, icon: Icon }: { label: string; value: number; detail?: string; icon: LucideIcon }) {
   return (
     <section className="dio-panel p-3">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="dio-label">{label}</p>
           <p className="mt-2 text-2xl font-black text-ink">{value}</p>
-          <p className="mt-1 truncate text-xs text-zinc-500">{detail}</p>
         </div>
         <div className="rounded-md border border-line bg-[#050505] p-2 text-zinc-500">
           <Icon size={18} />
@@ -5279,11 +5330,28 @@ function MiniStat({ label, value }: { label: string; value: number | string }) {
   );
 }
 
+function ProjectMark() {
+  return (
+    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line bg-[#080a12] text-zinc-300">
+      <Layers3 size={16} />
+    </span>
+  );
+}
+
+function CompactStatus({ status, active = false }: { status: string; active?: boolean }) {
+  return (
+    <span className="inline-flex w-fit items-center gap-1.5 text-xs font-bold uppercase text-zinc-300">
+      <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-[#34d399]" : "bg-zinc-500"}`} />
+      <span className="truncate">{status.replace(/_/g, " ")}</span>
+    </span>
+  );
+}
+
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
   const display = label.replace(/_/g, " ");
   return (
-    <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-line bg-[#080a12] px-2 py-0.5 text-[0.68rem] font-bold uppercase text-zinc-300">
-      <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-zinc-200" : "bg-zinc-500"}`} />
+    <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border border-line bg-[#080a12] px-2 py-0.5 text-[0.68rem] font-bold uppercase text-zinc-300">
+      <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-[#34d399]" : "bg-zinc-500"}`} />
       <span className="truncate">{display}</span>
     </span>
   );
@@ -5677,14 +5745,14 @@ function describeLogsContext(projects: ProjectRecord[], apps: ManagedApp[], depl
   if (deployment && app) {
     return {
       title: `${project?.name || "Unassigned"} / ${app.name}`,
-      subtitle: `Deployment log - ${deployment.action} - ${deployment.status}`,
+      subtitle: `Deployment log / ${deployment.action} / ${deployment.status}`,
       kind: "deployment"
     };
   }
   if (app) {
     return {
       title: `${project?.name || "Unassigned"} / ${app.name}`,
-      subtitle: `Runtime logs - ${app.serviceRole || "fullstack"} - ${app.status}`,
+      subtitle: `Runtime logs / ${app.serviceRole || "fullstack"} / ${app.status}`,
       kind: "runtime"
     };
   }
@@ -5711,8 +5779,8 @@ function mergeEnvText(existing: string, additions: string[]) {
 }
 
 function globalPageMeta(tab: Tab) {
-  if (tab === "projects") return { title: "Projects", subtitle: "Workspaces" };
-  if (tab === "services") return { title: "Services", subtitle: "Apps and workers" };
+  if (tab === "projects") return { title: "Projects", subtitle: "" };
+  if (tab === "services") return { title: "Services", subtitle: "" };
   if (tab === "deployments") return { title: "Deployments", subtitle: "History" };
   if (tab === "logs") return { title: "Logs", subtitle: "Runtime and build output" };
   if (tab === "database") return { title: "Databases", subtitle: "Postgres, Redis, external" };
@@ -5722,7 +5790,7 @@ function globalPageMeta(tab: Tab) {
   if (tab === "git") return { title: "Git", subtitle: "GitHub App and repositories" };
   if (tab === "monitoring") return { title: "Server", subtitle: "Runtime status" };
   if (tab === "settings") return { title: "Settings", subtitle: "Panel configuration" };
-  return { title: "Dashboard", subtitle: "VPS control panel" };
+  return { title: "Dashboard", subtitle: "" };
 }
 
 function buildPanelRouteHash(route: {
