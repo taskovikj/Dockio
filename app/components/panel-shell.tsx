@@ -1038,7 +1038,7 @@ export function PanelShell() {
     setManagedRedisForm((form) => ({ ...form, projectId }));
   }
 
-  function openProject(projectId: string) {
+  function openProject(projectId: string, nextTab: Tab = "general") {
     setSelectedProjectId(projectId);
     setSelectedServiceId("");
     setProjectCreateMode(false);
@@ -1047,7 +1047,7 @@ export function PanelShell() {
     setDeploymentServiceFilter("");
     setDomainProjectFilter(projectId);
     setDeployWizardOpen(false);
-    setTab("general");
+    setTab(nextTab);
     syncProjectForms(projectId);
     clearLogs();
   }
@@ -1697,7 +1697,7 @@ export function PanelShell() {
 
                   <Panel title="Projects Overview" icon={Layers3}>
                     {allProjects.length ? (
-                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => startDeployment(deployProvider, projectId)} />
+                      <ProjectCards projects={allProjects.slice(0, 6)} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={(projectId) => openProject(projectId)} onDeploy={(projectId) => startDeployment(deployProvider, projectId)} />
                     ) : (
                       <EmptyState title="No projects yet" body="Create one project to hold your app services, env vars, databases, domains, and deployment history." actionLabel="Create Project" onAction={openCreateProject} icon={Layers3} />
                     )}
@@ -1978,161 +1978,84 @@ export function PanelShell() {
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <input className="dio-input md:max-w-lg" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Search projects..." />
                     </div>
-                    <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={openProject} onDeploy={(projectId) => startDeployment(deployProvider, projectId)} />
+                    <ProjectCards projects={filteredProjects} apps={allApps} databases={allDatabases} deployments={allDeployments} vpsIp={vpsIp} onOpen={(projectId) => openProject(projectId)} onDeploy={(projectId) => startDeployment(deployProvider, projectId)} />
                   </div>
                 )
               )}
 
               {tab === "services" && (
-                <Panel title="Services" icon={Boxes}>
-                  <ServiceDirectory
-                    apps={allApps}
-                    projects={allProjects}
-                    databases={allDatabases}
-                    vpsIp={vpsIp}
-                    search={serviceSearch}
-                    onSearch={setServiceSearch}
-                    projectFilter={serviceProjectFilter}
-                    onProjectFilter={setServiceProjectFilter}
-                    statusFilter={serviceStatusFilter}
-                    onStatusFilter={setServiceStatusFilter}
-                    onLogs={loadLogs}
-                    onOpen={openService}
-                    onPreview={regeneratePreview}
-                  />
-                </Panel>
+                <ProjectSelectGate
+                  targetTab="services"
+                  projects={filteredProjects}
+                  apps={allApps}
+                  databases={allDatabases}
+                  deployments={allDeployments}
+                  vpsIp={vpsIp}
+                  search={projectSearch}
+                  onSearch={setProjectSearch}
+                  onOpen={openProject}
+                  onCreate={openCreateProject}
+                />
               )}
 
               {tab === "deployments" && (
-                <DeploymentDirectory
-                  deployments={allDeployments}
+                <ProjectSelectGate
+                  targetTab="deployments"
+                  projects={filteredProjects}
                   apps={allApps}
-                  projects={allProjects}
+                  databases={allDatabases}
+                  deployments={allDeployments}
                   vpsIp={vpsIp}
-                  search={deploymentSearch}
-                  onSearch={setDeploymentSearch}
-                  projectFilter={deploymentProjectFilter}
-                  onProjectFilter={setDeploymentProjectFilter}
-                  serviceFilter={deploymentServiceFilter}
-                  onServiceFilter={setDeploymentServiceFilter}
-                  statusFilter={deploymentStatusFilter}
-                  onStatusFilter={setDeploymentStatusFilter}
-                  onLogs={loadDeploymentLogs}
-                  onDelete={deleteDeploymentEvent}
-                  onOpenApp={openService}
-                  onNewDeployment={() => startGlobalDeployment("git")}
+                  search={projectSearch}
+                  onSearch={setProjectSearch}
+                  onOpen={openProject}
+                  onCreate={openCreateProject}
                 />
               )}
 
               {tab === "logs" && (
-                <div className="grid gap-4 xl:grid-cols-[minmax(240px,300px)_minmax(0,1fr)]">
-                  <Panel title="Choose Service" icon={Server}>
-                    <div className="grid max-h-[calc(100vh-250px)] gap-2 overflow-auto pr-1">
-                      {allApps.length === 0 && <EmptyState title="No services yet" body="Deploy an app first, then runtime logs will be available here." actionLabel="Deploy App" onAction={() => startGlobalDeployment()} icon={Terminal} />}
-                      {allApps.map((app) => (
-                        <button key={app.id} className={`dio-button min-w-0 justify-start ${logsAppId === app.id ? "border-zinc-500 bg-[#111113] text-ink" : ""}`} onClick={() => void loadLogs(app.id)}>
-                          <Terminal size={14} />
-                          <span className="min-w-0 truncate">{projectName(allProjects, app.projectId)} / {app.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </Panel>
-                  <Panel title="Logs" icon={Terminal}>
-                    <div className="mb-3 rounded-md border border-line bg-panel p-3">
-                      <p className="dio-label">Selected log stream</p>
-                      <p className="mt-1 font-black text-ink">{logsContext.title}</p>
-                      <p className="mt-1 text-xs text-zinc-500">{logsContext.subtitle}</p>
-                    </div>
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      {logRefreshApp && (
-                        <button className="dio-button" onClick={() => void loadLogs(logRefreshApp.id)} disabled={Boolean(busy)}>
-                          <RefreshCw size={14} />
-                          Refresh Logs
-                        </button>
-                      )}
-                      <button className="dio-button" onClick={() => void navigator.clipboard?.writeText(logs)} disabled={!logs}>
-                        <Copy size={14} />
-                        Copy
-                      </button>
-                      <button className="dio-button" onClick={clearLogs} disabled={!logs}>
-                        Clear
-                      </button>
-                    </div>
-                    <pre className="dio-code h-[calc(100vh-295px)] min-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-md p-4 text-xs">{logs || "Choose a service to view runtime logs or open a deployment record to view build logs."}</pre>
-                  </Panel>
-                </div>
+                <ProjectSelectGate
+                  targetTab="logs"
+                  projects={filteredProjects}
+                  apps={allApps}
+                  databases={allDatabases}
+                  deployments={allDeployments}
+                  vpsIp={vpsIp}
+                  search={projectSearch}
+                  onSearch={setProjectSearch}
+                  onOpen={openProject}
+                  onCreate={openCreateProject}
+                />
               )}
 
               {tab === "database" && (
-                <div className="space-y-4">
-                  <div className="grid gap-4 xl:grid-cols-3">
-                    <Panel title="Create Postgres" icon={Database}>
-                      <div className="grid gap-3">
-                        <Select label="Project" value={managedDbForm.projectId} onChange={(projectId) => setManagedDbForm({ ...managedDbForm, projectId })} options={allProjects.map((project) => ({ value: project.id, label: project.name }))} />
-                        <Field label="Database name" value={managedDbForm.name} onChange={(name) => setManagedDbForm({ ...managedDbForm, name })} />
-                        <Field label="Env key" value={managedDbForm.envKey} onChange={(envKey) => setManagedDbForm({ ...managedDbForm, envKey })} placeholder="DATABASE_URL" />
-                        <button className="dio-button-primary justify-center" onClick={() => void createManagedDatabase()} disabled={Boolean(busy) || !managedDbForm.projectId}>
-                          <Database size={16} />
-                          Create Postgres
-                        </button>
-                      </div>
-                    </Panel>
-                    <Panel title="Create Redis" icon={HardDrive}>
-                      <div className="grid gap-3">
-                        <Select label="Project" value={managedRedisForm.projectId} onChange={(projectId) => setManagedRedisForm({ ...managedRedisForm, projectId })} options={allProjects.map((project) => ({ value: project.id, label: project.name }))} />
-                        <Field label="Redis name" value={managedRedisForm.name} onChange={(name) => setManagedRedisForm({ ...managedRedisForm, name })} />
-                        <Field label="Env key" value={managedRedisForm.envKey} onChange={(envKey) => setManagedRedisForm({ ...managedRedisForm, envKey })} placeholder="REDIS_URL" />
-                        <button className="dio-button-primary justify-center" onClick={() => void createManagedRedis()} disabled={Boolean(busy) || !managedRedisForm.projectId}>
-                          <HardDrive size={16} />
-                          Create Redis
-                        </button>
-                      </div>
-                    </Panel>
-                    <Panel title="External Postgres" icon={Globe2}>
-                      <div className="grid gap-3">
-                        <Select label="Project" value={externalDbForm.projectId} onChange={(projectId) => setExternalDbForm({ ...externalDbForm, projectId })} options={allProjects.map((project) => ({ value: project.id, label: project.name }))} />
-                        <Field label="Name" value={externalDbForm.name} onChange={(name) => setExternalDbForm({ ...externalDbForm, name })} />
-                        <Field label="Env key" value={externalDbForm.envKey} onChange={(envKey) => setExternalDbForm({ ...externalDbForm, envKey })} placeholder="DATABASE_URL" />
-                        <TextArea label="Postgres URL" value={externalDbForm.url} onChange={(url) => setExternalDbForm({ ...externalDbForm, url })} placeholder="postgres://user:password@host:5432/db?sslmode=require" />
-                        <button className="dio-button-primary justify-center" onClick={() => void createExternalDatabase()} disabled={Boolean(busy) || !externalDbForm.projectId || !externalDbForm.url.trim()}>
-                          <KeyRound size={16} />
-                          Save External DB
-                        </button>
-                      </div>
-                    </Panel>
-                  </div>
-                  <Panel title="Database Resources" icon={Database}>
-                    <DatabaseGrid databases={allDatabases} projects={allProjects} apps={allApps} onAction={databaseAction} onAttach={attachDatabase} onDelete={deleteDatabaseResource} />
-                  </Panel>
-                </div>
+                <ProjectSelectGate
+                  targetTab="database"
+                  projects={filteredProjects}
+                  apps={allApps}
+                  databases={allDatabases}
+                  deployments={allDeployments}
+                  vpsIp={vpsIp}
+                  search={projectSearch}
+                  onSearch={setProjectSearch}
+                  onOpen={openProject}
+                  onCreate={openCreateProject}
+                />
               )}
 
               {tab === "domains" && (
-                <div className="space-y-4">
-                  <DomainAssignPanel
-                    apps={allApps}
-                    projects={allProjects}
-                    value={domainForm}
-                    onChange={setDomainForm}
-                    onSubmit={() => void configureAppDomain()}
-                    busy={busy}
-                    vpsIp={vpsIp}
-                    selectedApp={selectedDomainApp}
-                  />
-                  <DomainDirectory
-                    apps={allApps}
-                    projects={allProjects}
-                    vpsIp={vpsIp}
-                    search={domainSearch}
-                    onSearch={setDomainSearch}
-                    projectFilter={domainProjectFilter}
-                    onProjectFilter={setDomainProjectFilter}
-                    routeFilter={domainRouteFilter}
-                    onRouteFilter={setDomainRouteFilter}
-                    onOpen={openService}
-                    onPreview={regeneratePreview}
-                  />
-                </div>
+                <ProjectSelectGate
+                  targetTab="domains"
+                  projects={filteredProjects}
+                  apps={allApps}
+                  databases={allDatabases}
+                  deployments={allDeployments}
+                  vpsIp={vpsIp}
+                  search={projectSearch}
+                  onSearch={setProjectSearch}
+                  onOpen={openProject}
+                  onCreate={openCreateProject}
+                />
               )}
 
               {tab === "advanced" && (
@@ -4552,6 +4475,113 @@ function RedisMark() {
   );
 }
 
+function ProjectSelectGate({
+  targetTab,
+  projects,
+  apps,
+  databases,
+  deployments,
+  vpsIp,
+  search,
+  onSearch,
+  onOpen,
+  onCreate
+}: {
+  targetTab: Tab;
+  projects: ProjectRecord[];
+  apps: ManagedApp[];
+  databases: DatabaseResource[];
+  deployments: DeploymentEvent[];
+  vpsIp: string;
+  search: string;
+  onSearch: (value: string) => void;
+  onOpen: (projectId: string, nextTab?: Tab) => void;
+  onCreate: () => void;
+}) {
+  const meta = projectSelectMeta(targetTab);
+
+  return (
+    <div className="mx-auto grid min-h-[58vh] max-w-2xl place-items-center py-8">
+      <section className="w-full">
+        <div className="text-center">
+          <div className="mx-auto grid h-10 w-10 place-items-center rounded-md border border-line bg-panel text-zinc-400">
+            <meta.icon size={18} />
+          </div>
+          <h2 className="mt-4 text-lg font-black text-ink">{meta.title}</h2>
+          <p className="mt-1 text-sm text-zinc-500">{meta.subtitle}</p>
+        </div>
+
+        <div className="mt-6 rounded-md border border-line bg-panel p-3">
+          <input
+            className="dio-input w-full"
+            value={search}
+            onChange={(event) => onSearch(event.target.value)}
+            placeholder="Find project..."
+            autoFocus
+          />
+          <div className="mt-3 grid max-h-[420px] gap-1 overflow-auto pr-1">
+            {projects.length === 0 ? (
+              <div className="rounded-md border border-line bg-[#080a12] p-4 text-center">
+                <p className="font-bold text-ink">No matching projects</p>
+                <p className="mt-1 text-sm text-zinc-500">Create a project to continue.</p>
+              </div>
+            ) : (
+              projects.map((project) => {
+                const projectApps = apps.filter((app) => app.projectId === project.id);
+                const projectDbs = databases.filter((database) => database.projectId === project.id);
+                const projectAppIds = new Set(projectApps.map((app) => app.id));
+                const projectDeployments = deployments.filter((deployment) => projectAppIds.has(deployment.appId));
+                const preview = projectApps
+                  .map((app) => app.domain ? `https://${app.domain}` : previewUrl(app, vpsIp))
+                  .find(Boolean);
+                const running = projectApps.filter((app) => app.status === "running").length;
+                const lastDeploy = projectDeployments[0];
+
+                return (
+                  <button
+                    key={project.id}
+                    className="group grid min-w-0 grid-cols-[1fr_auto] items-center gap-3 rounded-md px-3 py-3 text-left transition hover:bg-[#111113]"
+                    onClick={() => onOpen(project.id, targetTab)}
+                  >
+                    <span className="flex min-w-0 items-center gap-3">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line bg-[#050505] text-zinc-400">
+                        <Layers3 size={16} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-bold text-ink">{project.name}</span>
+                        <span className="mt-1 block truncate text-xs text-zinc-500">
+                          {preview || `${projectApps.length} services / ${projectDbs.length} databases`}
+                        </span>
+                      </span>
+                    </span>
+                    <span className="hidden items-center gap-2 text-xs text-zinc-500 sm:flex">
+                      {lastDeploy && <span>{relativeTime(lastDeploy.finishedAt || lastDeploy.createdAt)}</span>}
+                      <StatusPill ok={projectApps.length === 0 || running > 0} label={projectApps.length ? `${running}/${projectApps.length}` : "new"} />
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          <button className="mt-2 flex w-full items-center gap-3 rounded-md px-3 py-3 text-left font-bold text-zinc-300 transition hover:bg-[#111113] hover:text-ink" onClick={onCreate}>
+            <PackagePlus size={16} />
+            Create Project
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function projectSelectMeta(tab: Tab): { title: string; subtitle: string; icon: LucideIcon } {
+  if (tab === "services") return { title: "Continue to Services", subtitle: "Choose a project to manage its apps.", icon: Boxes };
+  if (tab === "deployments") return { title: "Continue to Deployments", subtitle: "Choose a project to view deploy history.", icon: Activity };
+  if (tab === "logs") return { title: "Continue to Logs", subtitle: "Choose a project to inspect service logs.", icon: Terminal };
+  if (tab === "database") return { title: "Continue to Databases", subtitle: "Choose a project to manage storage.", icon: Database };
+  if (tab === "domains") return { title: "Continue to Domains", subtitle: "Choose a project to configure routes.", icon: Globe2 };
+  return { title: "Choose Project", subtitle: "Select a project to continue.", icon: Layers3 };
+}
+
 function ProjectCards({
   projects,
   apps,
@@ -4869,21 +4899,26 @@ function DeploymentList({
         const app = apps.find((item) => item.id === event.appId);
         const appUrl = app ? (app.domain ? `https://${app.domain}` : previewUrl(app, vpsIp || "")) : "";
         const active = Boolean(app && app.status === "running" && event.status === "succeeded" && deployments.find((item) => item.appId === event.appId && item.status === "succeeded")?.id === event.id);
+        const statusLabel = active ? "production active" : event.status;
         const rowTitle = event.commitMessage || event.action.replace(/_/g, " ") || app?.name || event.id;
         return (
-          <article key={event.id} className="grid gap-3 border-b border-line bg-panel px-3 py-3 text-sm last:border-b-0 lg:grid-cols-[minmax(240px,1.3fr)_minmax(220px,1fr)_120px_180px_190px] lg:items-center">
+          <article key={event.id} className={`grid gap-3 border-b border-line bg-panel px-3 py-3 text-sm last:border-b-0 lg:grid-cols-[minmax(240px,1.3fr)_minmax(220px,1fr)_120px_180px_190px] lg:items-center ${active ? "border-l-2 border-l-emerald-400/80 bg-emerald-950/10" : ""}`}>
             <div className="flex min-w-0 items-start gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-[#080a12]">
+              <div className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-md border bg-[#080a12] ${active ? "border-emerald-400/60" : "border-line"}`}>
                 {app ? <ServiceLogo app={app} /> : <Activity size={18} className="text-zinc-300" />}
+                {active && <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-[#080a12] bg-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.12)]" aria-label="Active production deployment" />}
               </div>
               <div className="min-w-0">
-                <p className="truncate font-bold text-ink">{rowTitle}</p>
+                <div className="flex min-w-0 items-center gap-2">
+                  {active && <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" aria-hidden="true" />}
+                  <p className="truncate font-bold text-ink">{rowTitle}</p>
+                </div>
                 <p className="mt-1 text-xs text-zinc-500">
                   {relativeTime(event.finishedAt || event.startedAt || event.createdAt)}
                   {event.finishedAt && event.startedAt ? ` / ${durationLabel(event.startedAt, event.finishedAt)}` : ""}
                 </p>
                 <div className="mt-1 flex flex-wrap gap-2">
-                  {active && <span className="dio-badge">active</span>}
+                  {active && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/35 bg-emerald-950/40 px-2 py-0.5 text-[0.68rem] font-black uppercase text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />Production</span>}
                   <span className="dio-badge">{event.action.replace(/_/g, " ")}</span>
                 </div>
                 {event.status === "failed" && <p className="mt-2 line-clamp-2 text-xs text-zinc-500">{compactError(event.message)}</p>}
@@ -4893,7 +4928,7 @@ function DeploymentList({
               <span className="block truncate font-bold text-ink">{app?.name || event.appId}</span>
               <span className="block truncate text-xs text-zinc-500">{projectName(projects, event.projectId || app?.projectId)}</span>
             </button>
-            <StatusPill ok={event.status === "succeeded"} label={event.status} />
+            <StatusPill ok={event.status === "succeeded"} label={statusLabel} />
             <div className="min-w-0 text-xs text-zinc-500">
               <p className="truncate">{event.repositoryFullName || app?.repoFullName || (app ? compactSource(app) : event.sourceType || event.strategy || "unknown source")}</p>
               <p className="mt-1 truncate">{event.branch || app?.branch || "main"}{event.commitSha ? ` / ${shortSha(event.commitSha)}` : app?.commitSha ? ` / ${shortSha(app.commitSha)}` : ""}</p>
