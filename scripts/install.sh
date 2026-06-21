@@ -13,19 +13,47 @@ ENABLE_UFW="${DIO_ENABLE_UFW:-true}"
 INSTALL_MODE="${DIO_INSTALL_MODE:-container}"
 PANEL_IMAGE="${DIO_PANEL_IMAGE:-dockio/panel:local}"
 
+step() {
+  echo ""
+  echo "== $* =="
+}
+
+current_ssh_client_ip() {
+  if [ -n "${SSH_CONNECTION:-}" ]; then
+    printf '%s\n' "$SSH_CONNECTION" | awk '{print $1}'
+    return 0
+  fi
+  if [ -n "${SSH_CLIENT:-}" ]; then
+    printf '%s\n' "$SSH_CLIENT" | awk '{print $1}'
+    return 0
+  fi
+  who -m 2>/dev/null | sed -n 's/.*(\([^)]*\)).*/\1/p' | head -n1
+}
+
+current_ssh_server_port() {
+  if [ -n "${SSH_CONNECTION:-}" ]; then
+    printf '%s\n' "$SSH_CONNECTION" | awk '{print $4}'
+    return 0
+  fi
+  printf '%s\n' "${SSH_PORT:-22}"
+}
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo bash scripts/install.sh"
   exit 1
 fi
 
+step "Installing system packages"
 apt-get update
 apt-get install -y git curl ca-certificates openssh-client rsync ufw docker.io docker-compose-v2 docker-buildx caddy build-essential python3 make g++
 
 if ! command -v node >/dev/null 2>&1; then
+  step "Installing Node.js 22"
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
 fi
 
+step "Preparing Node package manager"
 corepack enable || true
 corepack prepare pnpm@11.0.8 --activate || npm install -g pnpm@11.0.8
 SETUP_TOKEN="${DIO_SETUP_TOKEN:-$(node -e 'console.log(require("crypto").randomBytes(18).toString("base64url"))')}"
@@ -98,8 +126,10 @@ ensure_buildx
 systemctl enable --now docker caddy
 
 if [ "$INSTALL_MODE" = "container" ]; then
+  step "Building Dockio panel container"
   cd "$APP_DIR"
   docker build -t "$PANEL_IMAGE" .
+  step "Writing Dockio systemd service"
   cat > /etc/systemd/system/dockio-panel.service <<EOF
 [Unit]
 Description=Dockio
@@ -118,6 +148,7 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 else
+  step "Building Dockio panel on host"
   cd "$APP_DIR"
   sudo -H -u "$RUN_USER" pnpm install --frozen-lockfile
   sudo -H -u "$RUN_USER" pnpm build
@@ -153,12 +184,20 @@ WantedBy=multi-user.target
 EOF
 fi
 
+step "Starting Dockio service"
 systemctl daemon-reload
 systemctl enable dockio-panel
 systemctl restart dockio-panel
 
 if [ "$ENABLE_UFW" != "false" ]; then
+  step "Configuring firewall"
+  SSH_CLIENT_IP="$(current_ssh_client_ip || true)"
+  SSH_SERVER_PORT="$(current_ssh_server_port || true)"
   ufw allow OpenSSH || true
+  if [ -n "$SSH_CLIENT_IP" ]; then
+    echo "Preserving current SSH access from $SSH_CLIENT_IP to port ${SSH_SERVER_PORT:-22}."
+    ufw allow from "$SSH_CLIENT_IP" to any port "${SSH_SERVER_PORT:-22}" proto tcp || true
+  fi
   ufw allow 80/tcp || true
   ufw allow 443/tcp || true
   if [ -n "$TRUSTED_CIDR" ]; then
